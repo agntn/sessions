@@ -5,8 +5,8 @@ Universal AI conversation memory. Ingest sessions from any coding assistant into
 ## Features
 
 - **7 source adapters** — Claude Code, Codex, Gemini CLI, Mastra, OpenCode, AEI, OpenClaw
-- **db0 storage** — provider-agnostic (better-sqlite3, libsql, node:sqlite, …)
-- **Async API** — works in any runtime
+- **Drizzle-backed SQLite storage** — `better-sqlite3` runtime with `drizzle-orm`
+- **Async API** — Node-friendly programmatic API and CLI
 - **CLI** — `memxa ingest`, `memxa search`, `memxa stats`, `memxa sources`
 - **Incremental** — cursor-based, re-runs only ingest new messages
 
@@ -59,16 +59,15 @@ memxa stats --db ./memory.db
 memxa sources
 ```
 
-## Custom storage provider
+## Storage
 
 ```ts
-import { Db0Storage } from 'memxa'
-import libsqlConnector from 'db0/connectors/libsql'
+import { SqliteStorage } from 'memxa'
 
-const storage = new Db0Storage({
-  connector: libsqlConnector({ url: 'file:memory.db' }),
-})
+const storage = new SqliteStorage('./memory.db')
 await storage.init()
+
+Migrations are managed with `drizzle-kit`, and the runtime opens a local SQLite database through `better-sqlite3`.
 ```
 
 ## Sources

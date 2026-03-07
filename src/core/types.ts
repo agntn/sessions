@@ -33,6 +33,22 @@ export interface Source {
   cursor(messages: Message[]): string
 }
 
+/** Search result from storage. */
+export interface SearchRow {
+  date: string
+  source: string
+  role: string
+  session_id: string
+  text: string
+}
+
+/** Source statistics. */
+export interface SourceStats {
+  source: string
+  messages: number
+  sessions: number
+}
+
 /** Persistence layer for ingested messages. */
 export interface Storage {
   init(): Promise<void>
@@ -40,6 +56,15 @@ export interface Storage {
   getCursor(source: string): Promise<string>
   setCursor(source: string, cursor: string): Promise<void>
   count(source?: string): Promise<number>
+  search(query: string, opts?: {
+    source?: string
+    role?: string
+    limit?: number
+    dateFrom?: string
+    dateTo?: string
+  }): Promise<SearchRow[]>
+  sessionCount(): Promise<number>
+  sourceStats(): Promise<SourceStats[]>
   close(): Promise<void>
 }
 

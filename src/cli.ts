@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from 'citty'
 import { consola } from 'consola'
+import { existsSync } from 'node:fs'
 
 import { register, allSources } from './core/registry.ts'
 import { ingest } from './core/ingest.ts'
-import { createSqliteStorage } from './storage/db.ts'
+import { createSqliteStorage } from './storage/sqlite.ts'
 import { builtinSources } from './sources/index.ts'
 import type { Message } from './core/types.ts'
 
@@ -56,7 +57,12 @@ const statsCommand = defineCommand({
     db: { type: 'string', description: 'Database path', required: true },
   },
   async run({ args }) {
-    const storage = await createSqliteStorage(args.db)
+    if (!existsSync(args.db)) {
+      consola.warn(`Database not found: ${args.db}`)
+      return
+    }
+
+    const storage = await createSqliteStorage(args.db, { initialize: false })
 
     consola.info(`Database: ${args.db}`)
     consola.info('')
@@ -97,7 +103,12 @@ const searchCommand = defineCommand({
     json: { type: 'boolean', description: 'Output as JSON' },
   },
   async run({ args }) {
-    const storage = await createSqliteStorage(args.db)
+    if (!existsSync(args.db)) {
+      consola.warn(`Database not found: ${args.db}`)
+      return
+    }
+
+    const storage = await createSqliteStorage(args.db, { initialize: false })
 
     const results = await storage.search(args.query, {
       source: args.source,

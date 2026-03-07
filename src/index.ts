@@ -4,8 +4,7 @@ export { ingest } from './core/ingest.ts'
 export type { IngestOptions } from './core/ingest.ts'
 
 // Storage
-export { Db0Storage, createSqliteStorage } from './storage/db.ts'
-export type { Db0StorageOptions } from './storage/db.ts'
+export { SqliteStorage, createSqliteStorage } from './storage/sqlite.ts'
 
 // Errors
 export {
