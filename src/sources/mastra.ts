@@ -1,3 +1,4 @@
+import { home } from '../core/env.ts'
 import Database from 'better-sqlite3'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -43,7 +44,7 @@ export class MastraSource implements Source {
   private dbPath: string
 
   constructor(dbPath?: string) {
-    this.dbPath = dbPath ?? join(process.env.HOME!, '.local/share/mastracode/mastra.db')
+    this.dbPath = dbPath ?? join(home(), '.local/share/mastracode/mastra.db')
   }
 
   available(): boolean {

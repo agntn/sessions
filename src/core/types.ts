@@ -35,12 +35,12 @@ export interface Source {
 
 /** Persistence layer for ingested messages. */
 export interface Storage {
-  init(): void
-  insert(messages: Message[]): void
-  getCursor(source: string): string
-  setCursor(source: string, cursor: string): void
-  count(source?: string): number
-  close(): void
+  init(): Promise<void>
+  insert(messages: Message[]): Promise<void>
+  getCursor(source: string): Promise<string>
+  setCursor(source: string, cursor: string): Promise<void>
+  count(source?: string): Promise<number>
+  close(): Promise<void>
 }
 
 export type SourceFactory = () => Source

@@ -26,12 +26,12 @@ function makeStorage(): Storage & { inserted: Message[][]; cursors: Map<string, 
   const cursors = new Map<string, string>()
   const inserted: Message[][] = []
   return {
-    init() {},
-    insert(batch) { inserted.push([...batch]) },
-    getCursor(source) { return cursors.get(source) || '' },
-    setCursor(source, cursor) { cursors.set(source, cursor) },
-    count() { return inserted.reduce((sum, b) => sum + b.length, 0) },
-    close() {},
+    async init() {},
+    async insert(batch) { inserted.push([...batch]) },
+    async getCursor(source) { return cursors.get(source) || '0' },
+    async setCursor(source, cursor) { cursors.set(source, cursor) },
+    async count() { return inserted.reduce((sum, b) => sum + b.length, 0) },
+    async close() {},
     inserted,
     cursors,
   }

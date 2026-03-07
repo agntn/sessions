@@ -1,3 +1,4 @@
+import { home } from '../core/env.ts'
 import { join } from 'node:path'
 import { existsSync, readdirSync, statSync, createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
@@ -110,7 +111,7 @@ export class OpenClawSource implements Source {
   private sessionsDirs: string[]
 
   constructor(sessionsDirs?: string[]) {
-    const base = process.env.AEI_HOME || join(process.env.HOME!, '.config', 'aei')
+    const base = process.env.AEI_HOME || join(home(), '.config', 'aei')
     this.sessionsDirs = sessionsDirs ?? [
       join(base, 'external', 'openclaw-sessions'),
       join(base, 'external', 'moltbot-sessions'),

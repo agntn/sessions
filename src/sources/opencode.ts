@@ -1,3 +1,4 @@
+import { home } from '../core/env.ts'
 import Database from 'better-sqlite3'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -8,7 +9,7 @@ export class OpenCodeSource implements Source {
   private dbPath: string
 
   constructor(dbPath?: string) {
-    this.dbPath = dbPath ?? join(process.env.HOME!, '.local/share/opencode/opencode.db')
+    this.dbPath = dbPath ?? join(home(), '.local/share/opencode/opencode.db')
   }
 
   available(): boolean {

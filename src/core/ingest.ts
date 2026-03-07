@@ -32,7 +32,7 @@ export async function ingest(
       continue
     }
 
-    const cursor = options.dryRun ? '0' : storage.getCursor(source.name)
+    const cursor = options.dryRun ? '0' : await storage.getCursor(source.name)
     let count = 0
     let batch: Message[] = []
     let lastMsg: Message | undefined
@@ -48,14 +48,14 @@ export async function ingest(
 
       batch.push(msg)
       if (batch.length >= BATCH_SIZE) {
-        storage.insert(batch)
+        await storage.insert(batch)
         batch = []
       }
     }
 
     // Flush remaining
     if (!options.dryRun && batch.length) {
-      storage.insert(batch)
+      await storage.insert(batch)
     }
 
     if (!count) {
@@ -70,7 +70,7 @@ export async function ingest(
       }
     } else if (lastMsg) {
       const newCursor = source.cursor([lastMsg])
-      storage.setCursor(source.name, newCursor)
+      await storage.setCursor(source.name, newCursor)
     }
 
     if (options.verbose) {

@@ -1,3 +1,4 @@
+import { home } from '../core/env.ts'
 import { join } from 'node:path'
 import { existsSync, readdirSync, statSync, createReadStream } from 'node:fs'
 import { createInterface } from 'node:readline'
@@ -59,7 +60,7 @@ export class ClaudeSource implements Source {
   private projectsDir: string
 
   constructor(projectsDir?: string) {
-    this.projectsDir = projectsDir ?? join(process.env.HOME!, '.claude/projects')
+    this.projectsDir = projectsDir ?? join(home(), '.claude/projects')
   }
 
   available(): boolean {

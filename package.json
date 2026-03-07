@@ -24,10 +24,6 @@
     "./types": {
       "types": "./dist/types.d.mts",
       "import": "./dist/types.mjs"
-    },
-    "./embeddings": {
-      "types": "./dist/embeddings.d.mts",
-      "import": "./dist/embeddings.mjs"
     }
   },
   "main": "./dist/index.mjs",
@@ -66,11 +62,9 @@
     "better-sqlite3": "^12.6.2",
     "citty": "^0.2.1",
     "consola": "^3.4.2",
-    "drizzle-orm": "^0.44.2"
+    "db0": "^0.3.4"
   },
-  "optionalDependencies": {
-    "@huggingface/transformers": "^3.8.1"
-  },
+
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.0",

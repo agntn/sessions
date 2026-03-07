@@ -1,3 +1,4 @@
+import { home } from '../core/env.ts'
 import { join } from 'node:path'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import type { Source, Message, Block } from '../core/types.ts'
@@ -64,7 +65,7 @@ export class GeminiSource implements Source {
   private geminiDir: string
 
   constructor(geminiDir?: string) {
-    this.geminiDir = geminiDir ?? join(process.env.HOME!, '.gemini', 'tmp')
+    this.geminiDir = geminiDir ?? join(home(), '.gemini', 'tmp')
   }
 
   available(): boolean {

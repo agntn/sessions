@@ -2,9 +2,9 @@
 import { defineCommand, runMain } from 'citty'
 import { consola } from 'consola'
 
-import { register, allSources, sources } from './core/registry.ts'
+import { register, allSources } from './core/registry.ts'
 import { ingest } from './core/ingest.ts'
-import { SqliteStorage } from './storage/sqlite.ts'
+import { createSqliteStorage } from './storage/db.ts'
 import { builtinSources } from './sources/index.ts'
 import type { Message } from './core/types.ts'
 
@@ -32,8 +32,7 @@ const ingestCommand = defineCommand({
     db: { type: 'string', description: 'Database path', required: true },
   },
   async run({ args }) {
-    const storage = new SqliteStorage(args.db)
-    storage.init()
+    const storage = await createSqliteStorage(args.db)
 
     const only = args.only?.split(',').map(s => s.trim()).filter(Boolean)
     const results = await ingest(allSources(), storage, {
@@ -47,7 +46,7 @@ const ingestCommand = defineCommand({
 
     const total = results.reduce((sum, r) => sum + r.count, 0)
     consola.info(`Total: ${total} messages`)
-    storage.close()
+    await storage.close()
   },
 })
 
@@ -56,70 +55,24 @@ const statsCommand = defineCommand({
   args: {
     db: { type: 'string', description: 'Database path', required: true },
   },
-  run({ args }) {
-    const storage = new SqliteStorage(args.db)
-    storage.init()
+  async run({ args }) {
+    const storage = await createSqliteStorage(args.db)
 
     consola.info(`Database: ${args.db}`)
     consola.info('')
 
     consola.info('Messages:')
-    consola.info(`  Total: ${storage.count()}`)
-    for (const name of sources()) {
-      const n = storage.count(name)
-      if (n > 0) consola.info(`  ${name}: ${n}`)
+    consola.info(`  Total: ${await storage.count()}`)
+
+    const stats = await storage.sourceStats()
+    for (const s of stats) {
+      consola.info(`  ${s.source}: ${s.messages} messages, ${s.sessions} sessions`)
     }
 
-    const errCount = storage.errorCount()
-    const misCount = storage.mistakeCount()
-    if (errCount || misCount) {
-      consola.info('')
-      consola.info('Errors & Mistakes:')
-      consola.info(`  Errors: ${errCount}`)
-      consola.info(`  Mistakes: ${misCount}`)
-    }
+    consola.info('')
+    consola.info(`Sessions: ${await storage.sessionCount()}`)
 
-    const lrnCount = storage.learningCount()
-    if (lrnCount) {
-      consola.info('')
-      consola.info('Learnings:')
-      consola.info(`  Total: ${lrnCount}`)
-      consola.info(`  From errors: ${storage.learningCount('error')}`)
-      consola.info(`  From mistakes: ${storage.learningCount('mistake')}`)
-      consola.info(`  From files: ${storage.learningCount('manual')}`)
-      const cats = storage.topLearningCategories(10)
-      if (cats.length) {
-        consola.info('  Top categories:')
-        for (const c of cats) {
-          consola.info(`    ${c.category}: ${c.count}`)
-        }
-      }
-    }
-
-    const nodeCount = storage.nodeCount()
-    const edgeCount = storage.edgeCount()
-    if (nodeCount) {
-      const exStats = storage.extractionStats()
-      if (exStats.total > 0) {
-        consola.info(`  From conversations: ${storage.learningCount('conversation')}`)
-        consola.info('')
-        consola.info('Extraction Cache:')
-        consola.info(`  Sessions processed: ${exStats.total} (done: ${exStats.done}, empty: ${exStats.empty}, failed: ${exStats.failed}, skipped: ${exStats.skipped})`)
-        consola.info(`  Tokens spent: ${exStats.totalTokens.toLocaleString()}`)
-      }
-
-      consola.info('')
-      consola.info('Knowledge Graph:')
-      consola.info(`  Nodes: ${nodeCount}`)
-      consola.info(`  Edges: ${edgeCount}`)
-      consola.info(`  Orphans: ${storage.orphanNodes().length}`)
-      for (const type of ['person', 'concept', 'protocol', 'learning', 'tool', 'book', 'music', 'media']) {
-        const n = storage.nodeCount(type)
-        if (n > 0) consola.info(`    ${type}: ${n}`)
-      }
-    }
-
-    storage.close()
+    await storage.close()
   },
 })
 
@@ -143,30 +96,34 @@ const searchCommand = defineCommand({
     limit: { type: 'string', description: 'Max results', default: '20' },
     json: { type: 'boolean', description: 'Output as JSON' },
   },
-  run({ args }) {
-    const storage = new SqliteStorage(args.db)
-    storage.init()
+  async run({ args }) {
+    const storage = await createSqliteStorage(args.db)
 
-    const results = storage.search(args.query, {
+    const results = await storage.search(args.query, {
       source: args.source,
       role: args.role,
-      limit: parseInt(args.limit),
+      limit: parseInt(args.limit) || 20,
     })
 
     if (args.json) {
       console.log(JSON.stringify(results, null, 2))
-    } else {
-      if (!results.length) {
-        consola.warn('No results found.')
-        storage.close()
-        return
-      }
-      for (const r of results) {
-        consola.log(`[${r.date}] ${r.source}/${r.role}: ${r.text?.slice(0, 200)}`)
-      }
+      await storage.close()
+      return
     }
 
-    storage.close()
+    if (!results.length) {
+      consola.info('No results found')
+      await storage.close()
+      return
+    }
+
+    for (const r of results) {
+      consola.log(`[${r.date}] ${r.source} (${r.role}) ${r.session_id}`)
+      consola.log(`  ${r.text?.trim()}`)
+      consola.log('')
+    }
+
+    await storage.close()
   },
 })
 
@@ -174,7 +131,7 @@ const main = defineCommand({
   meta: {
     name: 'memxa',
     version: '0.1.0',
-    description: 'Universal AI conversation memory',
+    description: 'Unified AI conversation memory',
   },
   subCommands: {
     ingest: ingestCommand,
