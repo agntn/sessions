@@ -13,34 +13,34 @@ interface SqliteStorageInitOptions {
 }
 
 function resolveMigrationsFolder(): string {
-   const baseDir = dirname(fileURLToPath(import.meta.url))
-   const candidates = [
-     resolve(baseDir, '../../drizzle'),
-     resolve(baseDir, '../drizzle'),
-   ]
- 
-   for (const candidate of candidates) {
-     if (existsSync(candidate)) return candidate
-   }
- 
-   throw new Error('Cannot find drizzle migrations folder. Searched: ' + candidates.join(', '))
- }
+  const baseDir = dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    resolve(baseDir, '../../drizzle'),
+    resolve(baseDir, '../drizzle'),
+  ]
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+
+  throw new Error('Cannot find drizzle migrations folder. Searched: ' + candidates.join(', '))
+}
 
 export class SqliteStorage implements Storage {
   private sqlite: Database.Database
   private db: ReturnType<typeof drizzle<typeof schema>>
 
-   constructor(path: string) {
-     mkdirSync(dirname(path), { recursive: true })
-     this.sqlite = new Database(path)
-     this.db = drizzle(this.sqlite, { schema })
-     this.sqlite.pragma('journal_mode = WAL')
-     this.sqlite.pragma('busy_timeout = 5000')
-     this.sqlite.pragma('foreign_keys = ON')
-   }
+  constructor(path: string) {
+    mkdirSync(dirname(path), { recursive: true })
+    this.sqlite = new Database(path)
+    this.db = drizzle(this.sqlite, { schema })
+    this.sqlite.pragma('journal_mode = WAL')
+    this.sqlite.pragma('busy_timeout = 5000')
+    this.sqlite.pragma('foreign_keys = ON')
+  }
 
-   async init(): Promise<void> {
-     const legacyVersion = this.sqlite.pragma('user_version', { simple: true }) as number
+  async init(): Promise<void> {
+    const legacyVersion = this.sqlite.pragma('user_version', { simple: true }) as number
     migrate(this.db, { migrationsFolder: resolveMigrationsFolder() })
 
     if (legacyVersion > 0) {

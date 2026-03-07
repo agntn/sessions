@@ -66,9 +66,9 @@ import { SqliteStorage } from 'memxa'
 
 const storage = new SqliteStorage('./memory.db')
 await storage.init()
+```
 
 Migrations are managed with `drizzle-kit`, and the runtime opens a local SQLite database through `better-sqlite3`.
-```
 
 ## Sources
 

@@ -21,6 +21,8 @@ export type {
   BlockType,
   Source,
   Storage,
+  SearchRow,
+  SourceStats,
   SourceFactory,
   IngestResult,
 } from './core/types.ts'
