@@ -1,9 +1,15 @@
 export type {
   Message,
   Block,
-  BlockType,
+  Channel,
+  Participant,
   Source,
+  Session,
+  StoredMessage,
   Storage,
-  SourceFactory,
+  SearchRow,
+  SourceStats,
   IngestResult,
-} from './core/types.ts'
+} from "./core/types.ts";
+
+export type { IngestOptions } from "./core/ingest.ts";

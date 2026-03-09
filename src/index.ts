@@ -1,10 +1,11 @@
 // Core API
-export { register, createSource, sources, allSources, has } from './core/registry.ts'
-export { ingest } from './core/ingest.ts'
-export type { IngestOptions } from './core/ingest.ts'
+export { create, sources, allSources, has } from "./sources/index.ts";
+export { ingest } from "./core/ingest.ts";
+export type { IngestOptions } from "./core/ingest.ts";
 
 // Storage
-export { SqliteStorage, createSqliteStorage } from './storage/sqlite.ts'
+export { SqliteStorage, createSqliteStorage } from "./storage/sqlite.ts";
+export { defaultDbPath } from "./core/paths.ts";
 
 // Errors
 export {
@@ -12,17 +13,19 @@ export {
   SourceUnavailableError,
   UnknownSourceError,
   StorageError,
-} from './core/errors.ts'
+} from "./core/errors.ts";
 
 // Types
 export type {
   Message,
   Block,
-  BlockType,
+  Channel,
+  Participant,
   Source,
+  Session,
   Storage,
+  StoredMessage,
   SearchRow,
   SourceStats,
-  SourceFactory,
   IngestResult,
-} from './core/types.ts'
+} from "./core/types.ts";

@@ -1,78 +1,139 @@
-/** Content block types present in AI conversations. */
-export type BlockType = 'text' | 'thinking' | 'tool_call' | 'tool_result'
-
-/** A single content block within a message. */
 export interface Block {
-  type: BlockType
-  text?: string
-  /** tool_call: tool name */
-  toolName?: string
-  /** tool_call: serialized input */
-  toolInput?: string
-  /** tool_call / tool_result: shared call ID */
-  toolCallId?: string
+  type: string;
+  text?: string;
+  toolName?: string;
+  toolInput?: string;
+  toolCallId?: string;
 }
 
-/** Normalized conversation message from any AI tool. */
+export interface Channel {
+  id?: string;
+  platform: string;
+  platformId?: string;
+  name?: string;
+  type?: string;
+}
+
+export interface Participant {
+  id?: string;
+  platform: string;
+  platformId?: string;
+  name: string;
+  isBot?: boolean;
+}
+
 export interface Message {
-  source: string
-  sessionId: string
-  role: 'user' | 'assistant' | 'tool'
-  timestamp: number
-  date: string
-  blocks: Block[]
-  /** Source-specific context (cwd, model, etc). */
-  context?: Record<string, string>
+  source: string;
+  sessionId: string;
+  role: "user" | "assistant" | "tool";
+  timestamp: number;
+  date: string;
+  blocks: Block[];
+  context?: Record<string, string>;
+  author?: Participant;
+  channel?: Channel;
 }
 
-/** A source that can produce messages from a specific AI tool. */
 export interface Source {
-  name: string
-  available(): boolean
-  ingest(cursor: string): AsyncGenerator<Message>
-  cursor(messages: Message[]): string
+  name: string;
+  available(): boolean;
+  ingest(cursor: string): AsyncGenerator<Message>;
+  cursor(messages: Message[]): string;
 }
 
-/** Search result from storage. */
+export interface Session {
+  id: string;
+  source: string;
+  channelId: string | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+export interface StoredMessage extends Message {
+  id: string;
+  author?: Participant & { id: string };
+}
+
 export interface SearchRow {
-  date: string
-  source: string
-  role: string
-  session_id: string
-  text: string
+  date: string;
+  source: string;
+  role: string;
+  sessionId: string;
+  text: string;
 }
 
-/** Source statistics. */
 export interface SourceStats {
-  source: string
-  messages: number
-  sessions: number
+  source: string;
+  messages: number;
+  sessions: number;
 }
 
-/** Persistence layer for ingested messages. */
 export interface Storage {
-  init(): Promise<void>
-  insert(messages: Message[]): Promise<void>
-  getCursor(source: string): Promise<string>
-  setCursor(source: string, cursor: string): Promise<void>
-  count(source?: string): Promise<number>
-  search(query: string, opts?: {
-    source?: string
-    role?: string
-    limit?: number
-    dateFrom?: string
-    dateTo?: string
-  }): Promise<SearchRow[]>
-  sessionCount(): Promise<number>
-  sourceStats(): Promise<SourceStats[]>
-  close(): Promise<void>
-}
+  init(): Promise<void>;
+  close(): Promise<void>;
 
-export type SourceFactory = () => Source
+  getChannel(id: string): Promise<(Channel & { id: string }) | null>;
+  findChannel(
+    platform: string,
+    by: { platformId?: string; name?: string },
+  ): Promise<(Channel & { id: string }) | null>;
+  listChannels(opts?: {
+    platform?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Array<Channel & { id: string }>>;
+
+  createSession(session: {
+    id: string;
+    source: string;
+    channelId?: string;
+    createdAt?: number;
+  }): Promise<void>;
+  getSession(id: string): Promise<Session | null>;
+  listSessions(opts?: { source?: string; limit?: number; offset?: number }): Promise<Session[]>;
+  deleteSession(id: string): Promise<void>;
+
+  addMessage(message: Message): Promise<string>;
+  getMessage(id: string): Promise<StoredMessage | null>;
+  getMessages(
+    sessionId: string,
+    opts?: { limit?: number; offset?: number },
+  ): Promise<StoredMessage[]>;
+  insert(messages: Message[]): Promise<void>;
+
+  search(
+    query: string,
+    opts?: {
+      source?: string;
+      role?: string;
+      limit?: number;
+      dateFrom?: string;
+      dateTo?: string;
+    },
+  ): Promise<SearchRow[]>;
+  count(source?: string): Promise<number>;
+  sessionCount(): Promise<number>;
+  sourceStats(): Promise<SourceStats[]>;
+
+  getParticipant(id: string): Promise<(Participant & { id: string }) | null>;
+  findParticipant(
+    platform: string,
+    platformId: string,
+  ): Promise<(Participant & { id: string }) | null>;
+  listParticipants(opts?: {
+    platform?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<Array<Participant & { id: string }>>;
+  getSessionParticipants(sessionId: string): Promise<Array<Participant & { id: string }>>;
+
+  getCursor(source: string): Promise<string>;
+  setCursor(source: string, cursor: string): Promise<void>;
+}
 
 export interface IngestResult {
-  source: string
-  count: number
-  cursor: string
-  skipped: boolean
+  source: string;
+  count: number;
+  cursor: string;
+  skipped: boolean;
 }

@@ -1,99 +1,128 @@
-import { home } from '../core/env.ts'
-import Database from 'better-sqlite3'
-import { join } from 'node:path'
-import { existsSync } from 'node:fs'
-import type { Source, Message, Block } from '../core/types.ts'
+import { home, osUser } from "../core/env.ts";
+import { createClient } from "@libsql/client";
+import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
 function parseContent(raw: string): Block[] {
   try {
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(raw);
     if (parsed?.format === 2 && Array.isArray(parsed.parts)) {
-      const out: Block[] = []
+      const out: Block[] = [];
       for (const p of parsed.parts) {
-        if (p.type === 'text' && p.text) {
-          out.push({ type: 'text', text: String(p.text).slice(0, 8000) })
-        } else if (p.type === 'tool-invocation' || p.type === 'tool-call') {
+        if (p.type === "text" && p.text) {
+          out.push({ type: "text", text: String(p.text).slice(0, 8000) });
+        } else if (p.type === "tool-invocation" || p.type === "tool-call") {
           out.push({
-            type: 'tool_call',
-            toolName: String(p.toolName || p.name || ''),
-            toolCallId: String(p.toolCallId || p.id || ''),
-            toolInput: typeof p.args === 'string' ? p.args : JSON.stringify(p.args),
-          })
-        } else if (p.type === 'tool-result') {
+            type: "tool_call",
+            toolName: String(p.toolName || p.name || ""),
+            toolCallId: String(p.toolCallId || p.id || ""),
+            toolInput: typeof p.args === "string" ? p.args : JSON.stringify(p.args),
+          });
+        } else if (p.type === "tool-result") {
           out.push({
-            type: 'tool_result',
-            toolCallId: String(p.toolCallId || ''),
-            text: typeof p.result === 'string' ? p.result.slice(0, 8000) : JSON.stringify(p.result).slice(0, 8000),
-          })
+            type: "tool_result",
+            toolCallId: String(p.toolCallId || ""),
+            text:
+              typeof p.result === "string"
+                ? p.result.slice(0, 8000)
+                : JSON.stringify(p.result).slice(0, 8000),
+          });
         }
       }
-      return out
+      return out;
     }
-    if (typeof parsed?.content === 'string') {
-      return [{ type: 'text', text: parsed.content.slice(0, 8000) }]
+    if (typeof parsed?.content === "string") {
+      return [{ type: "text", text: parsed.content.slice(0, 8000) }];
     }
-    if (typeof parsed === 'string') {
-      return parsed.length > 2 ? [{ type: 'text', text: parsed.slice(0, 8000) }] : []
+    if (typeof parsed === "string") {
+      return parsed.length > 2 ? [{ type: "text", text: parsed.slice(0, 8000) }] : [];
     }
   } catch {}
-  return raw.length > 2 ? [{ type: 'text', text: raw.slice(0, 8000) }] : []
+  return raw.length > 2 ? [{ type: "text", text: raw.slice(0, 8000) }] : [];
+}
+
+function parseCursor(cursor: string): { createdAt: string; rowId: number } {
+  if (!cursor) return { createdAt: "1970-01-01", rowId: 0 };
+  const [createdAt, rowIdRaw] = cursor.split("|");
+  const rowId = Number(rowIdRaw || "0");
+  return {
+    createdAt: createdAt || "1970-01-01",
+    rowId: Number.isFinite(rowId) && rowId > 0 ? rowId : 0,
+  };
 }
 
 export class MastraSource implements Source {
-  name = 'mastra'
-  private dbPath: string
+  name = "mastra";
+  private dbPath: string;
+  private channel: Channel = { platform: "cli", name: "mastra" };
+  private user: Participant;
 
   constructor(dbPath?: string) {
-    this.dbPath = dbPath ?? join(home(), '.local/share/mastracode/mastra.db')
+    this.dbPath = dbPath ?? join(home(), ".local/share/mastracode/mastra.db");
+    this.user = { platform: "cli", name: osUser() };
   }
 
   available(): boolean {
-    return existsSync(this.dbPath)
+    return existsSync(this.dbPath);
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {
-    const db = new Database(this.dbPath, { readonly: true })
+    const parsedCursor = parseCursor(cursor);
+    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      const rows = db.prepare(`
-        SELECT role, content, createdAt, thread_id
+      const rowsResult = await db.execute({
+        sql: `
+        SELECT rowid as rowId, role, content, createdAt, thread_id
         FROM mastra_messages
-        WHERE createdAt > ? AND role IN ('user', 'assistant')
-        ORDER BY createdAt
-      `).all(cursor || '1970-01-01') as {
-        role: string
-        content: string
-        createdAt: string
-        thread_id: string
-      }[]
+        WHERE role IN ('user', 'assistant')
+          AND (createdAt > ? OR (createdAt = ? AND rowid > ?))
+        ORDER BY createdAt, rowid
+      `,
+        args: [parsedCursor.createdAt, parsedCursor.createdAt, parsedCursor.rowId],
+      });
+      const rows = rowsResult.rows as unknown as {
+        rowId: number;
+        role: string;
+        content: string;
+        createdAt: string;
+        thread_id: string;
+      }[];
 
       for (const row of rows) {
-        const entryBlocks = parseContent(row.content)
-        if (!entryBlocks.length) continue
+        const entryBlocks = parseContent(row.content);
+        if (!entryBlocks.length) continue;
 
-        const date = row.createdAt?.split('T')[0]
-        if (!date) continue
+        const date = row.createdAt?.split("T")[0];
+        if (!date) continue;
+
+        const ts = new Date(row.createdAt).getTime();
+        if (!Number.isFinite(ts)) continue;
 
         yield {
           source: this.name,
           sessionId: row.thread_id,
-          role: row.role as 'user' | 'assistant',
-          timestamp: new Date(row.createdAt).getTime(),
+          role: row.role as "user" | "assistant",
+          timestamp: ts,
           date,
           blocks: entryBlocks,
-        }
+          context: { mastraCreatedAt: row.createdAt, mastraRowId: String(row.rowId) },
+          channel: this.channel,
+          author:
+            row.role === "user" ? this.user : { platform: "cli", name: "mastra", isBot: true },
+        };
       }
     } finally {
-      db.close()
+      db.close();
     }
   }
 
   cursor(messages: Message[]): string {
-    if (!messages.length) return ''
-    return new Date(messages[messages.length - 1].timestamp).toISOString()
+    if (!messages.length) return "";
+    const last = messages[messages.length - 1];
+    const createdAt = last.context?.mastraCreatedAt;
+    const rowId = last.context?.mastraRowId;
+    if (createdAt && rowId) return `${createdAt}|${rowId}`;
+    return `${new Date(last.timestamp).toISOString()}|0`;
   }
-}
-
-/** Factory function for Mastra source. */
-export function mastra(dbPath?: string): () => MastraSource {
-  return () => new MastraSource(dbPath)
 }

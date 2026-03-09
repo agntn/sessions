@@ -1,17 +1,37 @@
 {
   "name": "memxa",
   "version": "0.1.0",
-  "description": "Universal AI conversation memory. Ingest sessions from any coding assistant into a single searchable store.",
-  "type": "module",
+  "description": "Universal AI conversation memory store with local SQLite backend.",
+  "keywords": [
+    "ai",
+    "claude",
+    "codex",
+    "conversation",
+    "gemini",
+    "ingest",
+    "memory",
+    "search",
+    "sqlite"
+  ],
+  "homepage": "https://github.com/oritwoen/memxa#readme",
+  "bugs": "https://github.com/oritwoen/memxa/issues",
   "license": "MIT",
-  "sideEffects": false,
   "author": "oritwoen (https://github.com/oritwoen)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/oritwoen/memxa.git"
   },
-  "homepage": "https://github.com/oritwoen/memxa#readme",
-  "bugs": "https://github.com/oritwoen/memxa/issues",
+  "bin": {
+    "memxa": "./dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "drizzle"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
   "exports": {
     ".": {
       "types": "./dist/index.d.mts",
@@ -26,19 +46,6 @@
       "import": "./dist/types.mjs"
     }
   },
-  "main": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
-  "bin": {
-    "memxa": "./dist/cli.mjs"
-  },
-  "files": [
-    "dist",
-    "drizzle"
-  ],
-  "engines": {
-    "node": ">=22.6.0"
-  },
-  "packageManager": "pnpm@10.30.3",
   "scripts": {
     "build": "obuild",
     "db:check": "drizzle-kit check",
@@ -46,41 +53,36 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "dev:prepare": "obuild --stub",
+    "fmt": "oxlint . --fix && oxfmt .",
+    "lint": "oxlint . && oxfmt --check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
     "prepack": "pnpm run build",
     "release": "pnpm test:run && pnpm build && changelogen --release --push"
   },
-  "keywords": [
-    "ai",
-    "memory",
-    "conversation",
-    "ingest",
-    "claude",
-    "codex",
-    "gemini",
-    "sqlite",
-    "search"
-  ],
   "dependencies": {
-    "better-sqlite3": "^12.6.2",
+    "@libsql/client": "^0.15.15",
     "citty": "^0.2.1",
     "consola": "^3.4.2",
     "drizzle-orm": "^0.45.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.0",
     "changelogen": "^0.6.2",
     "drizzle-kit": "^0.31.9",
     "obuild": "^0.4.31",
+    "oxfmt": "^0.36.0",
+    "oxlint": "^1.51.0",
     "typescript": "^5.8.3",
     "vitest": "^4.0.0"
   },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "packageManager": "pnpm@10.30.3",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3",
       "esbuild"
     ]
   }
