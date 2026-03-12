@@ -20,7 +20,8 @@ export class OpenCodeSource implements Source {
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {
-    const since = Number(cursor) || 0;
+    const parsedCursor = Number(cursor);
+    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
       const rowsResult = await db.execute({
@@ -47,6 +48,12 @@ export class OpenCodeSource implements Source {
       for (const row of rows) {
         if (row.role !== "user" && row.role !== "assistant") continue;
 
+        const ts = Number(row.tc);
+        if (!Number.isFinite(ts)) continue;
+        const dateValue = new Date(ts);
+        if (Number.isNaN(dateValue.getTime())) continue;
+        const date = dateValue.toISOString().split("T")[0];
+
         let part: Record<string, unknown>;
         try {
           part = JSON.parse(row.pdata);
@@ -67,8 +74,8 @@ export class OpenCodeSource implements Source {
             source: this.name,
             sessionId: row.sid,
             role: row.role as "user" | "assistant",
-            timestamp: row.tc,
-            date: new Date(row.tc).toISOString().split("T")[0],
+            timestamp: ts,
+            date,
             blocks: [{ type: "text", text: text.slice(0, 8000) }],
             channel: this.channel,
             author,
@@ -78,8 +85,8 @@ export class OpenCodeSource implements Source {
             source: this.name,
             sessionId: row.sid,
             role: row.role as "user" | "assistant",
-            timestamp: row.tc,
-            date: new Date(row.tc).toISOString().split("T")[0],
+            timestamp: ts,
+            date,
             blocks: [
               {
                 type: "tool_call",
@@ -101,8 +108,8 @@ export class OpenCodeSource implements Source {
             source: this.name,
             sessionId: row.sid,
             role: "tool",
-            timestamp: row.tc,
-            date: new Date(row.tc).toISOString().split("T")[0],
+            timestamp: ts,
+            date,
             blocks: [
               {
                 type: "tool_result",

@@ -34,14 +34,14 @@ export async function ingest(
       continue;
     }
 
-    const cursor = options.dryRun ? "0" : await storage.getCursor(source.name);
+    const cursor = await storage.getCursor(source.name);
     let count = 0;
     let batch: Message[] = [];
-    let lastMsg: Message | undefined;
+    const cursorMessages: Message[] = [];
 
     for await (const msg of source.ingest(cursor)) {
       count++;
-      lastMsg = msg;
+      cursorMessages.push(msg);
 
       if (options.dryRun) {
         if (count <= previewLimit) options.onMessage?.(msg);
@@ -66,13 +66,16 @@ export async function ingest(
       continue;
     }
 
+    let resultCursor = cursor;
+
     if (options.dryRun) {
       if (count > previewLimit && options.verbose) {
         options.onLog?.(`  ... and ${count - previewLimit} more`);
       }
-    } else if (lastMsg) {
-      const newCursor = source.cursor([lastMsg]);
+    } else if (cursorMessages.length) {
+      const newCursor = source.cursor(cursorMessages);
       await storage.setCursor(source.name, newCursor);
+      resultCursor = newCursor;
     }
 
     if (options.verbose) {
@@ -83,7 +86,7 @@ export async function ingest(
     results.push({
       source: source.name,
       count,
-      cursor: options.dryRun ? "" : lastMsg ? source.cursor([lastMsg]) : cursor,
+      cursor: options.dryRun ? cursor : resultCursor,
       skipped: false,
     });
   }

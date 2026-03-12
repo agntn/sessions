@@ -141,6 +141,78 @@ describe("SqliteStorage", () => {
     expect(await storage.sessionCount()).toBe(2);
   });
 
+  it("groups fallback session ids by source/date/channel when sessionId is missing", async () => {
+    const m1: Message = {
+      source: "fallback",
+      sessionId: "",
+      role: "user",
+      timestamp: 1000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "alpha" }],
+      channel: { platform: "cli", name: "main" },
+    };
+    const m2: Message = {
+      source: "fallback",
+      sessionId: "",
+      role: "assistant",
+      timestamp: 2000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "beta" }],
+      channel: { platform: "cli", name: "main" },
+    };
+
+    await storage.insert([m1, m2]);
+
+    const sessions = await storage.listSessions({ source: "fallback" });
+    expect(sessions).toHaveLength(1);
+  });
+
+  it("derives stable fallback session id across insert and addMessage", async () => {
+    const base: Message = {
+      source: "fallback-stable",
+      sessionId: "",
+      role: "user",
+      timestamp: 5000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "same payload" }],
+      channel: { platform: "cli", name: "opencode" },
+    };
+
+    await storage.insert([base]);
+    await storage.addMessage({ ...base });
+
+    const sessions = await storage.listSessions({ source: "fallback-stable" });
+    expect(sessions).toHaveLength(1);
+    const msgs = await storage.getMessages(sessions[0].id);
+    expect(msgs).toHaveLength(2);
+  });
+
+  it("derives different fallback session ids for different channels", async () => {
+    await storage.insert([
+      {
+        source: "fallback-channel",
+        sessionId: "",
+        role: "user",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "same" }],
+        channel: { platform: "cli", name: "a" },
+      },
+      {
+        source: "fallback-channel",
+        sessionId: "",
+        role: "assistant",
+        timestamp: 1500,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "same" }],
+        channel: { platform: "cli", name: "b" },
+      },
+    ]);
+
+    const sessions = await storage.listSessions({ source: "fallback-channel" });
+    expect(sessions).toHaveLength(2);
+  });
+
   it("applies migrations idempotently", async () => {
     // Second init should be a no-op
     await storage.init();
@@ -166,8 +238,8 @@ describe("SqliteStorage", () => {
     });
     inspected.close();
 
-    const migrationTable = migrationTableResult.rows[0] as { name: string } | undefined;
-    const metadata = metadataResult.rows[0] as { value: string };
+    const migrationTable = migrationTableResult.rows[0] as unknown as { name: string } | undefined;
+    const metadata = metadataResult.rows[0] as unknown as { value: string };
 
     expect(migrationTable?.name).toBe("__drizzle_migrations");
     expect(metadata.value).toBe("7");
@@ -194,8 +266,8 @@ describe("SqliteStorage", () => {
 
     const blockCountResult = await db.execute("SELECT count(*) as c FROM blocks");
     const ctxCountResult = await db.execute("SELECT count(*) as c FROM contexts");
-    const blockCount = blockCountResult.rows[0] as { c: number };
-    const ctxCount = ctxCountResult.rows[0] as { c: number };
+    const blockCount = blockCountResult.rows[0] as unknown as { c: number };
+    const ctxCount = ctxCountResult.rows[0] as unknown as { c: number };
     expect(blockCount.c).toBe(0);
     expect(ctxCount.c).toBe(0);
   });

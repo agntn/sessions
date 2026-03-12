@@ -128,7 +128,8 @@ export class OpenClawSource implements Source {
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {
-    const since = Number(cursor) || 0;
+    const parsedCursor = Number(cursor);
+    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
 
     const files: { path: string; mtime: number }[] = [];
     for (const f of walkJsonl(this.sessionsDirs)) {

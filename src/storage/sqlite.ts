@@ -2,6 +2,7 @@ import { createClient, type Client } from "@libsql/client";
 import { asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -87,6 +88,18 @@ function groupBy<T, K>(items: T[], key: (item: T) => K): Map<K, T[]> {
   return map;
 }
 
+function resolveSessionId(message: Message): string {
+  if (message.sessionId) return message.sessionId;
+
+  const channelKey = message.channel?.platformId ?? message.channel?.name ?? "";
+  const digest = createHash("sha1")
+    .update([message.source, message.date, channelKey].join("|"))
+    .digest("hex")
+    .slice(0, 12);
+
+  return `${message.source}-${message.date}-${digest}`;
+}
+
 export class SqliteStorage implements Storage {
   private readonly client: Client;
   private readonly db: ReturnType<typeof drizzle<typeof schema>>;
@@ -147,7 +160,7 @@ export class SqliteStorage implements Storage {
     const participantCache = new Map<string, string>();
 
     for (const message of batch) {
-      const sessionId = message.sessionId || `${message.source}-${message.date}`;
+      const sessionId = resolveSessionId(message);
       const channelId = await this.resolveChannelIdForBatch(
         message.channel,
         channelCache,
@@ -284,7 +297,7 @@ export class SqliteStorage implements Storage {
   }
 
   async addMessage(message: Message): Promise<string> {
-    const sessionId = message.sessionId || `${message.source}-${message.date}`;
+    const sessionId = resolveSessionId(message);
     const channelId = await this.resolveChannelId(message.channel);
 
     await this.db

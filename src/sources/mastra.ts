@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
 function parseContent(raw: string): Block[] {
+  const fallback = raw.length > 2 ? [{ type: "text", text: raw.slice(0, 8000) }] : [];
   try {
     const parsed = JSON.parse(raw);
     if (parsed?.format === 2 && Array.isArray(parsed.parts)) {
@@ -38,16 +39,19 @@ function parseContent(raw: string): Block[] {
     if (typeof parsed === "string") {
       return parsed.length > 2 ? [{ type: "text", text: parsed.slice(0, 8000) }] : [];
     }
-  } catch {}
-  return raw.length > 2 ? [{ type: "text", text: raw.slice(0, 8000) }] : [];
+  } catch {
+    return fallback;
+  }
+  return fallback;
 }
 
 function parseCursor(cursor: string): { createdAt: string; rowId: number } {
   if (!cursor) return { createdAt: "1970-01-01", rowId: 0 };
   const [createdAt, rowIdRaw] = cursor.split("|");
   const rowId = Number(rowIdRaw || "0");
+  const parsedCreatedAt = Date.parse(createdAt || "");
   return {
-    createdAt: createdAt || "1970-01-01",
+    createdAt: Number.isFinite(parsedCreatedAt) ? (createdAt as string) : "1970-01-01",
     rowId: Number.isFinite(rowId) && rowId > 0 ? rowId : 0,
   };
 }

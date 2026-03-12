@@ -150,4 +150,49 @@ describe("ingest", () => {
     expect(storage.inserted).toHaveLength(0);
     expect(onMessage).toHaveBeenCalledOnce();
   });
+
+  it("dry run reads current cursor but does not persist updates", async () => {
+    const storage = makeStorage();
+    storage.cursors.set("test", "123");
+    let receivedCursor = "";
+    const source: Source = {
+      name: "test",
+      available: () => true,
+      async *ingest(cursor: string) {
+        receivedCursor = cursor;
+        yield msg("test", 200);
+      },
+      cursor: (msgs) => (msgs.length ? String(msgs[msgs.length - 1].timestamp) : "0"),
+    };
+
+    const results = await ingest([source], storage, { dryRun: true });
+
+    expect(receivedCursor).toBe("123");
+    expect(results[0].count).toBe(1);
+    expect(results[0].cursor).toBe("123");
+    expect(storage.cursors.get("test")).toBe("123");
+  });
+
+  it("advances cursor from the full processed set, not only the last yielded message", async () => {
+    const storage = makeStorage();
+    const processed: Message[] = [];
+    const source: Source = {
+      name: "test",
+      available: () => true,
+      async *ingest() {
+        yield msg("test", 300);
+        yield msg("test", 200);
+      },
+      cursor: (msgs) => {
+        processed.push(...msgs);
+        return String(Math.max(...msgs.map((m) => m.timestamp)));
+      },
+    };
+
+    const results = await ingest([source], storage);
+
+    expect(results[0].cursor).toBe("300");
+    expect(storage.cursors.get("test")).toBe("300");
+    expect(processed).toHaveLength(2);
+  });
 });

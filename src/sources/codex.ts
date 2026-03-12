@@ -135,7 +135,8 @@ export class CodexSource implements Source {
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {
-    const since = Number(cursor) || 0;
+    const parsedCursor = Number(cursor);
+    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
 
     const files: { path: string; mtime: number; format: "jsonl" | "json" }[] = [];
     for (const f of walkSessions(this.sessionsDir)) {

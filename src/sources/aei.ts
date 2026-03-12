@@ -17,7 +17,8 @@ export class AeiSource implements Source {
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {
-    const since = Number(cursor) || 0;
+    const parsedCursor = Number(cursor);
+    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
 
     try {
@@ -58,6 +59,12 @@ export class AeiSource implements Source {
       for (const row of rows) {
         const role = row.role as "user" | "assistant" | "tool";
         if (role !== "user" && role !== "assistant" && role !== "tool") continue;
+
+        const ts = Number(row.timestamp);
+        if (!Number.isFinite(ts)) continue;
+        const fallbackDateValue = new Date(ts);
+        if (!row.date && Number.isNaN(fallbackDateValue.getTime())) continue;
+        const date = row.date || fallbackDateValue.toISOString().split("T")[0];
 
         const blockRowsResult = await db.execute({
           sql: `
@@ -116,8 +123,8 @@ export class AeiSource implements Source {
           source: this.name,
           sessionId: row.session_id,
           role,
-          timestamp: row.timestamp,
-          date: row.date || new Date(row.timestamp).toISOString().split("T")[0],
+          timestamp: ts,
+          date,
           blocks,
           context: Object.keys(context).length ? context : undefined,
           channel,
