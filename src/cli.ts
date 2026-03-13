@@ -35,24 +35,26 @@ const ingestCommand = defineCommand({
   },
   async run({ args }) {
     const storage = await createSqliteStorage(resolveDb(args.db));
+    try {
+      const only = args.only
+        ?.split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const results = await ingest(allSources(), storage, {
+        only,
+        verbose: true,
+        dryRun: args.dryRun,
+        onLog: (m) => consola.log(m),
+        onMessage(msg) {
+          consola.log(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
+        },
+      });
 
-    const only = args.only
-      ?.split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const results = await ingest(allSources(), storage, {
-      only,
-      verbose: true,
-      dryRun: args.dryRun,
-      onLog: (m) => consola.log(m),
-      onMessage(msg) {
-        consola.log(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
-      },
-    });
-
-    const total = results.reduce((sum, r) => sum + r.count, 0);
-    consola.info(`Total: ${total} messages`);
-    await storage.close();
+      const total = results.reduce((sum, r) => sum + r.count, 0);
+      consola.info(`Total: ${total} messages`);
+    } finally {
+      await storage.close();
+    }
   },
 });
 
@@ -69,22 +71,23 @@ const statsCommand = defineCommand({
     }
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
+    try {
+      consola.info(`Database: ${dbPath}`);
+      consola.info("");
 
-    consola.info(`Database: ${dbPath}`);
-    consola.info("");
+      consola.info("Messages:");
+      consola.info(`  Total: ${await storage.count()}`);
 
-    consola.info("Messages:");
-    consola.info(`  Total: ${await storage.count()}`);
+      const stats = await storage.sourceStats();
+      for (const s of stats) {
+        consola.info(`  ${s.source}: ${s.messages} messages, ${s.sessions} sessions`);
+      }
 
-    const stats = await storage.sourceStats();
-    for (const s of stats) {
-      consola.info(`  ${s.source}: ${s.messages} messages, ${s.sessions} sessions`);
+      consola.info("");
+      consola.info(`Sessions: ${await storage.sessionCount()}`);
+    } finally {
+      await storage.close();
     }
-
-    consola.info("");
-    consola.info(`Sessions: ${await storage.sessionCount()}`);
-
-    await storage.close();
   },
 });
 
@@ -118,34 +121,33 @@ const searchCommand = defineCommand({
     }
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
+    try {
+      const results = await storage.search(args.query, {
+        source: args.source,
+        role: args.role,
+        dateFrom: args.dateFrom,
+        dateTo: args.dateTo,
+        limit: parseInt(args.limit) || 20,
+      });
 
-    const results = await storage.search(args.query, {
-      source: args.source,
-      role: args.role,
-      dateFrom: args.dateFrom,
-      dateTo: args.dateTo,
-      limit: parseInt(args.limit) || 20,
-    });
+      if (args.json) {
+        console.log(JSON.stringify(results, null, 2));
+        return;
+      }
 
-    if (args.json) {
-      console.log(JSON.stringify(results, null, 2));
+      if (!results.length) {
+        consola.info("No results found");
+        return;
+      }
+
+      for (const r of results) {
+        consola.log(`[${r.date}] ${r.source} (${r.role}) ${r.sessionId}`);
+        consola.log(`  ${r.text?.trim()}`);
+        consola.log("");
+      }
+    } finally {
       await storage.close();
-      return;
     }
-
-    if (!results.length) {
-      consola.info("No results found");
-      await storage.close();
-      return;
-    }
-
-    for (const r of results) {
-      consola.log(`[${r.date}] ${r.source} (${r.role}) ${r.sessionId}`);
-      consola.log(`  ${r.text?.trim()}`);
-      consola.log("");
-    }
-
-    await storage.close();
   },
 });
 
