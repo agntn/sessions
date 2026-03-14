@@ -341,6 +341,30 @@ describe("SqliteStorage CRUD", () => {
     expect(limited).toHaveLength(1);
   });
 
+  it("clamps negative limit and offset in listSessions", async () => {
+    await storage.createSession({ id: "ses-a", source: "test" });
+    await storage.createSession({ id: "ses-b", source: "test" });
+
+    const negLimit = await storage.listSessions({ limit: -1 });
+    expect(negLimit).toHaveLength(1);
+
+    const zeroLimit = await storage.listSessions({ limit: 0 });
+    expect(zeroLimit).toHaveLength(1);
+
+    const negOffset = await storage.listSessions({ limit: 10, offset: -5 });
+    expect(negOffset).toHaveLength(2);
+  });
+
+  it("clamps negative limit in getMessages", async () => {
+    await storage.insert([
+      msg("test", "user", 1000, "a"),
+      msg("test", "user", 2000, "b"),
+    ]);
+
+    const negLimit = await storage.getMessages("session-test", { limit: -1 });
+    expect(negLimit).toHaveLength(1);
+  });
+
   it("deletes a session", async () => {
     await storage.createSession({ id: "ses-del", source: "test" });
     expect(await storage.getSession("ses-del")).not.toBeNull();
