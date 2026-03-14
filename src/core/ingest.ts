@@ -36,62 +36,76 @@ export async function ingest(
 
     const cursor = await storage.getCursor(source.name);
     let count = 0;
-    let batch: Message[] = [];
-    let cursorSeed: Message | null = null;
+    try {
+      let batch: Message[] = [];
+      let cursorSeed: Message | null = null;
 
-    for await (const msg of source.ingest(cursor)) {
-      count++;
+      for await (const msg of source.ingest(cursor)) {
+        count++;
 
-      if (!cursorSeed || msg.timestamp >= cursorSeed.timestamp) {
-        cursorSeed = msg;
+        if (!cursorSeed || msg.timestamp >= cursorSeed.timestamp) {
+          cursorSeed = msg;
+        }
+
+        if (options.dryRun) {
+          if (count <= previewLimit) options.onMessage?.(msg);
+          continue;
+        }
+
+        batch.push(msg);
+        if (batch.length >= BATCH_SIZE) {
+          await storage.insert(batch);
+          batch = [];
+        }
       }
 
-      if (options.dryRun) {
-        if (count <= previewLimit) options.onMessage?.(msg);
+      // Flush remaining
+      if (!options.dryRun && batch.length) {
+        await storage.insert(batch);
+      }
+
+      if (!count) {
+        if (options.verbose) options.onLog?.(`  ${source.name}: up to date`);
+        results.push({ source: source.name, count: 0, cursor, skipped: false });
         continue;
       }
 
-      batch.push(msg);
-      if (batch.length >= BATCH_SIZE) {
-        await storage.insert(batch);
-        batch = [];
+      let resultCursor = cursor;
+
+      if (options.dryRun) {
+        if (count > previewLimit && options.verbose) {
+          options.onLog?.(`  ... and ${count - previewLimit} more`);
+        }
+      } else if (cursorSeed) {
+        const newCursor = source.cursor([cursorSeed]);
+        await storage.setCursor(source.name, newCursor);
+        resultCursor = newCursor;
       }
-    }
 
-    // Flush remaining
-    if (!options.dryRun && batch.length) {
-      await storage.insert(batch);
-    }
-
-    if (!count) {
-      if (options.verbose) options.onLog?.(`  ${source.name}: up to date`);
-      results.push({ source: source.name, count: 0, cursor, skipped: false });
-      continue;
-    }
-
-    let resultCursor = cursor;
-
-    if (options.dryRun) {
-      if (count > previewLimit && options.verbose) {
-        options.onLog?.(`  ... and ${count - previewLimit} more`);
+      if (options.verbose) {
+        const suffix = options.dryRun ? " (dry run)" : " ingested";
+        options.onLog?.(`  ${source.name}: ${count} messages${suffix}`);
       }
-    } else if (cursorSeed) {
-      const newCursor = source.cursor([cursorSeed]);
-      await storage.setCursor(source.name, newCursor);
-      resultCursor = newCursor;
-    }
 
-    if (options.verbose) {
-      const suffix = options.dryRun ? " (dry run)" : " ingested";
-      options.onLog?.(`  ${source.name}: ${count} messages${suffix}`);
+      results.push({
+        source: source.name,
+        count,
+        cursor: options.dryRun ? cursor : resultCursor,
+        skipped: false,
+      });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (options.verbose) {
+        options.onLog?.(`  ${source.name}: error - ${error}`);
+      }
+      results.push({
+        source: source.name,
+        count,
+        cursor,
+        skipped: false,
+        error,
+      });
     }
-
-    results.push({
-      source: source.name,
-      count,
-      cursor: options.dryRun ? cursor : resultCursor,
-      skipped: false,
-    });
   }
 
   return results;
