@@ -393,9 +393,9 @@ describe("SqliteStorage CRUD", () => {
     expect(fractionalLimit).toHaveLength(1);
     expect(fractionalLimit[0].blocks[0].text).toBe("a");
 
-    const fractionalOffset = await storage.getMessages("session-test", { limit: 10, offset: 0.9 });
-    expect(fractionalOffset).toHaveLength(2);
-    expect(fractionalOffset[0].blocks[0].text).toBe("a");
+    const fractionalOffset = await storage.getMessages("session-test", { limit: 10, offset: 1.7 });
+    expect(fractionalOffset).toHaveLength(1);
+    expect(fractionalOffset[0].blocks[0].text).toBe("b");
   });
 
   it("clamps negative limit and offset in listParticipants", async () => {
