@@ -85,6 +85,18 @@ const statsCommand = defineCommand({
 
       consola.info("");
       consola.info(`Sessions: ${await storage.sessionCount()}`);
+
+      consola.info("");
+      consola.info("Cursors:");
+      for (const s of stats) {
+        const cursor = await storage.getCursor(s.source);
+        const ts = Number(cursor);
+        const display =
+          Number.isFinite(ts) && ts > 0
+            ? `${cursor} (${new Date(ts).toISOString()})`
+            : cursor || "(none)";
+        consola.info(`  ${s.source}: ${display}`);
+      }
     } finally {
       await storage.close();
     }
