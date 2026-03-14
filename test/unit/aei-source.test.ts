@@ -20,6 +20,8 @@ function mockMessagesAndBlocks(
   blocksByMessage: Record<string, unknown>[][],
 ): void {
   executeMock.mockResolvedValueOnce({ rows: messages });
+  // The batch blocks query returns ALL blocks for ALL messages in one result.
+  // Each block row needs a message_id to map back to its parent message.
   const allBlocks: Record<string, unknown>[] = [];
   for (let i = 0; i < messages.length; i++) {
     const msgId = messages[i].id;
