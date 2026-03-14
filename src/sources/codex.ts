@@ -146,7 +146,7 @@ export class CodexSource implements Source {
     files.sort((a, b) => a.mtime - b.mtime);
 
     for (const file of files) {
-      if (file.mtime <= since) continue;
+      if (file.mtime < since) continue;
 
       if (file.format === "json") {
         yield* parseJsonSession(file.path, file.mtime, since, this.name, this.channel, this.user);

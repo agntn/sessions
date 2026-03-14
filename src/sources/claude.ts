@@ -85,7 +85,7 @@ export class ClaudeSource implements Source {
     files.sort((a, b) => a.mtime - b.mtime);
 
     for (const file of files) {
-      if (file.mtime <= since) continue;
+      if (file.mtime < since) continue;
 
       const sessionId = file.path.split("/").pop()?.replace(".jsonl", "") || "";
 
