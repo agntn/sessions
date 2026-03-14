@@ -389,8 +389,13 @@ describe("SqliteStorage CRUD", () => {
     const nanLimit = await storage.getMessages("session-test", { limit: Number.NaN });
     expect(nanLimit).toHaveLength(2);
 
-    const fractional = await storage.getMessages("session-test", { limit: 1.9, offset: 0.9 });
-    expect(fractional).toHaveLength(1);
+    const fractionalLimit = await storage.getMessages("session-test", { limit: 1.9, offset: 0 });
+    expect(fractionalLimit).toHaveLength(1);
+    expect(fractionalLimit[0].blocks[0].text).toBe("a");
+
+    const fractionalOffset = await storage.getMessages("session-test", { limit: 10, offset: 0.9 });
+    expect(fractionalOffset).toHaveLength(2);
+    expect(fractionalOffset[0].blocks[0].text).toBe("a");
   });
 
   it("clamps negative limit and offset in listParticipants", async () => {
@@ -418,7 +423,13 @@ describe("SqliteStorage CRUD", () => {
     expect(negLimit).toHaveLength(1);
 
     const negOffset = await storage.listParticipants({ limit: 50, offset: -5 });
-    expect(negOffset.length).toBeGreaterThanOrEqual(2);
+    expect(negOffset).toHaveLength(2);
+
+    const nanLimit = await storage.listParticipants({ limit: Number.NaN });
+    expect(nanLimit).toHaveLength(2);
+
+    const fractionalLimit = await storage.listParticipants({ limit: 1.9, offset: 0 });
+    expect(fractionalLimit).toHaveLength(1);
   });
 
   it("clamps negative limit and offset in listChannels", async () => {
@@ -446,7 +457,13 @@ describe("SqliteStorage CRUD", () => {
     expect(negLimit).toHaveLength(1);
 
     const negOffset = await storage.listChannels({ limit: 50, offset: -5 });
-    expect(negOffset.length).toBeGreaterThanOrEqual(2);
+    expect(negOffset).toHaveLength(2);
+
+    const nanLimit = await storage.listChannels({ limit: Number.NaN });
+    expect(nanLimit).toHaveLength(2);
+
+    const fractionalLimit = await storage.listChannels({ limit: 1.9, offset: 0 });
+    expect(fractionalLimit).toHaveLength(1);
   });
 
   it("deletes a session", async () => {
