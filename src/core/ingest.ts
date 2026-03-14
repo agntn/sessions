@@ -37,11 +37,14 @@ export async function ingest(
     const cursor = await storage.getCursor(source.name);
     let count = 0;
     let batch: Message[] = [];
-    const cursorMessages: Message[] = [];
+    let cursorSeed: Message | null = null;
 
     for await (const msg of source.ingest(cursor)) {
       count++;
-      cursorMessages.push(msg);
+
+      if (!cursorSeed || msg.timestamp >= cursorSeed.timestamp) {
+        cursorSeed = msg;
+      }
 
       if (options.dryRun) {
         if (count <= previewLimit) options.onMessage?.(msg);
@@ -72,8 +75,8 @@ export async function ingest(
       if (count > previewLimit && options.verbose) {
         options.onLog?.(`  ... and ${count - previewLimit} more`);
       }
-    } else if (cursorMessages.length) {
-      const newCursor = source.cursor(cursorMessages);
+    } else if (cursorSeed) {
+      const newCursor = source.cursor([cursorSeed]);
       await storage.setCursor(source.name, newCursor);
       resultCursor = newCursor;
     }
