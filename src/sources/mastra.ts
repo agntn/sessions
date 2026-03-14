@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
 function parseContent(raw: string): Block[] {
-  const fallback = raw.length > 2 ? [{ type: "text", text: raw.slice(0, 8000) }] : [];
+  const fallback = raw.length > 0 ? [{ type: "text", text: raw.slice(0, 8000) }] : [];
   try {
     const parsed = JSON.parse(raw);
     if (parsed?.format === 2 && Array.isArray(parsed.parts)) {
@@ -37,7 +37,7 @@ function parseContent(raw: string): Block[] {
       return [{ type: "text", text: parsed.content.slice(0, 8000) }];
     }
     if (typeof parsed === "string") {
-      return parsed.length > 2 ? [{ type: "text", text: parsed.slice(0, 8000) }] : [];
+      return parsed.length > 0 ? [{ type: "text", text: parsed.slice(0, 8000) }] : [];
     }
   } catch {
     return fallback;

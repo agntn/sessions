@@ -6,7 +6,7 @@ import type { Source, Message, Block, Channel, Participant } from "../core/types
 
 function parseBlocks(content: unknown): Block[] {
   if (typeof content === "string") {
-    return content.length > 2 ? [{ type: "text", text: content.slice(0, 8000) }] : [];
+    return content.length > 0 ? [{ type: "text", text: content.slice(0, 8000) }] : [];
   }
   if (!Array.isArray(content)) return [];
 
