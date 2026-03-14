@@ -36,6 +36,7 @@ export async function ingest(
 
     const cursor = await storage.getCursor(source.name);
     let count = 0;
+    let ingestedCount = 0;
     try {
       let batch: Message[] = [];
       let cursorSeed: Message | null = null;
@@ -48,6 +49,7 @@ export async function ingest(
         }
 
         if (options.dryRun) {
+          ingestedCount++;
           if (count <= previewLimit) options.onMessage?.(msg);
           continue;
         }
@@ -55,6 +57,7 @@ export async function ingest(
         batch.push(msg);
         if (batch.length >= BATCH_SIZE) {
           await storage.insert(batch);
+          ingestedCount += batch.length;
           batch = [];
         }
       }
@@ -62,6 +65,7 @@ export async function ingest(
       // Flush remaining
       if (!options.dryRun && batch.length) {
         await storage.insert(batch);
+        ingestedCount += batch.length;
       }
 
       if (!count) {
@@ -84,12 +88,12 @@ export async function ingest(
 
       if (options.verbose) {
         const suffix = options.dryRun ? " (dry run)" : " ingested";
-        options.onLog?.(`  ${source.name}: ${count} messages${suffix}`);
+        options.onLog?.(`  ${source.name}: ${ingestedCount} messages${suffix}`);
       }
 
       results.push({
         source: source.name,
-        count,
+        count: ingestedCount,
         cursor: options.dryRun ? cursor : resultCursor,
         skipped: false,
       });
@@ -100,7 +104,7 @@ export async function ingest(
       }
       results.push({
         source: source.name,
-        count,
+        count: ingestedCount,
         cursor,
         skipped: false,
         error,
