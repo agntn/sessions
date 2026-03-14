@@ -252,6 +252,25 @@ describe("SqliteStorage", () => {
     expect(await storage.search("   ")).toEqual([]);
   });
 
+  it("clamps negative and zero limit to 1", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "alpha message"),
+      msg("claude", "user", 2000, "beta message"),
+    ]);
+
+    const negativeLimit = await storage.search("message", { limit: -1 });
+    expect(negativeLimit).toHaveLength(1);
+
+    const zeroLimit = await storage.search("message", { limit: 0 });
+    expect(zeroLimit).toHaveLength(1);
+
+    await storage.insert(
+      Array.from({ length: 25 }, (_, i) => msg("claude", "user", 3000 + i, `extra message ${i}`)),
+    );
+    const nanLimit = await storage.search("message", { limit: NaN });
+    expect(nanLimit).toHaveLength(20);
+  });
+
   it("cascades deletes from sessions to messages, blocks and contexts", async () => {
     const m = msg("claude", "user", 1000, "cascade test");
     m.context = { cwd: "/tmp" };
@@ -339,6 +358,121 @@ describe("SqliteStorage CRUD", () => {
 
     const limited = await storage.listSessions({ limit: 1 });
     expect(limited).toHaveLength(1);
+  });
+
+  it("clamps negative limit and offset in listSessions", async () => {
+    await storage.createSession({ id: "ses-a", source: "test" });
+    await storage.createSession({ id: "ses-b", source: "test" });
+
+    const negLimit = await storage.listSessions({ limit: -1 });
+    expect(negLimit).toHaveLength(1);
+
+    const zeroLimit = await storage.listSessions({ limit: 0 });
+    expect(zeroLimit).toHaveLength(1);
+
+    const negOffset = await storage.listSessions({ limit: 10, offset: -5 });
+    expect(negOffset).toHaveLength(2);
+
+    const nanLimit = await storage.listSessions({ limit: Number.NaN });
+    expect(nanLimit).toHaveLength(2);
+
+    const fractionalLimit = await storage.listSessions({ limit: 1.9, offset: 0 });
+    expect(fractionalLimit).toHaveLength(1);
+  });
+
+  it("clamps negative limit and offset in getMessages", async () => {
+    await storage.insert([
+      msg("test", "user", 1000, "a"),
+      msg("test", "user", 2000, "b"),
+    ]);
+
+    const negLimit = await storage.getMessages("session-test", { limit: -1 });
+    expect(negLimit).toHaveLength(1);
+
+    const negOffset = await storage.getMessages("session-test", { limit: 10, offset: -5 });
+    expect(negOffset).toHaveLength(2);
+
+    const nanLimit = await storage.getMessages("session-test", { limit: Number.NaN });
+    expect(nanLimit).toHaveLength(2);
+
+    const fractionalLimit = await storage.getMessages("session-test", { limit: 1.9, offset: 0 });
+    expect(fractionalLimit).toHaveLength(1);
+    expect(fractionalLimit[0].blocks[0].text).toBe("a");
+
+    const fractionalOffset = await storage.getMessages("session-test", { limit: 10, offset: 1.7 });
+    expect(fractionalOffset).toHaveLength(1);
+    expect(fractionalOffset[0].blocks[0].text).toBe("b");
+  });
+
+  it("clamps negative limit and offset in listParticipants", async () => {
+    const m: Message = {
+      source: "test",
+      sessionId: "ses-clamp-p1",
+      role: "user",
+      timestamp: 1000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "hi" }],
+      author: { platform: "discord", platformId: "clamp-1", name: "bob" },
+    };
+    const m2: Message = {
+      source: "test",
+      sessionId: "ses-clamp-p2",
+      role: "user",
+      timestamp: 2000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "hi" }],
+      author: { platform: "discord", platformId: "clamp-2", name: "carol" },
+    };
+    await storage.insert([m, m2]);
+
+    const negLimit = await storage.listParticipants({ limit: -1 });
+    expect(negLimit).toHaveLength(1);
+
+    const negOffset = await storage.listParticipants({ limit: 50, offset: -5 });
+    expect(negOffset).toHaveLength(2);
+
+    const nanLimit = await storage.listParticipants({ limit: Number.NaN });
+    expect(nanLimit).toHaveLength(2);
+
+    const fractionalLimit = await storage.listParticipants({ limit: 1.9, offset: 0 });
+    expect(fractionalLimit).toHaveLength(1);
+
+    const fractionalOffset = await storage.listParticipants({ limit: 50, offset: 1.7 });
+    expect(fractionalOffset).toHaveLength(1);
+  });
+
+  it("clamps negative limit and offset in listChannels", async () => {
+    const m: Message = {
+      source: "test",
+      sessionId: "ses-clamp-ch1",
+      role: "user",
+      timestamp: 1000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "hi" }],
+      channel: { platform: "clamp-test", name: "chan-a" },
+    };
+    const m2: Message = {
+      source: "test",
+      sessionId: "ses-clamp-ch2",
+      role: "user",
+      timestamp: 2000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "hi" }],
+      channel: { platform: "clamp-test", name: "chan-b" },
+    };
+    await storage.insert([m, m2]);
+
+    const negLimit = await storage.listChannels({ limit: -1 });
+    expect(negLimit).toHaveLength(1);
+
+    const negOffset = await storage.listChannels({ limit: 50, offset: -5 });
+    expect(negOffset).toHaveLength(2);
+
+    const nanLimit = await storage.listChannels({ limit: Number.NaN });
+    expect(nanLimit).toHaveLength(2);
+
+    const fractionalLimit = await storage.listChannels({ limit: 1.9, offset: 0 });
+    expect(fractionalLimit).toHaveLength(1);
   });
 
   it("deletes a session", async () => {

@@ -58,91 +58,94 @@ export class AeiSource implements Source {
 
       if (!rows.length) return;
 
-      const allBlocksResult = await db.execute({
-        sql: `
-          SELECT b.message_id, b.position, b.type, b.text, b.tool_name, b.tool_input, b.tool_call_id
-          FROM blocks b
-          WHERE b.message_id IN (
-            SELECT m.id FROM messages m
-            JOIN sessions s ON m.session_id = s.id
-            WHERE m.source = 'aei-cli' AND m.timestamp > ?
-          )
-          ORDER BY b.message_id, b.position
-        `,
-        args: [since],
-      });
-      const allBlockRows = allBlocksResult.rows as unknown as Array<{
-        message_id: number;
-        position: number;
-        type: string;
-        text: string | null;
-        tool_name: string | null;
-        tool_input: string | null;
-        tool_call_id: string | null;
-      }>;
+      const WINDOW = 500;
+      for (let wi = 0; wi < rows.length; wi += WINDOW) {
+        const window = rows.slice(wi, wi + WINDOW);
+        const ids = window.map((r) => r.id);
+        const placeholders = ids.map(() => "?").join(",");
 
-      const blocksByMessage = new Map<number, Block[]>();
-      for (const b of allBlockRows) {
-        const block: Block = { type: b.type as Block["type"] };
-        if (b.text) block.text = b.text.slice(0, 8000);
-        if (b.tool_name) block.toolName = b.tool_name;
-        if (b.tool_input) block.toolInput = b.tool_input.slice(0, 8000);
-        if (b.tool_call_id) block.toolCallId = b.tool_call_id;
-        let arr = blocksByMessage.get(b.message_id);
-        if (!arr) {
-          arr = [];
-          blocksByMessage.set(b.message_id, arr);
-        }
-        arr.push(block);
-      }
+        const blockResult = await db.execute({
+          sql: `
+            SELECT b.message_id, b.position, b.type, b.text, b.tool_name, b.tool_input, b.tool_call_id
+            FROM blocks b
+            WHERE b.message_id IN (${placeholders})
+            ORDER BY b.message_id, b.position
+          `,
+          args: ids,
+        });
+        const blockRows = blockResult.rows as unknown as Array<{
+          message_id: number;
+          position: number;
+          type: string;
+          text: string | null;
+          tool_name: string | null;
+          tool_input: string | null;
+          tool_call_id: string | null;
+        }>;
 
-      for (const row of rows) {
-        const role = row.role as "user" | "assistant" | "tool";
-        if (role !== "user" && role !== "assistant" && role !== "tool") continue;
-
-        const ts = Number(row.timestamp);
-        if (!Number.isFinite(ts)) continue;
-        const fallbackDateValue = new Date(ts);
-        if (!row.date && Number.isNaN(fallbackDateValue.getTime())) continue;
-        const date = row.date || fallbackDateValue.toISOString().split("T")[0];
-
-        const blocks = blocksByMessage.get(row.id) ?? [];
-        if (!blocks.length) continue;
-
-        const context: Record<string, string> = {};
-        if (row.cwd) context.cwd = row.cwd;
-        if (row.git_branch) context.git_branch = row.git_branch;
-        if (row.git_commit) context.git_commit = row.git_commit;
-        if (row.git_worktree) context.git_worktree = row.git_worktree;
-        if (row.git_dirty !== null) context.git_dirty = String(row.git_dirty);
-        if (row.model) context.model = row.model;
-        if (row.sender_id) context.sender_id = row.sender_id;
-        if (row.project) context.project = row.project;
-        if (row.git_remote) context.git_remote = row.git_remote;
-        if (row.hostname) context.hostname = row.hostname;
-        if (row.os_user) context.os_user = row.os_user;
-        if (row.initiator_id) context.initiator_id = row.initiator_id;
-
-        const channel: Channel = { platform: "cli", name: "aei" };
-        let author: Participant;
-        if (role === "user") {
-          const name = row.sender_id || row.os_user || osUser();
-          author = { platform: "cli", name, platformId: row.initiator_id ?? undefined };
-        } else {
-          author = { platform: "cli", name: row.sender_id || "aei", isBot: true };
+        const blocksByMessage = new Map<number, Block[]>();
+        for (const b of blockRows) {
+          const block: Block = { type: b.type as Block["type"] };
+          if (b.text) block.text = b.text.slice(0, 8000);
+          if (b.tool_name) block.toolName = b.tool_name;
+          if (b.tool_input) block.toolInput = b.tool_input.slice(0, 8000);
+          if (b.tool_call_id) block.toolCallId = b.tool_call_id;
+          let arr = blocksByMessage.get(b.message_id);
+          if (!arr) {
+            arr = [];
+            blocksByMessage.set(b.message_id, arr);
+          }
+          arr.push(block);
         }
 
-        yield {
-          source: this.name,
-          sessionId: row.session_id,
-          role,
-          timestamp: ts,
-          date,
-          blocks,
-          context: Object.keys(context).length ? context : undefined,
-          channel,
-          author,
-        };
+        for (const row of window) {
+          const role = row.role as "user" | "assistant" | "tool";
+          if (role !== "user" && role !== "assistant" && role !== "tool") continue;
+
+          const ts = Number(row.timestamp);
+          if (!Number.isFinite(ts)) continue;
+          const fallbackDateValue = new Date(ts);
+          if (!row.date && Number.isNaN(fallbackDateValue.getTime())) continue;
+          const date = row.date || fallbackDateValue.toISOString().split("T")[0];
+
+          const blocks = blocksByMessage.get(row.id) ?? [];
+          if (!blocks.length) continue;
+
+          const context: Record<string, string> = {};
+          if (row.cwd) context.cwd = row.cwd;
+          if (row.git_branch) context.git_branch = row.git_branch;
+          if (row.git_commit) context.git_commit = row.git_commit;
+          if (row.git_worktree) context.git_worktree = row.git_worktree;
+          if (row.git_dirty !== null) context.git_dirty = String(row.git_dirty);
+          if (row.model) context.model = row.model;
+          if (row.sender_id) context.sender_id = row.sender_id;
+          if (row.project) context.project = row.project;
+          if (row.git_remote) context.git_remote = row.git_remote;
+          if (row.hostname) context.hostname = row.hostname;
+          if (row.os_user) context.os_user = row.os_user;
+          if (row.initiator_id) context.initiator_id = row.initiator_id;
+
+          const channel: Channel = { platform: "cli", name: "aei" };
+          let author: Participant;
+          if (role === "user") {
+            const name = row.sender_id || row.os_user || osUser();
+            author = { platform: "cli", name, platformId: row.initiator_id ?? undefined };
+          } else {
+            author = { platform: "cli", name: row.sender_id || "aei", isBot: true };
+          }
+
+          yield {
+            source: this.name,
+            sessionId: row.session_id,
+            role,
+            timestamp: ts,
+            date,
+            blocks,
+            context: Object.keys(context).length ? context : undefined,
+            channel,
+            author,
+          };
+        }
       }
     } finally {
       db.close();

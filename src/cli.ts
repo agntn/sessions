@@ -139,7 +139,7 @@ const searchCommand = defineCommand({
         role: args.role,
         dateFrom: args.dateFrom,
         dateTo: args.dateTo,
-        limit: parseInt(args.limit) || 20,
+        limit: Math.max(1, parseInt(args.limit) || 20),
       });
 
       if (args.json) {
