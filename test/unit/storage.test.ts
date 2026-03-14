@@ -404,6 +404,48 @@ describe("SqliteStorage CRUD", () => {
     expect(page2).toHaveLength(1);
   });
 
+  it("addMessage preserves author through getMessage", async () => {
+    const m: Message = {
+      source: "test",
+      sessionId: "ses-author",
+      role: "user",
+      timestamp: 7000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "with author" }],
+      author: { platform: "discord", platformId: "99", name: "bob", isBot: false },
+    };
+
+    const id = await storage.addMessage(m);
+    const retrieved = await storage.getMessage(id);
+
+    expect(retrieved).not.toBeNull();
+    expect(retrieved!.author).toBeDefined();
+    expect(retrieved!.author!.name).toBe("bob");
+    expect(retrieved!.author!.platform).toBe("discord");
+    expect(retrieved!.author!.platformId).toBe("99");
+    expect(retrieved!.author!.isBot).toBe(false);
+  });
+
+  it("addMessage preserves author through getMessages", async () => {
+    const m: Message = {
+      source: "test",
+      sessionId: "ses-author-batch",
+      role: "assistant",
+      timestamp: 8000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "bot reply" }],
+      author: { platform: "cli", name: "claude-code", isBot: true },
+    };
+
+    await storage.addMessage(m);
+    const msgs = await storage.getMessages("ses-author-batch");
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].author).toBeDefined();
+    expect(msgs[0].author!.name).toBe("claude-code");
+    expect(msgs[0].author!.isBot).toBe(true);
+  });
+
   it("addMessage auto-creates session", async () => {
     const m = msg("auto", "user", 9000, "auto session");
     await storage.addMessage(m);
