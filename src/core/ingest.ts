@@ -11,7 +11,7 @@ export interface IngestOptions {
   onLog?: (message: string) => void;
 }
 
-const BATCH_SIZE = 1000;
+export const BATCH_SIZE = 1000;
 
 export async function ingest(
   sources: Source[],
@@ -37,6 +37,8 @@ export async function ingest(
     const cursor = await storage.getCursor(source.name);
     let count = 0;
     let ingestedCount = 0;
+    let resultCursor = cursor;
+    
     try {
       let batch: Message[] = [];
       let cursorSeed: Message | null = null;
@@ -58,6 +60,12 @@ export async function ingest(
         if (batch.length >= BATCH_SIZE) {
           await storage.insert(batch);
           ingestedCount += batch.length;
+          
+          if (cursorSeed) {
+            const newCursor = source.cursor([cursorSeed]);
+            await storage.setCursor(source.name, newCursor);
+            resultCursor = newCursor;
+          }
           batch = [];
         }
       }
@@ -73,8 +81,6 @@ export async function ingest(
         results.push({ source: source.name, count: 0, cursor, skipped: false });
         continue;
       }
-
-      let resultCursor = cursor;
 
       if (options.dryRun) {
         if (count > previewLimit && options.verbose) {
@@ -105,7 +111,7 @@ export async function ingest(
       results.push({
         source: source.name,
         count: ingestedCount,
-        cursor,
+        cursor: resultCursor,
         skipped: false,
         error,
       });
