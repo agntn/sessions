@@ -194,8 +194,9 @@ describe("ingest", () => {
     const source = makeSource("test", messages);
     const onMessage = vi.fn();
 
-    await ingest([source], storage, { dryRun: true, onMessage });
+    const results = await ingest([source], storage, { dryRun: true, onMessage });
 
+    expect(results[0].count).toBe(8);
     expect(onMessage).toHaveBeenCalledTimes(5);
   });
 
