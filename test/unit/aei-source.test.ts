@@ -20,9 +20,15 @@ function mockMessagesAndBlocks(
   blocksByMessage: Record<string, unknown>[][],
 ): void {
   executeMock.mockResolvedValueOnce({ rows: messages });
-  for (const blocks of blocksByMessage) {
-    executeMock.mockResolvedValueOnce({ rows: blocks });
+  const allBlocks: Record<string, unknown>[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msgId = messages[i].id;
+    const msgBlocks = blocksByMessage[i] ?? [];
+    for (const block of msgBlocks) {
+      allBlocks.push({ message_id: msgId, ...block });
+    }
   }
+  executeMock.mockResolvedValueOnce({ rows: allBlocks });
 }
 
 async function collect(source: AeiSource, cursor = "0"): Promise<Message[]> {
@@ -224,8 +230,8 @@ describe("AeiSource", () => {
   });
 
   it("skips messages with invalid role", async () => {
-    executeMock.mockResolvedValueOnce({
-      rows: [
+    mockMessagesAndBlocks(
+      [
         {
           id: 5,
           session_id: "ses-5",
@@ -246,7 +252,19 @@ describe("AeiSource", () => {
           initiator_id: null,
         },
       ],
-    });
+      [
+        [
+          {
+            position: 0,
+            type: "text",
+            text: "system msg",
+            tool_name: null,
+            tool_input: null,
+            tool_call_id: null,
+          },
+        ],
+      ],
+    );
 
     const source = new AeiSource("/tmp/aei.db");
     const msgs = await collect(source);
@@ -255,8 +273,8 @@ describe("AeiSource", () => {
   });
 
   it("skips messages with non-finite timestamp", async () => {
-    executeMock.mockResolvedValueOnce({
-      rows: [
+    mockMessagesAndBlocks(
+      [
         {
           id: 6,
           session_id: "ses-6",
@@ -277,7 +295,19 @@ describe("AeiSource", () => {
           initiator_id: null,
         },
       ],
-    });
+      [
+        [
+          {
+            position: 0,
+            type: "text",
+            text: "bad timestamp",
+            tool_name: null,
+            tool_input: null,
+            tool_call_id: null,
+          },
+        ],
+      ],
+    );
 
     const source = new AeiSource("/tmp/aei.db");
     const msgs = await collect(source);
