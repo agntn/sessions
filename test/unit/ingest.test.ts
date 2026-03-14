@@ -173,6 +173,32 @@ describe("ingest", () => {
     expect(storage.cursors.get("test")).toBe("123");
   });
 
+  it("dry run respects previewLimit", async () => {
+    const storage = makeStorage();
+    const source = makeSource("test", [msg("test", 100), msg("test", 200), msg("test", 300)]);
+    const onMessage = vi.fn();
+
+    const results = await ingest([source], storage, {
+      dryRun: true,
+      previewLimit: 2,
+      onMessage,
+    });
+
+    expect(results[0].count).toBe(3);
+    expect(onMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("dry run defaults previewLimit to 5", async () => {
+    const storage = makeStorage();
+    const messages = Array.from({ length: 8 }, (_, i) => msg("test", 100 + i));
+    const source = makeSource("test", messages);
+    const onMessage = vi.fn();
+
+    await ingest([source], storage, { dryRun: true, onMessage });
+
+    expect(onMessage).toHaveBeenCalledTimes(5);
+  });
+
   it("advances cursor to max timestamp even when messages arrive out of order", async () => {
     const storage = makeStorage();
     const source: Source = {
