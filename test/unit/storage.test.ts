@@ -252,6 +252,23 @@ describe("SqliteStorage", () => {
     expect(await storage.search("   ")).toEqual([]);
   });
 
+  it("centers snippet on the matching term in multi-term queries", async () => {
+    const padding = "x".repeat(200);
+    const text = `${padding} migration target reached`;
+    await storage.insert([msg("claude", "user", 1000, text)]);
+
+    // "migration" matches but "nonexistent" doesn't - snippet should center on "migration"
+    const results = await storage.search("nonexistent migration");
+    expect(results).toHaveLength(1);
+    expect(results[0].text).toContain("migration");
+
+    // With only the first term used, snippet would start from position 1 (all x's).
+    // With the fix, snippet starts ~80 chars before "migration", so leading x's are trimmed.
+    const snippet = results[0].text!;
+    const xRunLength = snippet.match(/^x*/)?.[0]?.length ?? 0;
+    expect(xRunLength).toBeLessThan(100);
+  });
+
   it("clamps negative and zero limit to 1", async () => {
     await storage.insert([
       msg("claude", "user", 1000, "alpha message"),

@@ -881,7 +881,6 @@ export class SqliteStorage implements Storage {
     const limit = typeof rawLimit === "number" && Number.isFinite(rawLimit)
       ? Math.max(1, Math.trunc(rawLimit))
       : 20;
-    const snippetParam = terms[0];
     const filterParams: Array<string | number> = [];
     const filters = ["b.type IN ('text', 'thinking', 'reasoning')"];
 
@@ -905,9 +904,12 @@ export class SqliteStorage implements Storage {
       filterParams.push(opts.dateTo);
     }
 
+    const snippetExprs = terms.map(() => "nullif(instr(lower(b.text), ?), 0)");
+    const snippetPosition = `coalesce(${snippetExprs.join(", ")}, 1)`;
+
     const rawSql = `
       SELECT DISTINCT m.date, m.source, m.role, m.session_id as sessionId,
-        substr(b.text, max(1, instr(lower(b.text), ?) - 80), 300) as text
+        substr(b.text, max(1, ${snippetPosition} - 80), 300) as text
       FROM blocks b
       JOIN messages m ON m.id = b.message_id
       WHERE ${filters.join(" AND ")}
@@ -917,7 +919,7 @@ export class SqliteStorage implements Storage {
 
     const result = await this.client.execute({
       sql: rawSql,
-      args: [snippetParam, ...filterParams, limit],
+      args: [...terms, ...filterParams, limit],
     });
 
     return result.rows.map((row) => row as unknown as SearchRow);
