@@ -88,14 +88,16 @@ const statsCommand = defineCommand({
 
       consola.info("");
       consola.info("Cursors:");
-      for (const s of stats) {
-        const cursor = await storage.getCursor(s.source);
+      for (const source of allSources()) {
+        const cursor = await storage.getCursor(source.name);
         const ts = Number(cursor);
-        const display =
-          Number.isFinite(ts) && ts > 0
-            ? `${cursor} (${new Date(ts).toISOString()})`
-            : cursor || "(none)";
-        consola.info(`  ${s.source}: ${display}`);
+        const date = new Date(ts);
+        const hasValidDate =
+          Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
+        const display = hasValidDate
+          ? `${cursor} (${date.toISOString()})`
+          : cursor || "(none)";
+        consola.info(`  ${source.name}: ${display}`);
       }
     } finally {
       await storage.close();
