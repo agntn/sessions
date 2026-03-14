@@ -872,7 +872,7 @@ export class SqliteStorage implements Storage {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!terms.length) return [];
 
-    const limit = opts?.limit ?? 20;
+    const limit = Math.max(1, opts?.limit ?? 20);
     const snippetParam = terms[0];
     const filterParams: Array<string | number> = [];
     const filters = ["b.type IN ('text', 'thinking', 'reasoning')"];

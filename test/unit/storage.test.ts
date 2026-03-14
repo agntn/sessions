@@ -252,6 +252,19 @@ describe("SqliteStorage", () => {
     expect(await storage.search("   ")).toEqual([]);
   });
 
+  it("clamps negative and zero limit to 1", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "alpha message"),
+      msg("claude", "user", 2000, "beta message"),
+    ]);
+
+    const negativeLimit = await storage.search("message", { limit: -1 });
+    expect(negativeLimit).toHaveLength(1);
+
+    const zeroLimit = await storage.search("message", { limit: 0 });
+    expect(zeroLimit).toHaveLength(1);
+  });
+
   it("cascades deletes from sessions to messages, blocks and contexts", async () => {
     const m = msg("claude", "user", 1000, "cascade test");
     m.context = { cwd: "/tmp" };
