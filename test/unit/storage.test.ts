@@ -372,6 +372,12 @@ describe("SqliteStorage CRUD", () => {
 
     const negOffset = await storage.listSessions({ limit: 10, offset: -5 });
     expect(negOffset).toHaveLength(2);
+
+    const nanLimit = await storage.listSessions({ limit: Number.NaN });
+    expect(nanLimit).toHaveLength(2);
+
+    const fractionalLimit = await storage.listSessions({ limit: 1.9, offset: 0 });
+    expect(fractionalLimit).toHaveLength(1);
   });
 
   it("clamps negative limit and offset in getMessages", async () => {
@@ -430,6 +436,9 @@ describe("SqliteStorage CRUD", () => {
 
     const fractionalLimit = await storage.listParticipants({ limit: 1.9, offset: 0 });
     expect(fractionalLimit).toHaveLength(1);
+
+    const fractionalOffset = await storage.listParticipants({ limit: 50, offset: 1.7 });
+    expect(fractionalOffset).toHaveLength(1);
   });
 
   it("clamps negative limit and offset in listChannels", async () => {
