@@ -264,9 +264,11 @@ describe("SqliteStorage", () => {
     const zeroLimit = await storage.search("message", { limit: 0 });
     expect(zeroLimit).toHaveLength(1);
 
+    await storage.insert(
+      Array.from({ length: 25 }, (_, i) => msg("claude", "user", 3000 + i, `extra message ${i}`)),
+    );
     const nanLimit = await storage.search("message", { limit: NaN });
-    expect(nanLimit.length).toBeGreaterThan(0);
-    expect(nanLimit.length).toBeLessThanOrEqual(20);
+    expect(nanLimit).toHaveLength(20);
   });
 
   it("cascades deletes from sessions to messages, blocks and contexts", async () => {
