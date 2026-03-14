@@ -355,7 +355,7 @@ describe("SqliteStorage CRUD", () => {
     expect(negOffset).toHaveLength(2);
   });
 
-  it("clamps negative limit in getMessages", async () => {
+  it("clamps negative limit and offset in getMessages", async () => {
     await storage.insert([
       msg("test", "user", 1000, "a"),
       msg("test", "user", 2000, "b"),
@@ -363,6 +363,71 @@ describe("SqliteStorage CRUD", () => {
 
     const negLimit = await storage.getMessages("session-test", { limit: -1 });
     expect(negLimit).toHaveLength(1);
+
+    const negOffset = await storage.getMessages("session-test", { limit: 10, offset: -5 });
+    expect(negOffset).toHaveLength(2);
+
+    const nanLimit = await storage.getMessages("session-test", { limit: Number.NaN });
+    expect(nanLimit).toHaveLength(2);
+
+    const fractional = await storage.getMessages("session-test", { limit: 1.9, offset: 0.9 });
+    expect(fractional).toHaveLength(1);
+  });
+
+  it("clamps negative limit and offset in listParticipants", async () => {
+    const m: Message = {
+      source: "test",
+      sessionId: "ses-clamp-p1",
+      role: "user",
+      timestamp: 1000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "hi" }],
+      author: { platform: "discord", platformId: "clamp-1", name: "bob" },
+    };
+    const m2: Message = {
+      source: "test",
+      sessionId: "ses-clamp-p2",
+      role: "user",
+      timestamp: 2000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "hi" }],
+      author: { platform: "discord", platformId: "clamp-2", name: "carol" },
+    };
+    await storage.insert([m, m2]);
+
+    const negLimit = await storage.listParticipants({ limit: -1 });
+    expect(negLimit).toHaveLength(1);
+
+    const negOffset = await storage.listParticipants({ limit: 50, offset: -5 });
+    expect(negOffset.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("clamps negative limit and offset in listChannels", async () => {
+    const m: Message = {
+      source: "test",
+      sessionId: "ses-clamp-ch1",
+      role: "user",
+      timestamp: 1000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "hi" }],
+      channel: { platform: "clamp-test", name: "chan-a" },
+    };
+    const m2: Message = {
+      source: "test",
+      sessionId: "ses-clamp-ch2",
+      role: "user",
+      timestamp: 2000,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "hi" }],
+      channel: { platform: "clamp-test", name: "chan-b" },
+    };
+    await storage.insert([m, m2]);
+
+    const negLimit = await storage.listChannels({ limit: -1 });
+    expect(negLimit).toHaveLength(1);
+
+    const negOffset = await storage.listChannels({ limit: 50, offset: -5 });
+    expect(negOffset.length).toBeGreaterThanOrEqual(2);
   });
 
   it("deletes a session", async () => {
