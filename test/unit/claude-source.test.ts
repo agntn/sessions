@@ -288,7 +288,7 @@ describe("ClaudeSource", () => {
   });
 
   it("available() returns false for nonexistent dir", () => {
-    const source = new ClaudeSource("/tmp/nonexistent-claude-projects");
+    const source = new ClaudeSource(join(tempDir, "nonexistent-claude-projects"));
     expect(source.available()).toBe(false);
   });
 

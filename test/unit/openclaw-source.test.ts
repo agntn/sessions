@@ -339,31 +339,33 @@ describe("OpenClawSource session classification", () => {
 describe("OpenClawSource multi-dir support", () => {
   it("accepts multiple sessionsDirs and reads from both", async () => {
     const dir2 = mkdtempSync(join(tmpdir(), "memxa-test-"));
-    writeJsonl("session-a.jsonl", [
-      {
-        type: "message",
-        timestamp: "2026-03-10T10:00:00Z",
-        message: { role: "user", content: [{ type: "text", text: "from dir 1" }] },
-      },
-    ]);
-    writeFileSync(
-      join(dir2, "session-b.jsonl"),
-      JSON.stringify({
-        type: "message",
-        timestamp: "2026-03-10T10:00:01Z",
-        message: { role: "user", content: [{ type: "text", text: "from dir 2" }] },
-      }),
-    );
+    try {
+      writeJsonl("session-a.jsonl", [
+        {
+          type: "message",
+          timestamp: "2026-03-10T10:00:00Z",
+          message: { role: "user", content: [{ type: "text", text: "from dir 1" }] },
+        },
+      ]);
+      writeFileSync(
+        join(dir2, "session-b.jsonl"),
+        JSON.stringify({
+          type: "message",
+          timestamp: "2026-03-10T10:00:01Z",
+          message: { role: "user", content: [{ type: "text", text: "from dir 2" }] },
+        }),
+      );
 
-    const source = new OpenClawSource([tempDir, dir2]);
-    const msgs = await collect(source);
+      const source = new OpenClawSource([tempDir, dir2]);
+      const msgs = await collect(source);
 
-    expect(msgs).toHaveLength(2);
-    const texts = msgs.map((m) => m.blocks[0].text);
-    expect(texts).toContain("from dir 1");
-    expect(texts).toContain("from dir 2");
-
-    rmSync(dir2, { recursive: true, force: true });
+      expect(msgs).toHaveLength(2);
+      const texts = msgs.map((m) => m.blocks[0].text);
+      expect(texts).toContain("from dir 1");
+      expect(texts).toContain("from dir 2");
+    } finally {
+      rmSync(dir2, { recursive: true, force: true });
+    }
   });
 
   it("cursor() returns max timestamp", () => {

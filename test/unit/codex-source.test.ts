@@ -306,10 +306,16 @@ describe("CodexSource cursor", () => {
         payload: {
           type: "message",
           role: "assistant",
-          content: [{ type: "output_text", text: "old" }],
+          content: [{ type: "output_text", text: "old jsonl" }],
         },
       },
     ]);
+    writeJson("old.json", {
+      session: { id: "ses-old", timestamp: "2026-03-10T10:00:00Z" },
+      items: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "old json" }] },
+      ],
+    });
     writeJsonl("new.jsonl", [
       {
         type: "response_item",
@@ -317,15 +323,23 @@ describe("CodexSource cursor", () => {
         payload: {
           type: "message",
           role: "assistant",
-          content: [{ type: "output_text", text: "new" }],
+          content: [{ type: "output_text", text: "new jsonl" }],
         },
       },
     ]);
+    writeJson("new.json", {
+      session: { id: "ses-new", timestamp: "2026-03-10T12:00:00Z" },
+      items: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "new json" }] },
+      ],
+    });
     const source = new CodexSource(tempDir);
     const msgs = await collect(source, String(ts));
 
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].blocks[0].text).toBe("new");
+    expect(msgs).toHaveLength(2);
+    const texts = msgs.map((m) => m.blocks[0].text);
+    expect(texts).toContain("new jsonl");
+    expect(texts).toContain("new json");
   });
 
   it("cursor() returns max timestamp as string", () => {
