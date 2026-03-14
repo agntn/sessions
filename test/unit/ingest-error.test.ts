@@ -56,7 +56,7 @@ function makeStorage(): Storage {
     },
     async insert() {},
     async getCursor(source) {
-      return cursors.get(source) || "0";
+      return cursors.get(source) ?? "0";
     },
     async setCursor(source, cursor) {
       cursors.set(source, cursor);
@@ -100,7 +100,7 @@ function makeStorage(): Storage {
 describe("ingest error handling", () => {
   it("continues with other sources when one source fails and reports partial count", async () => {
     const storage = makeStorage();
-    storage.setCursor("s2", "50");
+    await storage.setCursor("s2", "50");
 
     const s1 = makeSource("s1", [
       {
