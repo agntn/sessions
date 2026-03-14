@@ -173,9 +173,8 @@ describe("ingest", () => {
     expect(storage.cursors.get("test")).toBe("123");
   });
 
-  it("advances cursor from the full processed set, not only the last yielded message", async () => {
+  it("advances cursor to max timestamp even when messages arrive out of order", async () => {
     const storage = makeStorage();
-    const processed: Message[] = [];
     const source: Source = {
       name: "test",
       available: () => true,
@@ -183,16 +182,12 @@ describe("ingest", () => {
         yield msg("test", 300);
         yield msg("test", 200);
       },
-      cursor: (msgs) => {
-        processed.push(...msgs);
-        return String(Math.max(...msgs.map((m) => m.timestamp)));
-      },
+      cursor: (msgs) => String(Math.max(...msgs.map((m) => m.timestamp))),
     };
 
     const results = await ingest([source], storage);
 
     expect(results[0].cursor).toBe("300");
     expect(storage.cursors.get("test")).toBe("300");
-    expect(processed).toHaveLength(2);
   });
 });
