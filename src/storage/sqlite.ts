@@ -878,9 +878,10 @@ export class SqliteStorage implements Storage {
     if (!terms.length) return [];
 
     const rawLimit = opts?.limit;
-    const limit = typeof rawLimit === "number" && Number.isFinite(rawLimit)
-      ? Math.max(1, Math.trunc(rawLimit))
-      : 20;
+    const limit =
+      typeof rawLimit === "number" && Number.isFinite(rawLimit)
+        ? Math.max(1, Math.trunc(rawLimit))
+        : 20;
     const filterParams: Array<string | number> = [];
     const filters = ["b.type IN ('text', 'thinking', 'reasoning')"];
 
