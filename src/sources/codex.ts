@@ -37,7 +37,7 @@ function parseBlocks(
       const cType = String(c.type || "");
       if ((cType === "input_text" || cType === "output_text") && c.text) {
         const text = String(c.text).slice(0, 8000);
-        if (text.length > 2) blocks.push({ type: "text", text });
+        if (text.length > 0) blocks.push({ type: "text", text });
       }
     }
 
@@ -184,7 +184,7 @@ export class CodexSource implements Source {
           if (p?.type === "user_message" && !seenUserEvent) {
             seenUserEvent = true;
             const text = String(p.message || "").slice(0, 8000);
-            if (text.length > 2) {
+            if (text.length > 0) {
               const parsedTs = new Date(String(entry.timestamp)).getTime();
               const ts = Number.isFinite(parsedTs) ? parsedTs : file.mtime;
               if (ts <= since) continue;

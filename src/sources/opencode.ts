@@ -64,7 +64,7 @@ export class OpenCodeSource implements Source {
         const ptype = String(part.type || "");
         if (ptype === "text") {
           const text = String(part.text || "");
-          if (text.length <= 2) continue;
+          if (text.length === 0) continue;
 
           const author =
             row.role === "user"

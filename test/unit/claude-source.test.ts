@@ -192,16 +192,18 @@ describe("ClaudeSource", () => {
     expect(msgs[0].blocks[0].text).toBe("valid line");
   });
 
-  it("skips entries with short content", async () => {
+  it("preserves short messages but skips empty ones", async () => {
     writeJsonl("session-8.jsonl", [
-      { type: "user", timestamp: "2026-03-10T10:00:00Z", message: { content: "ab" } },
-      { type: "user", timestamp: "2026-03-10T10:00:01Z", message: { content: "abc" } },
+      { type: "user", timestamp: "2026-03-10T10:00:00Z", message: { content: "" } },
+      { type: "user", timestamp: "2026-03-10T10:00:01Z", message: { content: "ok" } },
+      { type: "user", timestamp: "2026-03-10T10:00:02Z", message: { content: "y" } },
     ]);
     const source = new ClaudeSource(projectsDir);
     const msgs = await collect(source);
 
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].blocks[0].text).toBe("abc");
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].blocks[0].text).toBe("ok");
+    expect(msgs[1].blocks[0].text).toBe("y");
   });
 
   it("filters by cursor timestamp", async () => {

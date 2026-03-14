@@ -206,7 +206,7 @@ describe("CodexSource JSONL", () => {
     expect(msgs[0].sessionId).toBe("custom-session");
   });
 
-  it("skips short text blocks", async () => {
+  it("preserves short text blocks but skips empty ones", async () => {
     writeJsonl("session-6.jsonl", [
       {
         type: "response_item",
@@ -214,14 +214,24 @@ describe("CodexSource JSONL", () => {
         payload: {
           type: "message",
           role: "assistant",
-          content: [{ type: "output_text", text: "ab" }],
+          content: [{ type: "output_text", text: "" }],
+        },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:01Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "ok" }],
         },
       },
     ]);
     const source = new CodexSource(tempDir);
     const msgs = await collect(source);
 
-    expect(msgs).toHaveLength(0);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("ok");
   });
 });
 
