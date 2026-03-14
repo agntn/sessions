@@ -96,7 +96,7 @@ const statsCommand = defineCommand({
           Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
         const display = hasValidDate
           ? `${cursor} (${date.toISOString()})`
-          : cursor || "(none)";
+          : (cursor && cursor !== "0") ? cursor : "(none)";
         consola.info(`  ${source.name}: ${display}`);
       }
     } finally {
