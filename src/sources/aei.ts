@@ -56,6 +56,46 @@ export class AeiSource implements Source {
         initiator_id: string | null;
       }[];
 
+      if (!rows.length) return;
+
+      const allBlocksResult = await db.execute({
+        sql: `
+          SELECT b.message_id, b.position, b.type, b.text, b.tool_name, b.tool_input, b.tool_call_id
+          FROM blocks b
+          WHERE b.message_id IN (
+            SELECT m.id FROM messages m
+            JOIN sessions s ON m.session_id = s.id
+            WHERE m.source = 'aei-cli' AND m.timestamp > ?
+          )
+          ORDER BY b.message_id, b.position
+        `,
+        args: [since],
+      });
+      const allBlockRows = allBlocksResult.rows as unknown as Array<{
+        message_id: number;
+        position: number;
+        type: string;
+        text: string | null;
+        tool_name: string | null;
+        tool_input: string | null;
+        tool_call_id: string | null;
+      }>;
+
+      const blocksByMessage = new Map<number, Block[]>();
+      for (const b of allBlockRows) {
+        const block: Block = { type: b.type as Block["type"] };
+        if (b.text) block.text = b.text.slice(0, 8000);
+        if (b.tool_name) block.toolName = b.tool_name;
+        if (b.tool_input) block.toolInput = b.tool_input.slice(0, 8000);
+        if (b.tool_call_id) block.toolCallId = b.tool_call_id;
+        let arr = blocksByMessage.get(b.message_id);
+        if (!arr) {
+          arr = [];
+          blocksByMessage.set(b.message_id, arr);
+        }
+        arr.push(block);
+      }
+
       for (const row of rows) {
         const role = row.role as "user" | "assistant" | "tool";
         if (role !== "user" && role !== "assistant" && role !== "tool") continue;
@@ -66,34 +106,7 @@ export class AeiSource implements Source {
         if (!row.date && Number.isNaN(fallbackDateValue.getTime())) continue;
         const date = row.date || fallbackDateValue.toISOString().split("T")[0];
 
-        const blockRowsResult = await db.execute({
-          sql: `
-            SELECT position, type, text, tool_name, tool_input, tool_call_id
-            FROM blocks
-            WHERE message_id = ?
-            ORDER BY position
-          `,
-          args: [row.id],
-        });
-        const blockRows = blockRowsResult.rows as unknown as Array<{
-          position: number;
-          type: string;
-          text: string | null;
-          tool_name: string | null;
-          tool_input: string | null;
-          tool_call_id: string | null;
-        }>;
-
-        const blocks: Block[] = [];
-        for (const b of blockRows) {
-          const block: Block = { type: b.type as Block["type"] };
-          if (b.text) block.text = b.text.slice(0, 8000);
-          if (b.tool_name) block.toolName = b.tool_name;
-          if (b.tool_input) block.toolInput = b.tool_input.slice(0, 8000);
-          if (b.tool_call_id) block.toolCallId = b.tool_call_id;
-          blocks.push(block);
-        }
-
+        const blocks = blocksByMessage.get(row.id) ?? [];
         if (!blocks.length) continue;
 
         const context: Record<string, string> = {};
