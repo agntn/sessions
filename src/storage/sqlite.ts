@@ -77,6 +77,11 @@ function toContext(rows: ContextRow[]): Record<string, string> | undefined {
   return Object.fromEntries(rows.map((c) => [c.key, c.value]));
 }
 
+function clampInt(value: number | undefined, fallback: number, min = 0): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.trunc(value));
+}
+
 function groupBy<T, K>(items: T[], key: (item: T) => K): Map<K, T[]> {
   const map = new Map<K, T[]>();
   for (const item of items) {
@@ -287,8 +292,8 @@ export class SqliteStorage implements Storage {
 
     return await filtered
       .orderBy(desc(sessions.updatedAt), desc(sessions.createdAt))
-      .limit(opts?.limit ?? 50)
-      .offset(opts?.offset ?? 0)
+      .limit(clampInt(opts?.limit, 50, 1))
+      .offset(clampInt(opts?.offset, 0))
       .all();
   }
 
@@ -428,8 +433,8 @@ export class SqliteStorage implements Storage {
       .from(messages)
       .where(eq(messages.sessionId, sessionId))
       .orderBy(asc(messages.timestamp))
-      .limit(opts?.limit ?? 1000)
-      .offset(opts?.offset ?? 0)
+      .limit(clampInt(opts?.limit, 1000, 1))
+      .offset(clampInt(opts?.offset, 0))
       .all();
 
     if (!msgs.length) return [];
@@ -736,8 +741,8 @@ export class SqliteStorage implements Storage {
     const filtered = opts?.platform ? query.where(eq(participants.platform, opts.platform)) : query;
     const rows = await filtered
       .orderBy(asc(participants.name))
-      .limit(opts?.limit ?? 50)
-      .offset(opts?.offset ?? 0)
+      .limit(clampInt(opts?.limit, 50, 1))
+      .offset(clampInt(opts?.offset, 0))
       .all();
     return rows.map((r) => ({
       id: r.id,
@@ -812,8 +817,8 @@ export class SqliteStorage implements Storage {
     const filtered = opts?.platform ? query.where(eq(channels.platform, opts.platform)) : query;
     const rows = await filtered
       .orderBy(asc(channels.platform), asc(channels.name))
-      .limit(opts?.limit ?? 50)
-      .offset(opts?.offset ?? 0)
+      .limit(clampInt(opts?.limit, 50, 1))
+      .offset(clampInt(opts?.offset, 0))
       .all();
     return rows.map((r) => ({
       id: r.id,
