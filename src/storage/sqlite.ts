@@ -970,7 +970,7 @@ export class SqliteStorage implements Storage {
           row_number() OVER (PARTITION BY message_id ORDER BY CASE WHEN sp = 0 THEN 999999 ELSE sp END) as rn
         FROM block_scores
       )
-      SELECT mm.date, mm.source, mm.role, mm.sessionId, bb.text
+      SELECT mm.date, mm.source, mm.role, mm.sessionId, mm.timestamp, bb.text
       FROM matched_msgs mm
       JOIN best_block bb ON bb.message_id = mm.id AND bb.rn = 1
       ORDER BY mm.timestamp DESC

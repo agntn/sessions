@@ -56,6 +56,7 @@ export interface StoredMessage extends Message {
 
 export interface SearchRow {
   date: string;
+  timestamp: number;
   source: string;
   role: string;
   sessionId: string;
