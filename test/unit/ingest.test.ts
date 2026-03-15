@@ -51,6 +51,10 @@ function makeStorage(): Storage & { inserted: Message[][]; cursors: Map<string, 
     async getCursor(source) {
       return cursors.get(source) || "0";
     },
+    async getCursorState(source) {
+      const cursor = cursors.get(source) || "0";
+      return { cursor, lastRun: null };
+    },
     async setCursor(source, cursor) {
       cursors.set(source, cursor);
     },

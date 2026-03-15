@@ -89,15 +89,21 @@ const statsCommand = defineCommand({
       consola.info("");
       consola.info("Cursors:");
       for (const source of allSources()) {
-        const cursor = await storage.getCursor(source.name);
-        const ts = Number(cursor);
+        const state = await storage.getCursorState(source.name);
+        const ts = Number(state.cursor);
         const date = new Date(ts);
-        const hasValidDate =
-          Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
-        const display = hasValidDate
-          ? `${cursor} (${date.toISOString()})`
-          : (cursor && cursor !== "0") ? cursor : "(none)";
-        consola.info(`  ${source.name}: ${display}`);
+        const hasValidDate = Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
+        const cursorDisplay = hasValidDate
+          ? `${state.cursor} (${date.toISOString()})`
+          : state.cursor && state.cursor !== "0"
+            ? state.cursor
+            : "(none)";
+
+        const lastRunDisplay = state.lastRun ? new Date(state.lastRun).toISOString() : null;
+
+        const parts = [`  ${source.name}: cursor ${cursorDisplay}`];
+        if (lastRunDisplay) parts.push(`last run ${lastRunDisplay}`);
+        consola.info(parts.join(", "));
       }
     } finally {
       await storage.close();
