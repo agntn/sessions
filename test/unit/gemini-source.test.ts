@@ -224,8 +224,7 @@ describe("GeminiSource", () => {
       },
     ];
 
-    expect(source.cursor(msgs)).toBe("500");
-    expect(source.cursor([])).toBe("0");
+    expect(source.cursor(msgs[0])).toBe("500");
   });
 
   it("skips invalid JSON files gracefully", async () => {

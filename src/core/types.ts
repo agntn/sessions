@@ -38,7 +38,7 @@ export interface Source {
   name: string;
   available(): boolean;
   ingest(cursor: string): AsyncGenerator<Message>;
-  cursor(messages: Message[]): string;
+  cursor(message: Message): string;
 }
 
 export interface Session {
