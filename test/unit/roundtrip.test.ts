@@ -142,4 +142,56 @@ describe("round-trip: source → ingest → storage → search", () => {
     expect(msgs[0].role).toBe("user");
     expect(msgs[1].role).toBe("assistant");
   });
+
+  it("Claude JSONL tool blocks survive ingest → storage → retrieve cycle", async () => {
+    const projectsDir = join(tempDir, "projects", "test-project");
+    mkdirSync(projectsDir, { recursive: true });
+    writeFileSync(
+      join(projectsDir, "session-tools.jsonl"),
+      [
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-03-10T10:00:00Z",
+          message: {
+            content: [
+              {
+                type: "tool_use",
+                id: "call-abc",
+                name: "read_file",
+                input: { path: "/src/main.ts" },
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-03-10T10:00:01Z",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call-abc",
+                content: "file contents here",
+              },
+            ],
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const source = new ClaudeSource(join(tempDir, "projects"));
+    await ingest([source], storage);
+
+    const msgs = await storage.getMessages("session-tools");
+    expect(msgs).toHaveLength(2);
+
+    expect(msgs[0].blocks[0].type).toBe("tool_call");
+    expect(msgs[0].blocks[0].toolName).toBe("read_file");
+    expect(msgs[0].blocks[0].toolCallId).toBe("call-abc");
+    expect(msgs[0].blocks[0].toolInput).toContain("/src/main.ts");
+
+    expect(msgs[1].blocks[0].type).toBe("tool_result");
+    expect(msgs[1].blocks[0].toolCallId).toBe("call-abc");
+    expect(msgs[1].blocks[0].text).toBe("file contents here");
+  });
 });
