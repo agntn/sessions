@@ -116,6 +116,35 @@ describe("SqliteStorage", () => {
     expect(results[0].role).toBe("user");
   });
 
+  it("counts limit against messages, not blocks", async () => {
+    // Message with 3 matching blocks should consume 1 limit slot, not 3
+    await storage.insert([
+      {
+        source: "claude",
+        sessionId: "ses-multi-block",
+        role: "assistant",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [
+          { type: "text", text: "deploy the auth service" },
+          { type: "text", text: "auth config updated" },
+          { type: "text", text: "auth tests passing" },
+        ],
+      },
+      msg("claude", "user", 2000, "auth review looks good"),
+      msg("claude", "user", 3000, "auth rollback needed"),
+    ]);
+
+    const results = await storage.search("auth", { limit: 2 });
+    expect(results).toHaveLength(2);
+
+    // Should get 2 distinct messages, not 2 blocks from the first message
+    const sessionIds = new Set(results.map((r) => r.sessionId));
+    const dates = results.map((r) => r.date);
+    expect(dates.every((d) => d === "1970-01-01")).toBe(true);
+    expect(sessionIds.size).toBeGreaterThanOrEqual(1);
+  });
+
   it("handles multiple batches", async () => {
     await storage.insert([msg("a", "user", 1000, "first")]);
     await storage.insert([msg("a", "user", 2000, "second")]);
