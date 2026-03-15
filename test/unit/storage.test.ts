@@ -694,6 +694,61 @@ describe("SqliteStorage CRUD", () => {
     expect(byId!.platform).toBe("cli");
   });
 
+  it("does not collide channel cache keys when field values contain the old separator", async () => {
+    await storage.insert([
+      {
+        source: "test",
+        sessionId: "ses-pipe1",
+        role: "user",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "a" }],
+        channel: { platform: "a", platformId: "b", name: "c" },
+      },
+      {
+        source: "test",
+        sessionId: "ses-pipe2",
+        role: "user",
+        timestamp: 2000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "b" }],
+        channel: { platform: "a|b", name: "c" },
+      },
+    ]);
+
+    const allChannels = await storage.listChannels();
+    const relevant = allChannels.filter(
+      (c) => c.platform === "a" || c.platform === "a|b",
+    );
+    expect(relevant).toHaveLength(2);
+  });
+
+  it("does not collide participant cache keys when name contains separator", async () => {
+    await storage.insert([
+      {
+        source: "test",
+        sessionId: "ses-psep1",
+        role: "user",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "a" }],
+        author: { platform: "discord", platformId: "1", name: "alice" },
+      },
+      {
+        source: "test",
+        sessionId: "ses-psep2",
+        role: "user",
+        timestamp: 2000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "b" }],
+        author: { platform: "discord", name: "1|alice" },
+      },
+    ]);
+
+    const all = await storage.listParticipants({ platform: "discord" });
+    expect(all).toHaveLength(2);
+  });
+
   it("deduplicates channels by platform + platformId", async () => {
     const base: Omit<Message, "sessionId"> = {
       source: "test",
