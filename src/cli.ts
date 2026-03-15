@@ -165,6 +165,92 @@ const searchCommand = defineCommand({
   },
 });
 
+const cursorListCommand = defineCommand({
+  meta: { name: "list", description: "Show cursor values for all sources" },
+  args: {
+    db: { type: "string", description: "Database path (default: platform data dir)" },
+  },
+  async run({ args }) {
+    const dbPath = resolveDb(args.db);
+    if (!existsSync(dbPath)) {
+      consola.warn(`Database not found: ${dbPath}`);
+      return;
+    }
+
+    const storage = await createSqliteStorage(dbPath, { initialize: false });
+    try {
+      for (const source of allSources()) {
+        const cursor = await storage.getCursor(source.name);
+        const ts = Number(cursor);
+        const date = new Date(ts);
+        const hasValidDate =
+          Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
+        const display = hasValidDate
+          ? `${cursor} (${date.toISOString()})`
+          : (cursor && cursor !== "0") ? cursor : "(none)";
+        consola.log(`${source.name}: ${display}`);
+      }
+    } finally {
+      await storage.close();
+    }
+  },
+});
+
+const cursorResetCommand = defineCommand({
+  meta: { name: "reset", description: "Reset cursor for a source to re-ingest from scratch" },
+  args: {
+    source: { type: "positional", description: "Source name to reset", required: true },
+    db: { type: "string", description: "Database path (default: platform data dir)" },
+  },
+  async run({ args }) {
+    const dbPath = resolveDb(args.db);
+    if (!existsSync(dbPath)) {
+      consola.warn(`Database not found: ${dbPath}`);
+      return;
+    }
+
+    const storage = await createSqliteStorage(dbPath, { initialize: false });
+    try {
+      await storage.deleteCursor(args.source);
+      consola.success(`Cursor reset for "${args.source}"`);
+    } finally {
+      await storage.close();
+    }
+  },
+});
+
+const cursorCommand = defineCommand({
+  meta: { name: "cursor", description: "Manage ingestion cursors" },
+  subCommands: {
+    list: cursorListCommand,
+    reset: cursorResetCommand,
+  },
+});
+
+const purgeCommand = defineCommand({
+  meta: { name: "purge", description: "Delete all data for a source and reset its cursor" },
+  args: {
+    source: { type: "positional", description: "Source name to purge", required: true },
+    db: { type: "string", description: "Database path (default: platform data dir)" },
+  },
+  async run({ args }) {
+    const dbPath = resolveDb(args.db);
+    if (!existsSync(dbPath)) {
+      consola.warn(`Database not found: ${dbPath}`);
+      return;
+    }
+
+    const storage = await createSqliteStorage(dbPath, { initialize: false });
+    try {
+      const deleted = await storage.deleteBySource(args.source);
+      await storage.deleteCursor(args.source);
+      consola.success(`Purged "${args.source}": ${deleted} sessions removed, cursor reset`);
+    } finally {
+      await storage.close();
+    }
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "memxa",
@@ -176,6 +262,8 @@ const main = defineCommand({
     stats: statsCommand,
     sources: sourcesCommand,
     search: searchCommand,
+    cursor: cursorCommand,
+    purge: purgeCommand,
   },
 });
 

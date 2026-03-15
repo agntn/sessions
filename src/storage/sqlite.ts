@@ -850,6 +850,26 @@ export class SqliteStorage implements Storage {
       .run();
   }
 
+  async deleteCursor(source: string): Promise<void> {
+    await this.db.delete(ingestState).where(eq(ingestState.source, source)).run();
+  }
+
+  async deleteBySource(source: string): Promise<number> {
+    const sessionRows = await this.db
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(eq(sessions.source, source))
+      .all();
+
+    if (!sessionRows.length) return 0;
+
+    for (const row of sessionRows) {
+      await this.db.delete(sessions).where(eq(sessions.id, row.id)).run();
+    }
+
+    return sessionRows.length;
+  }
+
   async count(source?: string): Promise<number> {
     if (source) {
       const row = await this.db
