@@ -269,6 +269,20 @@ describe("SqliteStorage", () => {
     expect(xRunLength).toBeLessThan(100);
   });
 
+  it("returns search results in reverse chronological order", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "deployment pipeline broke"),
+      msg("claude", "user", 3000, "deployment works after fix"),
+      msg("claude", "user", 2000, "debugging the deployment issue"),
+    ]);
+
+    const results = await storage.search("deployment");
+    expect(results).toHaveLength(3);
+    expect(results[0].text).toContain("works after fix");
+    expect(results[1].text).toContain("debugging");
+    expect(results[2].text).toContain("broke");
+  });
+
   it("clamps negative and zero limit to 1", async () => {
     await storage.insert([
       msg("claude", "user", 1000, "alpha message"),
