@@ -10,6 +10,7 @@ import {
   CodexSource,
   GeminiSource,
   OpenClawSource,
+  OpenCodeSource,
 } from "../../src/sources/index.ts";
 import { UnknownSourceError } from "../../src/core/errors.ts";
 
@@ -88,6 +89,12 @@ describe("source providers", () => {
   it("OpenClawSource accepts custom dirs", () => {
     const source = new OpenClawSource(["/tmp/nonexistent-sessions"]);
     expect(source.name).toBe("openclaw");
+    expect(source.available()).toBe(false);
+  });
+
+  it("OpenCodeSource accepts custom db path", () => {
+    const source = new OpenCodeSource("/tmp/nonexistent-opencode.db");
+    expect(source.name).toBe("opencode");
     expect(source.available()).toBe(false);
   });
 });
