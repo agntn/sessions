@@ -62,6 +62,7 @@ const statsCommand = defineCommand({
   meta: { name: "stats", description: "Show database statistics" },
   args: {
     db: { type: "string", description: "Database path (default: platform data dir)" },
+    json: { type: "boolean", description: "Output as JSON" },
   },
   async run({ args }) {
     const dbPath = resolveDb(args.db);
@@ -72,24 +73,37 @@ const statsCommand = defineCommand({
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
+      const totalMessages = await storage.count();
+      const totalSessions = await storage.sessionCount();
+      const stats = await storage.sourceStats();
+
+      const cursorStates: Record<string, { cursor: string; lastRun: number | null }> = {};
+      for (const source of allSources()) {
+        const state = await storage.getCursorState(source.name);
+        cursorStates[source.name] = { cursor: state.cursor, lastRun: state.lastRun };
+      }
+
+      if (args.json) {
+        console.log(JSON.stringify({ database: dbPath, totalMessages, totalSessions, sources: stats, cursors: cursorStates }, null, 2));
+        return;
+      }
+
       consola.info(`Database: ${dbPath}`);
       consola.info("");
 
       consola.info("Messages:");
-      consola.info(`  Total: ${await storage.count()}`);
+      consola.info(`  Total: ${totalMessages}`);
 
-      const stats = await storage.sourceStats();
       for (const s of stats) {
         consola.info(`  ${s.source}: ${s.messages} messages, ${s.sessions} sessions`);
       }
 
       consola.info("");
-      consola.info(`Sessions: ${await storage.sessionCount()}`);
+      consola.info(`Sessions: ${totalSessions}`);
 
       consola.info("");
       consola.info("Cursors:");
-      for (const source of allSources()) {
-        const state = await storage.getCursorState(source.name);
+      for (const [name, state] of Object.entries(cursorStates)) {
         const ts = Number(state.cursor);
         const date = new Date(ts);
         const hasValidDate = Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
@@ -101,7 +115,7 @@ const statsCommand = defineCommand({
 
         const lastRunDisplay = state.lastRun ? new Date(state.lastRun).toISOString() : null;
 
-        const parts = [`  ${source.name}: cursor ${cursorDisplay}`];
+        const parts = [`  ${name}: cursor ${cursorDisplay}`];
         if (lastRunDisplay) parts.push(`last run ${lastRunDisplay}`);
         consola.info(parts.join(", "));
       }
