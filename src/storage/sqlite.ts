@@ -905,22 +905,43 @@ export class SqliteStorage implements Storage {
       filterParams.push(opts.dateTo);
     }
 
-    const snippetExprs = terms.map(() => "nullif(instr(lower(b.text), ?), 0)");
-    const snippetPosition = `coalesce(${snippetExprs.join(", ")}, 1)`;
+    const snippetExprs = terms.map(() => "nullif(instr(lower(b2.text), ?), 0)");
+    const snippetPosition = `coalesce(${snippetExprs.join(", ")}, 0)`;
 
+    // First select distinct message IDs that match (limited), then pick
+    // the best-matching block per message for the snippet.  This ensures
+    // the limit counts messages, not individual blocks.
     const rawSql = `
-      SELECT DISTINCT m.date, m.source, m.role, m.session_id as sessionId,
-        substr(b.text, max(1, ${snippetPosition} - 80), 300) as text
-      FROM blocks b
-      JOIN messages m ON m.id = b.message_id
-      WHERE ${filters.join(" AND ")}
-      ORDER BY m.timestamp DESC
-      LIMIT ?
+      WITH matched_msgs AS (
+        SELECT DISTINCT m.id, m.date, m.source, m.role, m.session_id as sessionId, m.timestamp
+        FROM blocks b
+        JOIN messages m ON m.id = b.message_id
+        WHERE ${filters.join(" AND ")}
+        ORDER BY m.timestamp DESC
+        LIMIT ?
+      ),
+      block_scores AS (
+        SELECT b2.message_id, b2.text,
+          ${snippetPosition} as sp
+        FROM matched_msgs mm
+        JOIN blocks b2 ON b2.message_id = mm.id
+          AND b2.type IN ('text', 'thinking', 'reasoning')
+      ),
+      best_block AS (
+        SELECT message_id,
+          substr(text, max(1, CASE WHEN sp > 0 THEN sp - 80 ELSE 1 END), 300) as text,
+          row_number() OVER (PARTITION BY message_id ORDER BY CASE WHEN sp = 0 THEN 999999 ELSE sp END) as rn
+        FROM block_scores
+      )
+      SELECT mm.date, mm.source, mm.role, mm.sessionId, bb.text
+      FROM matched_msgs mm
+      JOIN best_block bb ON bb.message_id = mm.id AND bb.rn = 1
+      ORDER BY mm.timestamp DESC
     `;
 
     const result = await this.client.execute({
       sql: rawSql,
-      args: [...terms, ...filterParams, limit],
+      args: [...filterParams, limit, ...terms],
     });
 
     return result.rows.map((row) => row as unknown as SearchRow);
