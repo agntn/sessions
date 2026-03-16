@@ -241,7 +241,11 @@ describe("CodexSource JSON", () => {
       session: { id: "ses-json", timestamp: "2026-03-10T10:00:00Z" },
       items: [
         { type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] },
-        { type: "message", role: "assistant", content: [{ type: "output_text", text: "hi there" }] },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "hi there" }],
+        },
       ],
     });
     const source = new CodexSource(tempDir);

@@ -412,10 +412,7 @@ describe("SqliteStorage CRUD", () => {
   });
 
   it("clamps negative limit and offset in getMessages", async () => {
-    await storage.insert([
-      msg("test", "user", 1000, "a"),
-      msg("test", "user", 2000, "b"),
-    ]);
+    await storage.insert([msg("test", "user", 1000, "a"), msg("test", "user", 2000, "b")]);
 
     const negLimit = await storage.getMessages("session-test", { limit: -1 });
     expect(negLimit).toHaveLength(1);
