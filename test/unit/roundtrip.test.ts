@@ -92,7 +92,11 @@ describe("round-trip: source → ingest → storage → search", () => {
       join(geminiDir, "chat-g.json"),
       JSON.stringify({
         messages: [
-          { type: "user", timestamp: "2026-03-10T10:00:01Z", content: "gemini user message for stats" },
+          {
+            type: "user",
+            timestamp: "2026-03-10T10:00:01Z",
+            content: "gemini user message for stats",
+          },
         ],
       }),
     );
