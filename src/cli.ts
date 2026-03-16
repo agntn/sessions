@@ -92,11 +92,12 @@ const statsCommand = defineCommand({
         const cursor = await storage.getCursor(source.name);
         const ts = Number(cursor);
         const date = new Date(ts);
-        const hasValidDate =
-          Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
+        const hasValidDate = Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
         const display = hasValidDate
           ? `${cursor} (${date.toISOString()})`
-          : (cursor && cursor !== "0") ? cursor : "(none)";
+          : cursor && cursor !== "0"
+            ? cursor
+            : "(none)";
         consola.info(`  ${source.name}: ${display}`);
       }
     } finally {

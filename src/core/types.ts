@@ -138,4 +138,5 @@ export interface IngestResult {
   count: number;
   cursor: string;
   skipped: boolean;
+  error?: string;
 }
