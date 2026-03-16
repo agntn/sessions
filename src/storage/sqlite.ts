@@ -850,6 +850,10 @@ export class SqliteStorage implements Storage {
       .run();
   }
 
+  async listCursors(): Promise<Array<{ source: string; cursor: string; lastRun: number }>> {
+    return await this.db.select().from(ingestState).all();
+  }
+
   async deleteCursor(source: string): Promise<void> {
     await this.db.delete(ingestState).where(eq(ingestState.source, source)).run();
   }

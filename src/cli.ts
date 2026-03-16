@@ -180,16 +180,20 @@ const cursorListCommand = defineCommand({
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
-      for (const source of allSources()) {
-        const cursor = await storage.getCursor(source.name);
+      const cursors = await storage.listCursors();
+      if (!cursors.length) {
+        consola.info("No cursors found");
+        return;
+      }
+      for (const { source, cursor } of cursors) {
         const ts = Number(cursor);
         const date = new Date(ts);
         const hasValidDate =
           Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
         const display = hasValidDate
           ? `${cursor} (${date.toISOString()})`
-          : (cursor && cursor !== "0") ? cursor : "(none)";
-        consola.log(`${source.name}: ${display}`);
+          : cursor !== "0" ? cursor : "(none)";
+        consola.log(`${source}: ${display}`);
       }
     } finally {
       await storage.close();
@@ -207,11 +211,6 @@ const cursorResetCommand = defineCommand({
     const dbPath = resolveDb(args.db);
     if (!existsSync(dbPath)) {
       consola.warn(`Database not found: ${dbPath}`);
-      return;
-    }
-
-    if (!allSources().some((source) => source.name === args.source)) {
-      consola.error(`Unknown source: ${args.source}`);
       return;
     }
 
@@ -243,11 +242,6 @@ const purgeCommand = defineCommand({
     const dbPath = resolveDb(args.db);
     if (!existsSync(dbPath)) {
       consola.warn(`Database not found: ${dbPath}`);
-      return;
-    }
-
-    if (!allSources().some((source) => source.name === args.source)) {
-      consola.error(`Unknown source: ${args.source}`);
       return;
     }
 
