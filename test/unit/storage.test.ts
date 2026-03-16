@@ -580,6 +580,30 @@ describe("SqliteStorage CRUD", () => {
     expect(await storage.getSession("ses-del")).toBeNull();
   });
 
+  it("deletes cursor for a source", async () => {
+    await storage.setCursor("test", "12345");
+    expect(await storage.getCursor("test")).toBe("12345");
+
+    await storage.deleteCursor("test");
+    expect(await storage.getCursor("test")).toBe("0");
+  });
+
+  it("purges all sessions for a source and returns count", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "first"),
+      msg("claude", "assistant", 2000, "second"),
+      msg("aei", "user", 3000, "third"),
+    ]);
+
+    expect(await storage.count("claude")).toBe(2);
+    expect(await storage.count("aei")).toBe(1);
+
+    const deleted = await storage.deleteBySource("claude");
+    expect(deleted).toBe(1); // 1 session
+    expect(await storage.count("claude")).toBe(0);
+    expect(await storage.count("aei")).toBe(1);
+  });
+
   it("adds and retrieves a single message", async () => {
     const m = msg("test", "user", 5000, "hello crud");
     m.context = { model: "opus" };
