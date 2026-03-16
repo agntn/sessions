@@ -131,18 +131,30 @@ describe("SqliteStorage", () => {
           { type: "text", text: "auth tests passing" },
         ],
       },
-      msg("claude", "user", 2000, "auth review looks good"),
-      msg("claude", "user", 3000, "auth rollback needed"),
+      {
+        source: "claude",
+        sessionId: "ses-review",
+        role: "user",
+        timestamp: 2000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "auth review looks good" }],
+      },
+      {
+        source: "claude",
+        sessionId: "ses-rollback",
+        role: "user",
+        timestamp: 3000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "auth rollback needed" }],
+      },
     ]);
 
     const results = await storage.search("auth", { limit: 2 });
     expect(results).toHaveLength(2);
 
-    // Should get 2 distinct messages, not 2 blocks from the first message
+    // Must be 2 distinct messages (by sessionId), not 2 blocks from one message
     const sessionIds = new Set(results.map((r) => r.sessionId));
-    const dates = results.map((r) => r.date);
-    expect(dates.every((d) => d === "1970-01-01")).toBe(true);
-    expect(sessionIds.size).toBeGreaterThanOrEqual(1);
+    expect(sessionIds.size).toBe(2);
   });
 
   it("handles multiple batches", async () => {

@@ -905,7 +905,7 @@ export class SqliteStorage implements Storage {
     }
 
     const snippetExprs = terms.map(() => "nullif(instr(lower(b2.text), ?), 0)");
-    const snippetPosition = `coalesce(${snippetExprs.join(", ")}, 1)`;
+    const snippetPosition = `coalesce(${snippetExprs.join(", ")}, 0)`;
 
     // First select distinct message IDs that match (limited), then pick
     // the best-matching block per message for the snippet.  This ensures
@@ -919,13 +919,18 @@ export class SqliteStorage implements Storage {
         ORDER BY m.timestamp DESC
         LIMIT ?
       ),
-      best_block AS (
-        SELECT b2.message_id,
-          substr(b2.text, max(1, ${snippetPosition} - 80), 300) as text,
-          row_number() OVER (PARTITION BY b2.message_id ORDER BY ${snippetPosition}) as rn
+      block_scores AS (
+        SELECT b2.message_id, b2.text,
+          ${snippetPosition} as sp
         FROM matched_msgs mm
         JOIN blocks b2 ON b2.message_id = mm.id
           AND b2.type IN ('text', 'thinking', 'reasoning')
+      ),
+      best_block AS (
+        SELECT message_id,
+          substr(text, max(1, CASE WHEN sp > 0 THEN sp - 80 ELSE 1 END), 300) as text,
+          row_number() OVER (PARTITION BY message_id ORDER BY CASE WHEN sp = 0 THEN 999999 ELSE sp END) as rn
+        FROM block_scores
       )
       SELECT mm.date, mm.source, mm.role, mm.sessionId, bb.text
       FROM matched_msgs mm
