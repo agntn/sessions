@@ -310,6 +310,34 @@ describe("SqliteStorage", () => {
     expect(xRunLength).toBeLessThan(100);
   });
 
+  it("escapes LIKE metacharacters in search terms", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "upload reached 100% completion"),
+      msg("claude", "user", 2000, "found 1000 items in the scan"),
+      msg("claude", "user", 3000, "log_error handler triggered"),
+      msg("claude", "user", 4000, "logXerror is a typo"),
+    ]);
+
+    // "100%" should match only the literal percent, not act as a wildcard
+    const pctResults = await storage.search("100%");
+    expect(pctResults).toHaveLength(1);
+    expect(pctResults[0].text).toContain("100%");
+
+    // "log_error" should match only the literal underscore, not any char
+    const underscoreResults = await storage.search("log_error");
+    expect(underscoreResults).toHaveLength(1);
+    expect(underscoreResults[0].text).toContain("log_error");
+
+    // Backslash literal should not break the escape sequence
+    await storage.insert([
+      msg("claude", "user", 5000, "path is C:\\Users\\admin"),
+      msg("claude", "user", 6000, "path is C:/Users/admin"),
+    ]);
+    const bsResults = await storage.search("C:\\Users");
+    expect(bsResults).toHaveLength(1);
+    expect(bsResults[0].text).toContain("C:\\Users");
+  });
+
   it("returns search results in reverse chronological order", async () => {
     await storage.insert([
       msg("claude", "user", 1000, "deployment pipeline broke"),
