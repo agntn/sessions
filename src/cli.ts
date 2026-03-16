@@ -181,18 +181,18 @@ const cursorListCommand = defineCommand({
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       const cursors = await storage.listCursors();
-      if (!cursors.length) {
-        consola.info("No cursors found");
-        return;
+      const cursorMap = new Map(cursors.map((c) => [c.source, c.cursor]));
+      for (const source of allSources()) {
+        if (!cursorMap.has(source.name)) cursorMap.set(source.name, "0");
       }
-      for (const { source, cursor } of cursors) {
+      for (const [source, cursor] of cursorMap) {
         const ts = Number(cursor);
         const date = new Date(ts);
         const hasValidDate =
           Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
         const display = hasValidDate
           ? `${cursor} (${date.toISOString()})`
-          : cursor !== "0" ? cursor : "(none)";
+          : cursor && cursor !== "0" ? cursor : "(none)";
         consola.log(`${source}: ${display}`);
       }
     } finally {
