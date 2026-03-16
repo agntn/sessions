@@ -510,13 +510,13 @@ export class SqliteStorage implements Storage {
       channel.platformId ?? "",
       channel.name ?? "",
       channel.type ?? "",
-    ].join("|");
+    ].join("\0");
   }
 
   private participantCacheKey(author: Message["author"]): string | null {
     if (!author) return null;
     return [author.platform, author.platformId ?? "", author.name, author.isBot ? "1" : "0"].join(
-      "|",
+      "\0",
     );
   }
 
@@ -878,9 +878,10 @@ export class SqliteStorage implements Storage {
     if (!terms.length) return [];
 
     const rawLimit = opts?.limit;
-    const limit = typeof rawLimit === "number" && Number.isFinite(rawLimit)
-      ? Math.max(1, Math.trunc(rawLimit))
-      : 20;
+    const limit =
+      typeof rawLimit === "number" && Number.isFinite(rawLimit)
+        ? Math.max(1, Math.trunc(rawLimit))
+        : 20;
     const filterParams: Array<string | number> = [];
     const filters = ["b.type IN ('text', 'thinking', 'reasoning')"];
 
