@@ -839,6 +839,16 @@ export class SqliteStorage implements Storage {
     return row?.cursor ?? "0";
   }
 
+  async getCursorState(source: string): Promise<{ cursor: string; lastRun: number | null }> {
+    const row = await this.db
+      .select({ cursor: ingestState.cursor, lastRun: ingestState.lastRun })
+      .from(ingestState)
+      .where(eq(ingestState.source, source))
+      .get();
+
+    return { cursor: row?.cursor ?? "0", lastRun: row?.lastRun ?? null };
+  }
+
   async setCursor(source: string, cursor: string): Promise<void> {
     await this.db
       .insert(ingestState)

@@ -128,6 +128,7 @@ export interface Storage {
   getSessionParticipants(sessionId: string): Promise<Array<Participant & { id: string }>>;
 
   getCursor(source: string): Promise<string>;
+  getCursorState(source: string): Promise<{ cursor: string; lastRun: number | null }>;
   setCursor(source: string, cursor: string): Promise<void>;
   listCursors(): Promise<Array<{ source: string; cursor: string; lastRun: number }>>;
   deleteCursor(source: string): Promise<void>;

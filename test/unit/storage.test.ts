@@ -580,6 +580,20 @@ describe("SqliteStorage CRUD", () => {
     expect(await storage.getSession("ses-del")).toBeNull();
   });
 
+  it("returns cursor state with lastRun timestamp", async () => {
+    const before = Date.now();
+    await storage.setCursor("test", "42000");
+    const state = await storage.getCursorState("test");
+
+    expect(state.cursor).toBe("42000");
+    expect(state.lastRun).toBeTypeOf("number");
+    expect(state.lastRun!).toBeGreaterThanOrEqual(before);
+
+    const empty = await storage.getCursorState("nonexistent");
+    expect(empty.cursor).toBe("0");
+    expect(empty.lastRun).toBeNull();
+  });
+
   it("deletes cursor for a source", async () => {
     await storage.setCursor("test", "12345");
     expect(await storage.getCursor("test")).toBe("12345");
