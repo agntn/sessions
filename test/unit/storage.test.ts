@@ -286,6 +286,15 @@ describe("SqliteStorage", () => {
     const underscoreResults = await storage.search("log_error");
     expect(underscoreResults).toHaveLength(1);
     expect(underscoreResults[0].text).toContain("log_error");
+
+    // Backslash literal should not break the escape sequence
+    await storage.insert([
+      msg("claude", "user", 5000, "path is C:\\Users\\admin"),
+      msg("claude", "user", 6000, "path is C:/Users/admin"),
+    ]);
+    const bsResults = await storage.search("C:\\Users");
+    expect(bsResults).toHaveLength(1);
+    expect(bsResults[0].text).toContain("C:\\Users");
   });
 
   it("clamps negative and zero limit to 1", async () => {
