@@ -510,13 +510,13 @@ export class SqliteStorage implements Storage {
       channel.platformId ?? "",
       channel.name ?? "",
       channel.type ?? "",
-    ].join("|");
+    ].join("\0");
   }
 
   private participantCacheKey(author: Message["author"]): string | null {
     if (!author) return null;
     return [author.platform, author.platformId ?? "", author.name, author.isBot ? "1" : "0"].join(
-      "|",
+      "\0",
     );
   }
 

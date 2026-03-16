@@ -269,6 +269,20 @@ describe("SqliteStorage", () => {
     expect(xRunLength).toBeLessThan(100);
   });
 
+  it("returns search results in reverse chronological order", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "deployment pipeline broke"),
+      msg("claude", "user", 3000, "deployment works after fix"),
+      msg("claude", "user", 2000, "debugging the deployment issue"),
+    ]);
+
+    const results = await storage.search("deployment");
+    expect(results).toHaveLength(3);
+    expect(results[0].text).toContain("works after fix");
+    expect(results[1].text).toContain("debugging");
+    expect(results[2].text).toContain("broke");
+  });
+
   it("clamps negative and zero limit to 1", async () => {
     await storage.insert([
       msg("claude", "user", 1000, "alpha message"),
@@ -689,6 +703,61 @@ describe("SqliteStorage CRUD", () => {
     const byId = await storage.getChannel(cli!.id);
     expect(byId).not.toBeNull();
     expect(byId!.platform).toBe("cli");
+  });
+
+  it("does not collide channel cache keys when field values contain the old separator", async () => {
+    await storage.insert([
+      {
+        source: "test",
+        sessionId: "ses-pipe1",
+        role: "user",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "a" }],
+        channel: { platform: "a", platformId: "b", name: "c" },
+      },
+      {
+        source: "test",
+        sessionId: "ses-pipe2",
+        role: "user",
+        timestamp: 2000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "b" }],
+        channel: { platform: "a|b", name: "c" },
+      },
+    ]);
+
+    const allChannels = await storage.listChannels();
+    const relevant = allChannels.filter(
+      (c) => c.platform === "a" || c.platform === "a|b",
+    );
+    expect(relevant).toHaveLength(2);
+  });
+
+  it("does not collide participant cache keys when name contains separator", async () => {
+    await storage.insert([
+      {
+        source: "test",
+        sessionId: "ses-psep1",
+        role: "user",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "a" }],
+        author: { platform: "discord", platformId: "1", name: "alice" },
+      },
+      {
+        source: "test",
+        sessionId: "ses-psep2",
+        role: "user",
+        timestamp: 2000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "b" }],
+        author: { platform: "discord", name: "1|alice" },
+      },
+    ]);
+
+    const all = await storage.listParticipants({ platform: "discord" });
+    expect(all).toHaveLength(2);
   });
 
   it("deduplicates channels by platform + platformId", async () => {
