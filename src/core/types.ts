@@ -131,6 +131,7 @@ export interface Storage {
   setCursor(source: string, cursor: string): Promise<void>;
   deleteCursor(source: string): Promise<void>;
   deleteBySource(source: string): Promise<number>;
+  purgeSource(source: string): Promise<number>;
 }
 
 export interface IngestResult {

@@ -210,6 +210,11 @@ const cursorResetCommand = defineCommand({
       return;
     }
 
+    if (!allSources().some((source) => source.name === args.source)) {
+      consola.error(`Unknown source: ${args.source}`);
+      return;
+    }
+
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       await storage.deleteCursor(args.source);
@@ -241,10 +246,14 @@ const purgeCommand = defineCommand({
       return;
     }
 
+    if (!allSources().some((source) => source.name === args.source)) {
+      consola.error(`Unknown source: ${args.source}`);
+      return;
+    }
+
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
-      const deleted = await storage.deleteBySource(args.source);
-      await storage.deleteCursor(args.source);
+      const deleted = await storage.purgeSource(args.source);
       consola.success(`Purged "${args.source}": ${deleted} sessions removed, cursor reset`);
     } finally {
       await storage.close();
