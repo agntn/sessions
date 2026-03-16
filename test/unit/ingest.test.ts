@@ -58,6 +58,12 @@ function makeStorage(): Storage & { inserted: Message[][]; cursors: Map<string, 
     async setCursor(source, cursor) {
       cursors.set(source, cursor);
     },
+    async deleteCursor(source) {
+      cursors.delete(source);
+    },
+    async deleteBySource() {
+      return 0;
+    },
     async count() {
       return inserted.reduce((sum, b) => sum + b.length, 0);
     },

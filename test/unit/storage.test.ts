@@ -116,6 +116,47 @@ describe("SqliteStorage", () => {
     expect(results[0].role).toBe("user");
   });
 
+  it("counts limit against messages, not blocks", async () => {
+    // Message with 3 matching blocks should consume 1 limit slot, not 3
+    await storage.insert([
+      {
+        source: "claude",
+        sessionId: "ses-multi-block",
+        role: "assistant",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [
+          { type: "text", text: "deploy the auth service" },
+          { type: "text", text: "auth config updated" },
+          { type: "text", text: "auth tests passing" },
+        ],
+      },
+      {
+        source: "claude",
+        sessionId: "ses-review",
+        role: "user",
+        timestamp: 2000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "auth review looks good" }],
+      },
+      {
+        source: "claude",
+        sessionId: "ses-rollback",
+        role: "user",
+        timestamp: 3000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "auth rollback needed" }],
+      },
+    ]);
+
+    const results = await storage.search("auth", { limit: 2 });
+    expect(results).toHaveLength(2);
+
+    // Must be 2 distinct messages (by sessionId), not 2 blocks from one message
+    const sessionIds = new Set(results.map((r) => r.sessionId));
+    expect(sessionIds.size).toBe(2);
+  });
+
   it("handles multiple batches", async () => {
     await storage.insert([msg("a", "user", 1000, "first")]);
     await storage.insert([msg("a", "user", 2000, "second")]);
@@ -269,6 +310,48 @@ describe("SqliteStorage", () => {
     expect(xRunLength).toBeLessThan(100);
   });
 
+  it("escapes LIKE metacharacters in search terms", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "upload reached 100% completion"),
+      msg("claude", "user", 2000, "found 1000 items in the scan"),
+      msg("claude", "user", 3000, "log_error handler triggered"),
+      msg("claude", "user", 4000, "logXerror is a typo"),
+    ]);
+
+    // "100%" should match only the literal percent, not act as a wildcard
+    const pctResults = await storage.search("100%");
+    expect(pctResults).toHaveLength(1);
+    expect(pctResults[0].text).toContain("100%");
+
+    // "log_error" should match only the literal underscore, not any char
+    const underscoreResults = await storage.search("log_error");
+    expect(underscoreResults).toHaveLength(1);
+    expect(underscoreResults[0].text).toContain("log_error");
+
+    // Backslash literal should not break the escape sequence
+    await storage.insert([
+      msg("claude", "user", 5000, "path is C:\\Users\\admin"),
+      msg("claude", "user", 6000, "path is C:/Users/admin"),
+    ]);
+    const bsResults = await storage.search("C:\\Users");
+    expect(bsResults).toHaveLength(1);
+    expect(bsResults[0].text).toContain("C:\\Users");
+  });
+
+  it("returns search results in reverse chronological order", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "deployment pipeline broke"),
+      msg("claude", "user", 3000, "deployment works after fix"),
+      msg("claude", "user", 2000, "debugging the deployment issue"),
+    ]);
+
+    const results = await storage.search("deployment");
+    expect(results).toHaveLength(3);
+    expect(results[0].text).toContain("works after fix");
+    expect(results[1].text).toContain("debugging");
+    expect(results[2].text).toContain("broke");
+  });
+
   it("clamps negative and zero limit to 1", async () => {
     await storage.insert([
       msg("claude", "user", 1000, "alpha message"),
@@ -398,10 +481,7 @@ describe("SqliteStorage CRUD", () => {
   });
 
   it("clamps negative limit and offset in getMessages", async () => {
-    await storage.insert([
-      msg("test", "user", 1000, "a"),
-      msg("test", "user", 2000, "b"),
-    ]);
+    await storage.insert([msg("test", "user", 1000, "a"), msg("test", "user", 2000, "b")]);
 
     const negLimit = await storage.getMessages("session-test", { limit: -1 });
     expect(negLimit).toHaveLength(1);
@@ -498,6 +578,30 @@ describe("SqliteStorage CRUD", () => {
 
     await storage.deleteSession("ses-del");
     expect(await storage.getSession("ses-del")).toBeNull();
+  });
+
+  it("deletes cursor for a source", async () => {
+    await storage.setCursor("test", "12345");
+    expect(await storage.getCursor("test")).toBe("12345");
+
+    await storage.deleteCursor("test");
+    expect(await storage.getCursor("test")).toBe("0");
+  });
+
+  it("purges all sessions for a source and returns count", async () => {
+    await storage.insert([
+      msg("claude", "user", 1000, "first"),
+      msg("claude", "assistant", 2000, "second"),
+      msg("aei", "user", 3000, "third"),
+    ]);
+
+    expect(await storage.count("claude")).toBe(2);
+    expect(await storage.count("aei")).toBe(1);
+
+    const deleted = await storage.deleteBySource("claude");
+    expect(deleted).toBe(1); // 1 session
+    expect(await storage.count("claude")).toBe(0);
+    expect(await storage.count("aei")).toBe(1);
   });
 
   it("adds and retrieves a single message", async () => {
@@ -692,6 +796,61 @@ describe("SqliteStorage CRUD", () => {
     const byId = await storage.getChannel(cli!.id);
     expect(byId).not.toBeNull();
     expect(byId!.platform).toBe("cli");
+  });
+
+  it("does not collide channel cache keys when field values contain the old separator", async () => {
+    await storage.insert([
+      {
+        source: "test",
+        sessionId: "ses-pipe1",
+        role: "user",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "a" }],
+        channel: { platform: "a", platformId: "b", name: "c" },
+      },
+      {
+        source: "test",
+        sessionId: "ses-pipe2",
+        role: "user",
+        timestamp: 2000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "b" }],
+        channel: { platform: "a|b", name: "c" },
+      },
+    ]);
+
+    const allChannels = await storage.listChannels();
+    const relevant = allChannels.filter(
+      (c) => c.platform === "a" || c.platform === "a|b",
+    );
+    expect(relevant).toHaveLength(2);
+  });
+
+  it("does not collide participant cache keys when name contains separator", async () => {
+    await storage.insert([
+      {
+        source: "test",
+        sessionId: "ses-psep1",
+        role: "user",
+        timestamp: 1000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "a" }],
+        author: { platform: "discord", platformId: "1", name: "alice" },
+      },
+      {
+        source: "test",
+        sessionId: "ses-psep2",
+        role: "user",
+        timestamp: 2000,
+        date: "1970-01-01",
+        blocks: [{ type: "text", text: "b" }],
+        author: { platform: "discord", name: "1|alice" },
+      },
+    ]);
+
+    const all = await storage.listParticipants({ platform: "discord" });
+    expect(all).toHaveLength(2);
   });
 
   it("deduplicates channels by platform + platformId", async () => {
