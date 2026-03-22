@@ -152,8 +152,7 @@ export class AeiSource implements Source {
     }
   }
 
-  cursor(messages: Message[]): string {
-    if (!messages.length) return "0";
-    return String(messages[messages.length - 1].timestamp);
+  cursor(message: Message): string {
+    return String(message.timestamp);
   }
 }

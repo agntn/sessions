@@ -62,7 +62,7 @@ export async function ingest(
           ingestedCount += batch.length;
           
           if (cursorSeed) {
-            const newCursor = source.cursor([cursorSeed]);
+            const newCursor = source.cursor(cursorSeed);
             await storage.setCursor(source.name, newCursor);
             resultCursor = newCursor;
           }
@@ -87,7 +87,7 @@ export async function ingest(
           options.onLog?.(`  ... and ${count - previewLimit} more`);
         }
       } else if (cursorSeed) {
-        const newCursor = source.cursor([cursorSeed]);
+        const newCursor = source.cursor(cursorSeed);
         await storage.setCursor(source.name, newCursor);
         resultCursor = newCursor;
       }

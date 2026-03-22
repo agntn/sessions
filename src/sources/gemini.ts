@@ -134,10 +134,7 @@ export class GeminiSource implements Source {
     }
   }
 
-  cursor(messages: Message[]): string {
-    if (!messages.length) return "0";
-    let max = 0;
-    for (const m of messages) if (m.timestamp > max) max = m.timestamp;
-    return String(max);
+  cursor(message: Message): string {
+    return String(message.timestamp);
   }
 }

@@ -377,7 +377,6 @@ describe("CodexSource cursor", () => {
       },
     ];
 
-    expect(source.cursor(msgs)).toBe("400");
-    expect(source.cursor([])).toBe("0");
+    expect(source.cursor(msgs[1])).toBe("400");
   });
 });
