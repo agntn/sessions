@@ -284,9 +284,7 @@ describe("OpenClawSource session classification", () => {
         timestamp: "2026-03-10T10:00:00Z",
         message: {
           role: "user",
-          content: [
-            { type: "text", text: "[cron:abc-123 daily-check] run the check" },
-          ],
+          content: [{ type: "text", text: "[cron:abc-123 daily-check] run the check" }],
         },
       },
     ]);
@@ -389,7 +387,6 @@ describe("OpenClawSource multi-dir support", () => {
       },
     ];
 
-    expect(source.cursor(msgs)).toBe("300");
-    expect(source.cursor([])).toBe("0");
+    expect(source.cursor(msgs[1])).toBe("300");
   });
 });

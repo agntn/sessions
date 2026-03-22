@@ -38,7 +38,7 @@ export interface Source {
   name: string;
   available(): boolean;
   ingest(cursor: string): AsyncGenerator<Message>;
-  cursor(messages: Message[]): string;
+  cursor(message: Message): string;
 }
 
 export interface Session {
@@ -128,7 +128,12 @@ export interface Storage {
   getSessionParticipants(sessionId: string): Promise<Array<Participant & { id: string }>>;
 
   getCursor(source: string): Promise<string>;
+  getCursorState(source: string): Promise<{ cursor: string; lastRun: number | null }>;
   setCursor(source: string, cursor: string): Promise<void>;
+  listCursors(): Promise<Array<{ source: string; cursor: string; lastRun: number }>>;
+  deleteCursor(source: string): Promise<void>;
+  deleteBySource(source: string): Promise<number>;
+  purgeSource(source: string): Promise<number>;
 }
 
 export interface IngestResult {
@@ -136,4 +141,5 @@ export interface IngestResult {
   count: number;
   cursor: string;
   skipped: boolean;
+  error?: string;
 }
