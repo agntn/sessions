@@ -188,7 +188,7 @@ describe("round-trip: source → ingest → storage → search", () => {
     expect(msgs[0].blocks[0].type).toBe("tool_call");
     expect(msgs[0].blocks[0].toolName).toBe("read_file");
     expect(msgs[0].blocks[0].toolCallId).toBe("call-abc");
-    expect(msgs[0].blocks[0].toolInput).toContain("/src/main.ts");
+    expect(msgs[0].blocks[0].toolInput).toBe(JSON.stringify({ path: "/src/main.ts" }));
 
     expect(msgs[1].blocks[0].type).toBe("tool_result");
     expect(msgs[1].blocks[0].toolCallId).toBe("call-abc");
