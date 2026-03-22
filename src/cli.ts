@@ -84,7 +84,13 @@ const statsCommand = defineCommand({
       }
 
       if (args.json) {
-        console.log(JSON.stringify({ database: dbPath, totalMessages, totalSessions, sources: stats, cursors: cursorStates }, null, 2));
+        const cursors = Object.fromEntries(
+          Object.entries(cursorStates).map(([name, state]) => [name, {
+            cursor: state.cursor && state.cursor !== "0" ? state.cursor : null,
+            lastRun: state.lastRun,
+          }]),
+        );
+        console.log(JSON.stringify({ database: dbPath, totalMessages, totalSessions, sources: stats, cursors }, null, 2));
         return;
       }
 
