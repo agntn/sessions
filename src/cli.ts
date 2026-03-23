@@ -9,9 +9,9 @@ import { allSources } from "./sources/index.ts";
 import { defaultDbPath } from "./core/paths.ts";
 import type { Message } from "./core/types.ts";
 
-function resolveDb(db?: string): string {
+function resolveDb(db?: string, quiet?: boolean): string {
   const resolved = db || defaultDbPath();
-  if (!db) consola.info(`Using default database: ${resolved}`);
+  if (!db && !quiet) consola.info(`Using default database: ${resolved}`);
   return resolved;
 }
 
@@ -35,7 +35,7 @@ const ingestCommand = defineCommand({
     json: { type: "boolean", description: "Output as JSON" },
   },
   async run({ args }) {
-    const storage = await createSqliteStorage(resolveDb(args.db));
+    const storage = await createSqliteStorage(resolveDb(args.db, args.json));
     try {
       const only = args.only
         ?.split(",")
