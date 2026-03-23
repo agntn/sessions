@@ -118,7 +118,12 @@ export class SqliteStorage implements Storage {
   }
 
   private ensureFts(): Promise<void> {
-    if (!this.ftsInit) this.ftsInit = this.setupFts();
+    if (!this.ftsInit) {
+      this.ftsInit = this.setupFts().catch((err) => {
+        this.ftsInit = null; // allow retry on transient failures
+        throw err;
+      });
+    }
     return this.ftsInit;
   }
 
