@@ -1019,7 +1019,7 @@ export class SqliteStorage implements Storage {
         JOIN messages m ON m.id = b.message_id
         WHERE 1=1 ${filterWhere}
         GROUP BY m.id
-        ORDER BY best_rank
+        ORDER BY best_rank, m.timestamp DESC, m.id
         LIMIT ?
       ),
       best_block AS (
@@ -1037,7 +1037,7 @@ export class SqliteStorage implements Storage {
       SELECT mm.date, mm.source, mm.role, mm.sessionId, mm.timestamp, bb.text
       FROM matched_msgs mm
       JOIN best_block bb ON bb.message_id = mm.id AND bb.rn = 1
-      ORDER BY mm.best_rank
+      ORDER BY mm.best_rank, mm.timestamp DESC, mm.id
     `;
 
     const result = await this.client.execute({
