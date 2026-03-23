@@ -132,12 +132,53 @@ describe("ingest error handling", () => {
     expect(results[0].count).toBe(1);
 
     expect(results[1].source).toBe("s2");
-    expect(results[1].count).toBe(0); // 0 because the message was yielded but never flushed before failure
-    expect(results[1].cursor).toBe("50"); // Original cursor preserved
+    expect(results[1].count).toBe(1); // partial batch flushed on error
+    expect(results[1].cursor).toBe("0"); // cursor advanced to partial progress
     expect(results[1].error).toBe("Midway failure in s2");
 
     expect(results[2].source).toBe("s3");
     expect(results[2].count).toBe(1);
+  });
+
+  it("flushes partial batch and advances cursor on mid-ingestion error", async () => {
+    const storage = makeStorage();
+    const inserted: Message[] = [];
+    storage.insert = async (batch) => {
+      inserted.push(...batch);
+    };
+
+    const source: Source = {
+      name: "partial",
+      available: () => true,
+      async *ingest() {
+        yield {
+          source: "partial",
+          sessionId: "1",
+          role: "user",
+          timestamp: 500,
+          date: "2026-03-14",
+          blocks: [{ type: "text", text: "saved before crash" }],
+        };
+        yield {
+          source: "partial",
+          sessionId: "1",
+          role: "assistant",
+          timestamp: 600,
+          date: "2026-03-14",
+          blocks: [{ type: "text", text: "also saved" }],
+        };
+        throw new Error("source crashed");
+      },
+      cursor: (msg) => String(msg.timestamp),
+    };
+
+    const results = await ingest([source], storage);
+
+    expect(results[0].count).toBe(2);
+    expect(results[0].cursor).toBe("600");
+    expect(results[0].error).toBe("source crashed");
+    expect(inserted).toHaveLength(2);
+    expect(await storage.getCursor("partial")).toBe("600");
   });
 
   it("reports count of successfully inserted batches even when failure happens later", async () => {

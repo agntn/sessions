@@ -39,9 +39,10 @@ export async function ingest(
     let ingestedCount = 0;
     let resultCursor = cursor;
     
+    let batch: Message[] = [];
+    let cursorSeed: Message | null = null;
+
     try {
-      let batch: Message[] = [];
-      let cursorSeed: Message | null = null;
 
       for await (const msg of source.ingest(cursor)) {
         count++;
@@ -104,6 +105,23 @@ export async function ingest(
         skipped: false,
       });
     } catch (err) {
+      try {
+        if (!options.dryRun && batch.length) {
+          await storage.insert(batch);
+          ingestedCount += batch.length;
+        }
+
+        if (!options.dryRun && cursorSeed) {
+          const newCursor = source.cursor(cursorSeed);
+          await storage.setCursor(source.name, newCursor);
+          resultCursor = newCursor;
+        }
+      } catch {
+        // Best-effort recovery: if flushing the partial batch fails,
+        // fall through and report the original error with whatever
+        // progress was already persisted.
+      }
+
       const error = err instanceof Error ? err.message : String(err);
       if (options.verbose) {
         options.onLog?.(`  ${source.name}: error - ${error}`);
