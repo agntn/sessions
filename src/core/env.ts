@@ -2,7 +2,12 @@ import { homedir, userInfo } from "node:os";
 
 /** Safe home directory accessor. Never throws. */
 export function home(): string {
-  return process.env.HOME || homedir();
+  if (process.env.HOME) return process.env.HOME;
+  try {
+    return homedir();
+  } catch {
+    return "/tmp";
+  }
 }
 
 /** Current OS username. Falls back to 'unknown'. */

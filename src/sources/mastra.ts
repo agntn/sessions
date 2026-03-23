@@ -121,12 +121,10 @@ export class MastraSource implements Source {
     }
   }
 
-  cursor(messages: Message[]): string {
-    if (!messages.length) return "";
-    const last = messages[messages.length - 1];
-    const createdAt = last.context?.mastraCreatedAt;
-    const rowId = last.context?.mastraRowId;
+  cursor(message: Message): string {
+    const createdAt = message.context?.mastraCreatedAt;
+    const rowId = message.context?.mastraRowId;
     if (createdAt && rowId) return `${createdAt}|${rowId}`;
-    return `${new Date(last.timestamp).toISOString()}|0`;
+    return `${new Date(message.timestamp).toISOString()}|0`;
   }
 }

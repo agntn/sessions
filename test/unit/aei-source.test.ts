@@ -352,8 +352,7 @@ describe("AeiSource", () => {
       },
     ];
 
-    expect(source.cursor(msgs)).toBe("300");
-    expect(source.cursor([])).toBe("0");
+    expect(source.cursor(msgs[1])).toBe("300");
   });
 
   it("omits context when all fields are null", async () => {

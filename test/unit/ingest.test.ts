@@ -9,7 +9,7 @@ function makeSource(name: string, messages: Message[]): Source {
     async *ingest() {
       for (const m of messages) yield m;
     },
-    cursor: (msgs) => (msgs.length ? String(msgs[msgs.length - 1].timestamp) : "0"),
+    cursor: (msg) => String(msg.timestamp),
   };
 }
 
@@ -18,7 +18,7 @@ function makeUnavailableSource(name: string): Source {
     name,
     available: () => false,
     async *ingest() {},
-    cursor: () => "0",
+    cursor: (msg) => String(msg.timestamp),
   };
 }
 
@@ -51,8 +51,18 @@ function makeStorage(): Storage & { inserted: Message[][]; cursors: Map<string, 
     async getCursor(source) {
       return cursors.get(source) || "0";
     },
+    async getCursorState(source) {
+      const cursor = cursors.get(source) || "0";
+      return { cursor, lastRun: null };
+    },
     async setCursor(source, cursor) {
       cursors.set(source, cursor);
+    },
+    async deleteCursor(source) {
+      cursors.delete(source);
+    },
+    async deleteBySource() {
+      return 0;
     },
     async count() {
       return inserted.reduce((sum, b) => sum + b.length, 0);
@@ -162,7 +172,7 @@ describe("ingest", () => {
         receivedCursor = cursor;
         yield msg("test", 200);
       },
-      cursor: (msgs) => (msgs.length ? String(msgs[msgs.length - 1].timestamp) : "0"),
+      cursor: (msg) => String(msg.timestamp),
     };
 
     const results = await ingest([source], storage, { dryRun: true });
@@ -209,7 +219,7 @@ describe("ingest", () => {
         yield msg("test", 300);
         yield msg("test", 200);
       },
-      cursor: (msgs) => String(Math.max(...msgs.map((m) => m.timestamp))),
+      cursor: (msg) => String(msg.timestamp),
     };
 
     const results = await ingest([source], storage);

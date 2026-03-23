@@ -62,6 +62,7 @@ const statsCommand = defineCommand({
   meta: { name: "stats", description: "Show database statistics" },
   args: {
     db: { type: "string", description: "Database path (default: platform data dir)" },
+    json: { type: "boolean", description: "Output as JSON" },
   },
   async run({ args }) {
     const dbPath = resolveDb(args.db);
@@ -72,32 +73,57 @@ const statsCommand = defineCommand({
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
+      const totalMessages = await storage.count();
+      const totalSessions = await storage.sessionCount();
+      const stats = await storage.sourceStats();
+
+      const cursorStates: Record<string, { cursor: string; lastRun: number | null }> = {};
+      for (const source of allSources()) {
+        const state = await storage.getCursorState(source.name);
+        cursorStates[source.name] = { cursor: state.cursor, lastRun: state.lastRun };
+      }
+
+      if (args.json) {
+        const cursors = Object.fromEntries(
+          Object.entries(cursorStates).map(([name, state]) => [name, {
+            cursor: state.cursor && state.cursor !== "0" ? state.cursor : null,
+            lastRun: state.lastRun,
+          }]),
+        );
+        console.log(JSON.stringify({ database: dbPath, totalMessages, totalSessions, sources: stats, cursors }, null, 2));
+        return;
+      }
+
       consola.info(`Database: ${dbPath}`);
       consola.info("");
 
       consola.info("Messages:");
-      consola.info(`  Total: ${await storage.count()}`);
+      consola.info(`  Total: ${totalMessages}`);
 
-      const stats = await storage.sourceStats();
       for (const s of stats) {
         consola.info(`  ${s.source}: ${s.messages} messages, ${s.sessions} sessions`);
       }
 
       consola.info("");
-      consola.info(`Sessions: ${await storage.sessionCount()}`);
+      consola.info(`Sessions: ${totalSessions}`);
 
       consola.info("");
       consola.info("Cursors:");
-      for (const source of allSources()) {
-        const cursor = await storage.getCursor(source.name);
-        const ts = Number(cursor);
+      for (const [name, state] of Object.entries(cursorStates)) {
+        const ts = Number(state.cursor);
         const date = new Date(ts);
-        const hasValidDate =
-          Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
-        const display = hasValidDate
-          ? `${cursor} (${date.toISOString()})`
-          : (cursor && cursor !== "0") ? cursor : "(none)";
-        consola.info(`  ${source.name}: ${display}`);
+        const hasValidDate = Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
+        const cursorDisplay = hasValidDate
+          ? `${state.cursor} (${date.toISOString()})`
+          : state.cursor && state.cursor !== "0"
+            ? state.cursor
+            : "(none)";
+
+        const lastRunDisplay = state.lastRun ? new Date(state.lastRun).toISOString() : null;
+
+        const parts = [`  ${name}: cursor ${cursorDisplay}`];
+        if (lastRunDisplay) parts.push(`last run ${lastRunDisplay}`);
+        consola.info(parts.join(", "));
       }
     } finally {
       await storage.close();
@@ -107,10 +133,19 @@ const statsCommand = defineCommand({
 
 const sourcesCommand = defineCommand({
   meta: { name: "sources", description: "List available sources" },
-  run() {
-    for (const source of allSources()) {
-      const status = source.available() ? "✓" : "✗";
-      consola.log(`${status} ${source.name}`);
+  args: {
+    json: { type: "boolean", description: "Output as JSON" },
+  },
+  run({ args }) {
+    const all = allSources().map((s) => ({ name: s.name, available: s.available() }));
+
+    if (args.json) {
+      console.log(JSON.stringify(all, null, 2));
+      return;
+    }
+
+    for (const s of all) {
+      consola.log(`${s.available ? "✓" : "✗"} ${s.name}`);
     }
   },
 });
@@ -165,6 +200,95 @@ const searchCommand = defineCommand({
   },
 });
 
+const cursorListCommand = defineCommand({
+  meta: { name: "list", description: "Show cursor values for all sources" },
+  args: {
+    db: { type: "string", description: "Database path (default: platform data dir)" },
+  },
+  async run({ args }) {
+    const dbPath = resolveDb(args.db);
+    if (!existsSync(dbPath)) {
+      consola.warn(`Database not found: ${dbPath}`);
+      return;
+    }
+
+    const storage = await createSqliteStorage(dbPath, { initialize: false });
+    try {
+      const cursors = await storage.listCursors();
+      const cursorMap = new Map(cursors.map((c) => [c.source, c.cursor]));
+      for (const source of allSources()) {
+        if (!cursorMap.has(source.name)) cursorMap.set(source.name, "0");
+      }
+      for (const [source, cursor] of cursorMap) {
+        const ts = Number(cursor);
+        const date = new Date(ts);
+        const hasValidDate =
+          Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
+        const display = hasValidDate
+          ? `${cursor} (${date.toISOString()})`
+          : cursor && cursor !== "0" ? cursor : "(none)";
+        consola.log(`${source}: ${display}`);
+      }
+    } finally {
+      await storage.close();
+    }
+  },
+});
+
+const cursorResetCommand = defineCommand({
+  meta: { name: "reset", description: "Reset cursor for a source to re-ingest from scratch" },
+  args: {
+    source: { type: "positional", description: "Source name to reset", required: true },
+    db: { type: "string", description: "Database path (default: platform data dir)" },
+  },
+  async run({ args }) {
+    const dbPath = resolveDb(args.db);
+    if (!existsSync(dbPath)) {
+      consola.warn(`Database not found: ${dbPath}`);
+      return;
+    }
+
+    const storage = await createSqliteStorage(dbPath, { initialize: false });
+    try {
+      await storage.deleteCursor(args.source);
+      consola.success(`Cursor reset for "${args.source}"`);
+    } finally {
+      await storage.close();
+    }
+  },
+});
+
+const cursorCommand = defineCommand({
+  meta: { name: "cursor", description: "Manage ingestion cursors" },
+  subCommands: {
+    list: cursorListCommand,
+    reset: cursorResetCommand,
+  },
+});
+
+const purgeCommand = defineCommand({
+  meta: { name: "purge", description: "Delete all data for a source and reset its cursor" },
+  args: {
+    source: { type: "positional", description: "Source name to purge", required: true },
+    db: { type: "string", description: "Database path (default: platform data dir)" },
+  },
+  async run({ args }) {
+    const dbPath = resolveDb(args.db);
+    if (!existsSync(dbPath)) {
+      consola.warn(`Database not found: ${dbPath}`);
+      return;
+    }
+
+    const storage = await createSqliteStorage(dbPath, { initialize: false });
+    try {
+      const deleted = await storage.purgeSource(args.source);
+      consola.success(`Purged "${args.source}": ${deleted} sessions removed, cursor reset`);
+    } finally {
+      await storage.close();
+    }
+  },
+});
+
 const main = defineCommand({
   meta: {
     name: "memxa",
@@ -176,6 +300,8 @@ const main = defineCommand({
     stats: statsCommand,
     sources: sourcesCommand,
     search: searchCommand,
+    cursor: cursorCommand,
+    purge: purgeCommand,
   },
 });
 
