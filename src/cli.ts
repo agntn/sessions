@@ -133,10 +133,19 @@ const statsCommand = defineCommand({
 
 const sourcesCommand = defineCommand({
   meta: { name: "sources", description: "List available sources" },
-  run() {
-    for (const source of allSources()) {
-      const status = source.available() ? "✓" : "✗";
-      consola.log(`${status} ${source.name}`);
+  args: {
+    json: { type: "boolean", description: "Output as JSON" },
+  },
+  run({ args }) {
+    const all = allSources().map((s) => ({ name: s.name, available: s.available() }));
+
+    if (args.json) {
+      console.log(JSON.stringify(all, null, 2));
+      return;
+    }
+
+    for (const s of all) {
+      consola.log(`${s.available ? "✓" : "✗"} ${s.name}`);
     }
   },
 });
