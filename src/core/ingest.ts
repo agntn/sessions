@@ -116,10 +116,12 @@ export async function ingest(
           await storage.setCursor(source.name, newCursor);
           resultCursor = newCursor;
         }
-      } catch {
-        // Best-effort recovery: if flushing the partial batch fails,
-        // fall through and report the original error with whatever
-        // progress was already persisted.
+      } catch (cleanupErr) {
+        if (options.verbose) {
+          const cleanupError =
+            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+          options.onLog?.(`  ${source.name}: recovery failed - ${cleanupError}`);
+        }
       }
 
       const error = err instanceof Error ? err.message : String(err);
