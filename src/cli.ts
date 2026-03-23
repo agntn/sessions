@@ -41,6 +41,15 @@ const ingestCommand = defineCommand({
         ?.split(",")
         .map((s) => s.trim())
         .filter(Boolean);
+
+      if (only?.length) {
+        const known = new Set(allSources().map((s) => s.name));
+        const unknown = only.filter((s) => !known.has(s));
+        if (unknown.length) {
+          consola.warn(`Unknown source${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}`);
+        }
+      }
+
       const results = await ingest(allSources(), storage, {
         only,
         verbose: !args.json,
