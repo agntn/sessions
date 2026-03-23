@@ -9,9 +9,9 @@ import { allSources } from "./sources/index.ts";
 import { defaultDbPath } from "./core/paths.ts";
 import type { Message } from "./core/types.ts";
 
-function resolveDb(db?: string): string {
+function resolveDb(db?: string, quiet?: boolean): string {
   const resolved = db || defaultDbPath();
-  if (!db) consola.info(`Using default database: ${resolved}`);
+  if (!db && !quiet) consola.info(`Using default database: ${resolved}`);
   return resolved;
 }
 
@@ -32,9 +32,10 @@ const ingestCommand = defineCommand({
     dryRun: { type: "boolean", description: "Preview without writing", alias: "n" },
     only: { type: "string", description: "Comma-separated list of sources" },
     db: { type: "string", description: "Database path (default: platform data dir)" },
+    json: { type: "boolean", description: "Output as JSON" },
   },
   async run({ args }) {
-    const storage = await createSqliteStorage(resolveDb(args.db));
+    const storage = await createSqliteStorage(resolveDb(args.db, args.json));
     try {
       const only = args.only
         ?.split(",")
@@ -42,13 +43,24 @@ const ingestCommand = defineCommand({
         .filter(Boolean);
       const results = await ingest(allSources(), storage, {
         only,
-        verbose: true,
+        verbose: !args.json,
         dryRun: args.dryRun,
         onLog: (m) => consola.log(m),
-        onMessage(msg) {
-          consola.log(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
-        },
+        onMessage: args.json
+          ? undefined
+          : (msg) => {
+              consola.log(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
+            },
       });
+
+      if (args.json) {
+        const normalized = results.map((r) => ({
+          ...r,
+          cursor: r.cursor && r.cursor !== "0" ? r.cursor : null,
+        }));
+        console.log(JSON.stringify(normalized, null, 2));
+        return;
+      }
 
       const total = results.reduce((sum, r) => sum + r.count, 0);
       consola.info(`Total: ${total} messages`);
