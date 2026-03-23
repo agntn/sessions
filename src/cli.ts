@@ -46,13 +46,19 @@ const ingestCommand = defineCommand({
         verbose: !args.json,
         dryRun: args.dryRun,
         onLog: (m) => consola.log(m),
-        onMessage(msg) {
-          consola.log(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
-        },
+        onMessage: args.json
+          ? undefined
+          : (msg) => {
+              consola.log(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
+            },
       });
 
       if (args.json) {
-        console.log(JSON.stringify(results, null, 2));
+        const normalized = results.map((r) => ({
+          ...r,
+          cursor: r.cursor && r.cursor !== "0" ? r.cursor : null,
+        }));
+        console.log(JSON.stringify(normalized, null, 2));
         return;
       }
 
