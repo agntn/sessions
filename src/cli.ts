@@ -32,6 +32,7 @@ const ingestCommand = defineCommand({
     dryRun: { type: "boolean", description: "Preview without writing", alias: "n" },
     only: { type: "string", description: "Comma-separated list of sources" },
     db: { type: "string", description: "Database path (default: platform data dir)" },
+    json: { type: "boolean", description: "Output as JSON" },
   },
   async run({ args }) {
     const storage = await createSqliteStorage(resolveDb(args.db));
@@ -42,13 +43,18 @@ const ingestCommand = defineCommand({
         .filter(Boolean);
       const results = await ingest(allSources(), storage, {
         only,
-        verbose: true,
+        verbose: !args.json,
         dryRun: args.dryRun,
         onLog: (m) => consola.log(m),
         onMessage(msg) {
           consola.log(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
         },
       });
+
+      if (args.json) {
+        console.log(JSON.stringify(results, null, 2));
+        return;
+      }
 
       const total = results.reduce((sum, r) => sum + r.count, 0);
       consola.info(`Total: ${total} messages`);
