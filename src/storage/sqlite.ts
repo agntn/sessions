@@ -108,12 +108,72 @@ function resolveSessionId(message: Message): string {
 export class SqliteStorage implements Storage {
   private readonly client: Client;
   private readonly db: ReturnType<typeof drizzle<typeof schema>>;
+  private ftsInit: Promise<void> | null = null;
 
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true });
     const client = createClient({ url: toFileUrl(path) });
     this.client = client;
     this.db = drizzle(client, { schema });
+  }
+
+  private ensureFts(): Promise<void> {
+    if (!this.ftsInit) {
+      this.ftsInit = this.setupFts().catch((err) => {
+        this.ftsInit = null; // allow retry on transient failures
+        throw err;
+      });
+    }
+    return this.ftsInit;
+  }
+
+  private async setupFts(): Promise<void> {
+
+    const tableExists = await this.client.execute(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks_fts'",
+    );
+
+    if (!tableExists.rows.length) {
+      await this.client.execute(
+        "CREATE VIRTUAL TABLE blocks_fts USING fts5(text, content=blocks, content_rowid=id)",
+      );
+
+      await this.client.execute(
+        `INSERT INTO blocks_fts(rowid, text)
+         SELECT id, text FROM blocks
+         WHERE type IN ('text', 'thinking', 'reasoning') AND text IS NOT NULL`,
+      );
+    }
+
+    // Create triggers independently - handles partial setup from a prior crash
+    const triggers = await this.client.execute(
+      "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('blocks_fts_ai', 'blocks_fts_ad')",
+    );
+    const existing = new Set(
+      (triggers.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+    );
+
+    if (!existing.has("blocks_fts_ai")) {
+      await this.client.execute(`
+        CREATE TRIGGER blocks_fts_ai AFTER INSERT ON blocks
+        WHEN new.type IN ('text', 'thinking', 'reasoning') AND new.text IS NOT NULL
+        BEGIN
+          INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
+        END
+      `);
+    }
+
+    if (!existing.has("blocks_fts_ad")) {
+      await this.client.execute(`
+        CREATE TRIGGER blocks_fts_ad AFTER DELETE ON blocks
+        WHEN old.type IN ('text', 'thinking', 'reasoning') AND old.text IS NOT NULL
+        BEGIN
+          INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+        END
+      `);
+    }
+
+    // FTS5 setup complete
   }
 
   async init(): Promise<void> {
@@ -149,6 +209,8 @@ export class SqliteStorage implements Storage {
           .run();
       }
     }
+
+    await this.ensureFts();
   }
 
   get raw(): Client {
@@ -911,74 +973,76 @@ export class SqliteStorage implements Storage {
       dateTo?: string;
     },
   ): Promise<SearchRow[]> {
-    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = query.trim().split(/\s+/).filter(Boolean);
     if (!terms.length) return [];
 
-    const rawLimit = opts?.limit;
-    const limit =
-      typeof rawLimit === "number" && Number.isFinite(rawLimit)
-        ? Math.max(1, Math.trunc(rawLimit))
-        : 20;
-    const filterParams: Array<string | number> = [];
-    const filters = ["b.type IN ('text', 'thinking', 'reasoning')"];
+    await this.ensureFts();
 
-    filters.push(`(${terms.map(() => "lower(b.text) LIKE ? ESCAPE '\\'").join(" OR ")})`);
-    filterParams.push(...terms.map((term) => `%${term.replace(/[\\%_]/g, "\\$&")}%`));
+    const limit = clampInt(opts?.limit, 20, 1);
+
+    // Build FTS5 query: each term as prefix match, OR'd together
+    const ftsQuery = terms.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
+
+    const filterClauses: string[] = [];
+    const filterParams: (string | number)[] = [];
 
     if (opts?.source) {
-      filters.push("m.source = ?");
+      filterClauses.push("m.source = ?");
       filterParams.push(opts.source);
     }
     if (opts?.role) {
-      filters.push("m.role = ?");
+      filterClauses.push("m.role = ?");
       filterParams.push(opts.role);
     }
     if (opts?.dateFrom) {
-      filters.push("m.date >= ?");
+      filterClauses.push("m.date >= ?");
       filterParams.push(opts.dateFrom);
     }
     if (opts?.dateTo) {
-      filters.push("m.date <= ?");
+      filterClauses.push("m.date <= ?");
       filterParams.push(opts.dateTo);
     }
 
-    const snippetExprs = terms.map(() => "nullif(instr(lower(b2.text), ?), 0)");
-    const snippetPosition = `coalesce(${snippetExprs.join(", ")}, 0)`;
+    const filterWhere = filterClauses.length ? `AND ${filterClauses.join(" AND ")}` : "";
 
-    // First select distinct message IDs that match (limited), then pick
-    // the best-matching block per message for the snippet.  This ensures
-    // the limit counts messages, not individual blocks.
     const rawSql = `
-      WITH matched_msgs AS (
-        SELECT DISTINCT m.id, m.date, m.source, m.role, m.session_id as sessionId, m.timestamp
-        FROM blocks b
+      WITH fts_matches AS (
+        SELECT rowid, rank
+        FROM blocks_fts
+        WHERE blocks_fts MATCH ?
+      ),
+      matched_msgs AS (
+        SELECT m.id, m.date, m.source, m.role, m.session_id as sessionId, m.timestamp,
+          min(fm.rank) as best_rank
+        FROM fts_matches fm
+        JOIN blocks b ON b.id = fm.rowid
         JOIN messages m ON m.id = b.message_id
-        WHERE ${filters.join(" AND ")}
-        ORDER BY m.timestamp DESC
+        WHERE 1=1 ${filterWhere}
+        GROUP BY m.id
+        ORDER BY best_rank, m.timestamp DESC, m.id
         LIMIT ?
       ),
-      block_scores AS (
-        SELECT b2.message_id, b2.text,
-          ${snippetPosition} as sp
+      best_block AS (
+        SELECT b2.message_id,
+          substr(b2.text, 1, 300) as text,
+          row_number() OVER (
+            PARTITION BY b2.message_id
+            ORDER BY CASE WHEN fm2.rowid IS NOT NULL THEN fm2.rank ELSE 0 END
+          ) as rn
         FROM matched_msgs mm
         JOIN blocks b2 ON b2.message_id = mm.id
           AND b2.type IN ('text', 'thinking', 'reasoning')
-      ),
-      best_block AS (
-        SELECT message_id,
-          substr(text, max(1, CASE WHEN sp > 0 THEN sp - 80 ELSE 1 END), 300) as text,
-          row_number() OVER (PARTITION BY message_id ORDER BY CASE WHEN sp = 0 THEN 999999 ELSE sp END) as rn
-        FROM block_scores
+        LEFT JOIN fts_matches fm2 ON fm2.rowid = b2.id
       )
       SELECT mm.date, mm.source, mm.role, mm.sessionId, mm.timestamp, bb.text
       FROM matched_msgs mm
       JOIN best_block bb ON bb.message_id = mm.id AND bb.rn = 1
-      ORDER BY mm.timestamp DESC
+      ORDER BY mm.best_rank, mm.timestamp DESC, mm.id
     `;
 
     const result = await this.client.execute({
       sql: rawSql,
-      args: [...filterParams, limit, ...terms],
+      args: [ftsQuery, ...filterParams, limit],
     });
 
     return result.rows.map((row) => row as unknown as SearchRow);
