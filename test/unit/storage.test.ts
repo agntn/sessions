@@ -95,6 +95,7 @@ describe("SqliteStorage", () => {
     const results = await storage.search("refactor auth module");
     expect(results.length).toBe(1);
     expect(results[0].text).toContain("refactor");
+    expect(results[0].timestamp).toBe(2500);
   });
 
   it("applies search filters", async () => {
