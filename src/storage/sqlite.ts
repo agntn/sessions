@@ -120,11 +120,11 @@ export class SqliteStorage implements Storage {
   private async ensureFts(): Promise<void> {
     if (this.ftsReady) return;
 
-    const exists = await this.client.execute(
+    const tableExists = await this.client.execute(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks_fts'",
     );
 
-    if (!exists.rows.length) {
+    if (!tableExists.rows.length) {
       await this.client.execute(
         "CREATE VIRTUAL TABLE blocks_fts USING fts5(text, content=blocks, content_rowid=id)",
       );
@@ -134,7 +134,17 @@ export class SqliteStorage implements Storage {
          SELECT id, text FROM blocks
          WHERE type IN ('text', 'thinking', 'reasoning') AND text IS NOT NULL`,
       );
+    }
 
+    // Create triggers independently - handles partial setup from a prior crash
+    const triggers = await this.client.execute(
+      "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('blocks_fts_ai', 'blocks_fts_ad')",
+    );
+    const existing = new Set(
+      (triggers.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+    );
+
+    if (!existing.has("blocks_fts_ai")) {
       await this.client.execute(`
         CREATE TRIGGER blocks_fts_ai AFTER INSERT ON blocks
         WHEN new.type IN ('text', 'thinking', 'reasoning') AND new.text IS NOT NULL
@@ -142,7 +152,9 @@ export class SqliteStorage implements Storage {
           INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
         END
       `);
+    }
 
+    if (!existing.has("blocks_fts_ad")) {
       await this.client.execute(`
         CREATE TRIGGER blocks_fts_ad AFTER DELETE ON blocks
         WHEN old.type IN ('text', 'thinking', 'reasoning') AND old.text IS NOT NULL

@@ -327,19 +327,18 @@ describe("SqliteStorage", () => {
   });
 
   it("ranks search results by relevance using BM25", async () => {
+    // Message with higher term density should rank higher than one with lower density
     await storage.insert([
-      msg("claude", "user", 1000, "deployment pipeline broke"),
-      msg("claude", "user", 3000, "deployment works after fix"),
-      msg("claude", "user", 2000, "debugging the deployment issue"),
+      msg("claude", "user", 1000, "the weather is nice today and the sun is shining brightly"),
+      msg("claude", "user", 2000, "deploy deploy deploy the deploy pipeline for deploy"),
+      msg("claude", "user", 3000, "please deploy the new version"),
     ]);
 
-    // BM25 ranking returns all matching results, order depends on relevance
-    const results = await storage.search("deployment");
-    expect(results).toHaveLength(3);
-    const texts = results.map((r) => r.text!);
-    expect(texts.some((t) => t.includes("broke"))).toBe(true);
-    expect(texts.some((t) => t.includes("works after fix"))).toBe(true);
-    expect(texts.some((t) => t.includes("debugging"))).toBe(true);
+    const results = await storage.search("deploy");
+    expect(results).toHaveLength(2);
+    // The message saturated with "deploy" should rank first (better BM25 score)
+    expect(results[0].text).toContain("deploy deploy");
+    expect(results[1].text).toContain("please deploy");
   });
 
   it("clamps negative and zero limit to 1", async () => {
