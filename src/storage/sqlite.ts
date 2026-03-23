@@ -108,7 +108,7 @@ function resolveSessionId(message: Message): string {
 export class SqliteStorage implements Storage {
   private readonly client: Client;
   private readonly db: ReturnType<typeof drizzle<typeof schema>>;
-  private ftsReady = false;
+  private ftsInit: Promise<void> | null = null;
 
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true });
@@ -117,8 +117,12 @@ export class SqliteStorage implements Storage {
     this.db = drizzle(client, { schema });
   }
 
-  private async ensureFts(): Promise<void> {
-    if (this.ftsReady) return;
+  private ensureFts(): Promise<void> {
+    if (!this.ftsInit) this.ftsInit = this.setupFts();
+    return this.ftsInit;
+  }
+
+  private async setupFts(): Promise<void> {
 
     const tableExists = await this.client.execute(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks_fts'",
@@ -164,7 +168,7 @@ export class SqliteStorage implements Storage {
       `);
     }
 
-    this.ftsReady = true;
+    // FTS5 setup complete
   }
 
   async init(): Promise<void> {
