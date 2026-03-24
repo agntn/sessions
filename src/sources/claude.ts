@@ -167,7 +167,7 @@ export class ClaudeSource implements Source {
     for (const f of walkMemoryFiles(this.projectsDir)) {
       memoryFiles.push(f);
     }
-    memoryFiles.sort((a, b) => a.mtime - b.mtime);
+    memoryFiles.sort((a, b) => a.mtime - b.mtime || a.path.localeCompare(b.path));
 
     for (const file of memoryFiles) {
       if (file.mtime < since) continue;
