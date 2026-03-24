@@ -55,10 +55,12 @@ export class ClaudeMemSource implements Source {
       for (const row of obsRows) {
         const blocks: Block[] = [];
 
-        const textParts = [row.title, row.subtitle, row.narrative, row.text]
-          .filter(Boolean)
-          .join("\n\n");
-        if (textParts) blocks.push({ type: "text", text: textParts.slice(0, 8000) });
+        if (row.title) blocks.push({ type: "title", text: row.title.slice(0, 500) });
+        if (row.subtitle) blocks.push({ type: "subtitle", text: row.subtitle.slice(0, 1000) });
+        if (row.narrative) blocks.push({ type: "narrative", text: row.narrative.slice(0, 4000) });
+        if (row.text) blocks.push({ type: "text", text: row.text.slice(0, 4000) });
+        if (row.facts) blocks.push({ type: "facts", text: row.facts.slice(0, 2000) });
+        if (row.concepts) blocks.push({ type: "concepts", text: row.concepts.slice(0, 500) });
         if (!blocks.length) continue;
 
         const ts = Number(row.created_at_epoch);
@@ -66,8 +68,6 @@ export class ClaudeMemSource implements Source {
 
         const context: Record<string, string> = { observationType: row.type || "observation" };
         if (row.project) context.project = row.project;
-        if (row.facts) context.facts = row.facts.slice(0, 2000);
-        if (row.concepts) context.concepts = row.concepts.slice(0, 500);
         if (row.files_read) context.filesRead = row.files_read.slice(0, 500);
         if (row.files_modified) context.filesModified = row.files_modified.slice(0, 500);
 
@@ -113,15 +113,15 @@ export class ClaudeMemSource implements Source {
       }>;
 
       for (const row of sumRows) {
-        const parts = [
-          row.request && `Request: ${row.request}`,
-          row.investigated && `Investigated: ${row.investigated}`,
-          row.learned && `Learned: ${row.learned}`,
-          row.completed && `Completed: ${row.completed}`,
-          row.next_steps && `Next steps: ${row.next_steps}`,
-          row.notes && `Notes: ${row.notes}`,
-        ].filter(Boolean);
-        if (!parts.length) continue;
+        const blocks: Block[] = [];
+
+        if (row.request) blocks.push({ type: "request", text: row.request.slice(0, 2000) });
+        if (row.investigated) blocks.push({ type: "investigated", text: row.investigated.slice(0, 2000) });
+        if (row.learned) blocks.push({ type: "learned", text: row.learned.slice(0, 2000) });
+        if (row.completed) blocks.push({ type: "completed", text: row.completed.slice(0, 2000) });
+        if (row.next_steps) blocks.push({ type: "next_steps", text: row.next_steps.slice(0, 2000) });
+        if (row.notes) blocks.push({ type: "notes", text: row.notes.slice(0, 2000) });
+        if (!blocks.length) continue;
 
         const ts = Number(row.created_at_epoch);
         if (!Number.isFinite(ts)) continue;
@@ -137,7 +137,7 @@ export class ClaudeMemSource implements Source {
           role: "assistant",
           timestamp: ts,
           date: new Date(ts).toISOString().split("T")[0],
-          blocks: [{ type: "text", text: parts.join("\n\n").slice(0, 8000) }],
+          blocks,
           context,
           channel: { ...this.channel, type: "summary" },
           author: { platform: "cli", name: "claude-mem", isBot: true },

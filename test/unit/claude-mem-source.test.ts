@@ -53,10 +53,13 @@ describe("ClaudeMemSource", () => {
     expect(msgs[0].sessionId).toBe("sess-1");
     expect(msgs[0].role).toBe("assistant");
     expect(msgs[0].timestamp).toBe(1700000000000);
-    expect(msgs[0].blocks[0].text).toContain("Found a bug");
-    expect(msgs[0].blocks[0].text).toContain("in auth module");
-    expect(msgs[0].blocks[0].text).toContain("race condition");
-    expect(msgs[0].blocks[0].text).toContain("raw observation text");
+    expect(msgs[0].blocks).toHaveLength(6);
+    expect(msgs[0].blocks[0]).toEqual({ type: "title", text: "Found a bug" });
+    expect(msgs[0].blocks[1]).toEqual({ type: "subtitle", text: "in auth module" });
+    expect(msgs[0].blocks[2]).toEqual({ type: "narrative", text: "The auth module has a race condition" });
+    expect(msgs[0].blocks[3]).toEqual({ type: "text", text: "raw observation text" });
+    expect(msgs[0].blocks[4]).toEqual({ type: "facts", text: '["race condition in login"]' });
+    expect(msgs[0].blocks[5]).toEqual({ type: "concepts", text: '["concurrency"]' });
     expect(msgs[0].context?.project).toBe("myproject");
     expect(msgs[0].context?.observationType).toBe("discovery");
   });
@@ -88,9 +91,12 @@ describe("ClaudeMemSource", () => {
     for await (const m of source.ingest("0")) msgs.push(m);
 
     expect(msgs).toHaveLength(1);
-    expect(msgs[0].blocks[0].text).toContain("Fix login page");
-    expect(msgs[0].blocks[0].text).toContain("Sessions expire");
-    expect(msgs[0].blocks[0].text).toContain("Added refresh token");
+    expect(msgs[0].blocks).toHaveLength(5);
+    expect(msgs[0].blocks[0]).toEqual({ type: "request", text: "Fix login page" });
+    expect(msgs[0].blocks[1]).toEqual({ type: "investigated", text: "Auth flow and session handling" });
+    expect(msgs[0].blocks[2]).toEqual({ type: "learned", text: "Sessions expire after 30min" });
+    expect(msgs[0].blocks[3]).toEqual({ type: "completed", text: "Added refresh token logic" });
+    expect(msgs[0].blocks[4]).toEqual({ type: "next_steps", text: "Add tests" });
     expect(msgs[0].channel?.type).toBe("summary");
     expect(msgs[0].context?.observationType).toBe("summary");
   });
