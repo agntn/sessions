@@ -45,7 +45,7 @@ describe("source providers", () => {
 
   it("creates all sources", () => {
     const all = allSources();
-    expect(all.length).toBe(7);
+    expect(all.length).toBe(8);
     for (const s of all) {
       expect(s.name).toBeTruthy();
     }
