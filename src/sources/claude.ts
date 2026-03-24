@@ -170,7 +170,7 @@ export class ClaudeSource implements Source {
     memoryFiles.sort((a, b) => a.mtime - b.mtime);
 
     for (const file of memoryFiles) {
-      if (file.mtime <= since) continue;
+      if (file.mtime < since) continue;
 
       let raw: string;
       try {

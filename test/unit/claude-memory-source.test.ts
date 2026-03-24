@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ClaudeSource } from "../../src/sources/claude.ts";
@@ -105,6 +105,38 @@ describe("ClaudeSource memory files", () => {
     expect(msgs).toHaveLength(2);
     expect(msgs[0].sessionId).toBe(msgs[1].sessionId);
     expect(msgs[0].sessionId).toBe("claude-memory:/home/user/proj");
+  });
+
+  it("filters by cursor using mtime", async () => {
+    writeMemory("-home-user-proj", "old.md", "Old memory");
+    writeMemory("-home-user-proj", "new.md", "New memory");
+
+    const oldPath = join(tempDir, "-home-user-proj", "memory", "old.md");
+    const newPath = join(tempDir, "-home-user-proj", "memory", "new.md");
+    const oldTime = new Date("2026-01-01T00:00:00Z");
+    const newTime = new Date("2026-03-01T00:00:00Z");
+    utimesSync(oldPath, oldTime, oldTime);
+    utimesSync(newPath, newTime, newTime);
+
+    const source = new ClaudeSource(tempDir);
+    const cursor = String(newTime.getTime());
+    const msgs = await collect(source, cursor);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("New memory");
+  });
+
+  it("re-ingests file at exact cursor boundary", async () => {
+    writeMemory("-home-user-proj", "note.md", "Content");
+    const filePath = join(tempDir, "-home-user-proj", "memory", "note.md");
+    const mtime = new Date("2026-02-15T12:00:00Z");
+    utimesSync(filePath, mtime, mtime);
+
+    const source = new ClaudeSource(tempDir);
+    const cursor = String(mtime.getTime());
+    const msgs = await collect(source, cursor);
+
+    expect(msgs).toHaveLength(1);
   });
 
   it("truncates body to 8000 chars", async () => {
