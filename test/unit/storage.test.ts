@@ -360,6 +360,31 @@ describe("SqliteStorage", () => {
     expect(nanLimit).toHaveLength(20);
   });
 
+  it("indexes custom block types in FTS5", async () => {
+    const m: Message = {
+      source: "claude-mem",
+      sessionId: "sess-custom",
+      role: "assistant",
+      timestamp: 5000,
+      date: "1970-01-01",
+      blocks: [
+        { type: "narrative", text: "discovered a critical vulnerability in auth" },
+        { type: "facts", text: "CVE-2026-1234 affects login flow" },
+        { type: "tool_call", toolName: "bash", toolCallId: "tc-1", toolInput: "npm audit" },
+      ],
+    };
+    await storage.insert([m]);
+
+    const narrativeResults = await storage.search("vulnerability auth");
+    expect(narrativeResults).toHaveLength(1);
+
+    const factsResults = await storage.search("CVE-2026");
+    expect(factsResults).toHaveLength(1);
+
+    const toolResults = await storage.search("npm audit");
+    expect(toolResults).toHaveLength(0);
+  });
+
   it("cascades deletes from sessions to messages, blocks and contexts", async () => {
     const m = msg("claude", "user", 1000, "cascade test");
     m.context = { cwd: "/tmp" };

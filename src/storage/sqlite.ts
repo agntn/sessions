@@ -141,39 +141,59 @@ export class SqliteStorage implements Storage {
       await this.client.execute(
         `INSERT INTO blocks_fts(rowid, text)
          SELECT id, text FROM blocks
-         WHERE type IN ('text', 'thinking', 'reasoning') AND text IS NOT NULL`,
+         WHERE type NOT IN ('tool_call', 'tool_result') AND text IS NOT NULL`,
       );
     }
 
-    // Create triggers independently - handles partial setup from a prior crash
+    // Recreate triggers if they use the old whitelist pattern
     const triggers = await this.client.execute(
-      "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ('blocks_fts_ai', 'blocks_fts_ad')",
+      "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name IN ('blocks_fts_ai', 'blocks_fts_ad')",
     );
-    const existing = new Set(
-      (triggers.rows as unknown as Array<{ name: string }>).map((r) => r.name),
+    const triggerMap = new Map(
+      (triggers.rows as unknown as Array<{ name: string; sql: string }>).map((r) => [
+        r.name,
+        r.sql,
+      ]),
     );
 
-    if (!existing.has("blocks_fts_ai")) {
+    const needsRecreate = (sql: string | undefined) =>
+      !sql || sql.includes("IN ('text'");
+
+    if (needsRecreate(triggerMap.get("blocks_fts_ai"))) {
+      if (triggerMap.has("blocks_fts_ai")) {
+        await this.client.execute("DROP TRIGGER blocks_fts_ai");
+      }
       await this.client.execute(`
         CREATE TRIGGER blocks_fts_ai AFTER INSERT ON blocks
-        WHEN new.type IN ('text', 'thinking', 'reasoning') AND new.text IS NOT NULL
+        WHEN new.type NOT IN ('tool_call', 'tool_result') AND new.text IS NOT NULL
         BEGIN
           INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
         END
       `);
     }
 
-    if (!existing.has("blocks_fts_ad")) {
+    if (needsRecreate(triggerMap.get("blocks_fts_ad"))) {
+      if (triggerMap.has("blocks_fts_ad")) {
+        await this.client.execute("DROP TRIGGER blocks_fts_ad");
+      }
       await this.client.execute(`
         CREATE TRIGGER blocks_fts_ad AFTER DELETE ON blocks
-        WHEN old.type IN ('text', 'thinking', 'reasoning') AND old.text IS NOT NULL
+        WHEN old.type NOT IN ('tool_call', 'tool_result') AND old.text IS NOT NULL
         BEGIN
           INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
         END
       `);
     }
 
-    // FTS5 setup complete
+    // Backfill blocks that were excluded by the old whitelist trigger
+    if (needsRecreate(triggerMap.get("blocks_fts_ai"))) {
+      await this.client.execute(
+        `INSERT OR IGNORE INTO blocks_fts(rowid, text)
+         SELECT id, text FROM blocks
+         WHERE type NOT IN ('tool_call', 'tool_result', 'text', 'thinking', 'reasoning')
+           AND text IS NOT NULL`,
+      );
+    }
   }
 
   async init(): Promise<void> {
@@ -1031,7 +1051,7 @@ export class SqliteStorage implements Storage {
           ) as rn
         FROM matched_msgs mm
         JOIN blocks b2 ON b2.message_id = mm.id
-          AND b2.type IN ('text', 'thinking', 'reasoning')
+          AND b2.type NOT IN ('tool_call', 'tool_result')
         LEFT JOIN fts_matches fm2 ON fm2.rowid = b2.id
       )
       SELECT mm.date, mm.source, mm.role, mm.sessionId, mm.timestamp, bb.text
