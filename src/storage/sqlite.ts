@@ -980,8 +980,8 @@ export class SqliteStorage implements Storage {
 
     const limit = clampInt(opts?.limit, 20, 1);
 
-    // Build FTS5 query: each term as prefix match, OR'd together
-    const ftsQuery = terms.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" OR ");
+    // Build FTS5 query: each term as prefix match, AND'd together (implicit AND)
+    const ftsQuery = terms.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" ");
 
     const filterClauses: string[] = [];
     const filterParams: (string | number)[] = [];

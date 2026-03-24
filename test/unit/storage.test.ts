@@ -92,7 +92,7 @@ describe("SqliteStorage", () => {
       msg("claude", "assistant", 3000, "response about something else entirely"),
     ]);
 
-    const results = await storage.search("refactor auth module");
+    const results = await storage.search("refactor auth");
     expect(results.length).toBe(1);
     expect(results[0].text).toContain("refactor");
     expect(results[0].timestamp).toBe(2500);
