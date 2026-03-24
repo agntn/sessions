@@ -62,6 +62,9 @@ const ingestCommand = defineCommand({
             },
       });
 
+      const failed = results.filter((r) => r.error);
+      if (failed.length) process.exitCode = 1;
+
       if (args.json) {
         const normalized = results.map((r) => ({
           ...r,
@@ -73,6 +76,7 @@ const ingestCommand = defineCommand({
 
       const total = results.reduce((sum, r) => sum + r.count, 0);
       consola.info(`Total: ${total} messages`);
+      for (const r of failed) consola.warn(`${r.source}: ${r.error}`);
     } finally {
       await storage.close();
     }
