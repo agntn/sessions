@@ -128,72 +128,36 @@ export class SqliteStorage implements Storage {
   }
 
   private async setupFts(): Promise<void> {
-
     const tableExists = await this.client.execute(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks_fts'",
     );
+    if (tableExists.rows.length) return;
 
-    if (!tableExists.rows.length) {
-      await this.client.execute(
-        "CREATE VIRTUAL TABLE blocks_fts USING fts5(text, content=blocks, content_rowid=id)",
-      );
-
-      await this.client.execute(
-        `INSERT INTO blocks_fts(rowid, text)
-         SELECT id, text FROM blocks
-         WHERE type NOT IN ('tool_call', 'tool_result') AND text IS NOT NULL`,
-      );
-    }
-
-    // Recreate triggers if they use the old whitelist pattern
-    const triggers = await this.client.execute(
-      "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name IN ('blocks_fts_ai', 'blocks_fts_ad')",
-    );
-    const triggerMap = new Map(
-      (triggers.rows as unknown as Array<{ name: string; sql: string }>).map((r) => [
-        r.name,
-        r.sql,
-      ]),
+    await this.client.execute(
+      "CREATE VIRTUAL TABLE blocks_fts USING fts5(text, content=blocks, content_rowid=id)",
     );
 
-    const needsRecreate = (sql: string | undefined) =>
-      !sql || sql.includes("IN ('text'");
+    await this.client.execute(
+      `INSERT INTO blocks_fts(rowid, text)
+       SELECT id, text FROM blocks
+       WHERE type NOT IN ('tool_call', 'tool_result') AND text IS NOT NULL`,
+    );
 
-    if (needsRecreate(triggerMap.get("blocks_fts_ai"))) {
-      if (triggerMap.has("blocks_fts_ai")) {
-        await this.client.execute("DROP TRIGGER blocks_fts_ai");
-      }
-      await this.client.execute(`
-        CREATE TRIGGER blocks_fts_ai AFTER INSERT ON blocks
-        WHEN new.type NOT IN ('tool_call', 'tool_result') AND new.text IS NOT NULL
-        BEGIN
-          INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
-        END
-      `);
-    }
+    await this.client.execute(`
+      CREATE TRIGGER blocks_fts_ai AFTER INSERT ON blocks
+      WHEN new.type NOT IN ('tool_call', 'tool_result') AND new.text IS NOT NULL
+      BEGIN
+        INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
+      END
+    `);
 
-    if (needsRecreate(triggerMap.get("blocks_fts_ad"))) {
-      if (triggerMap.has("blocks_fts_ad")) {
-        await this.client.execute("DROP TRIGGER blocks_fts_ad");
-      }
-      await this.client.execute(`
-        CREATE TRIGGER blocks_fts_ad AFTER DELETE ON blocks
-        WHEN old.type NOT IN ('tool_call', 'tool_result') AND old.text IS NOT NULL
-        BEGIN
-          INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
-        END
-      `);
-    }
-
-    // Backfill blocks that were excluded by the old whitelist trigger
-    if (needsRecreate(triggerMap.get("blocks_fts_ai"))) {
-      await this.client.execute(
-        `INSERT OR IGNORE INTO blocks_fts(rowid, text)
-         SELECT id, text FROM blocks
-         WHERE type NOT IN ('tool_call', 'tool_result', 'text', 'thinking', 'reasoning')
-           AND text IS NOT NULL`,
-      );
-    }
+    await this.client.execute(`
+      CREATE TRIGGER blocks_fts_ad AFTER DELETE ON blocks
+      WHEN old.type NOT IN ('tool_call', 'tool_result') AND old.text IS NOT NULL
+      BEGIN
+        INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+      END
+    `);
   }
 
   async init(): Promise<void> {
