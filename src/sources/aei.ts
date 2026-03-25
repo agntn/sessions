@@ -128,7 +128,7 @@ export class AeiSource implements Source {
           for (const col of availableExtra) {
             const val = row[col];
             if (val !== null && val !== undefined) {
-              context[col === "git_dirty" ? "git_dirty" : col] = String(val);
+              context[col] = String(val);
             }
           }
           for (const col of availableSession) {

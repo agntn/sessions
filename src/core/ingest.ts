@@ -39,7 +39,9 @@ export async function ingest(
     const cursor = await storage.getCursor(source.name);
     let estimate: number | undefined;
     if (source.estimate) {
-      try { estimate = await source.estimate(cursor); } catch {}
+      try { estimate = await source.estimate(cursor); } catch (err) {
+        options.onSourceError?.(source.name, `estimate failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     options.onSourceStart?.(source.name, estimate);
