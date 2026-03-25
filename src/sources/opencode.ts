@@ -4,6 +4,9 @@ import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Channel, Participant } from "../core/types.ts";
 
+// Large window: single JSON column truncated to 16 KB via substr
+const WINDOW = 5000;
+
 export class OpenCodeSource implements Source {
   name = "opencode";
   private dbPath: string;
@@ -19,31 +22,56 @@ export class OpenCodeSource implements Source {
     return existsSync(this.dbPath);
   }
 
+  async estimate(cursor: string): Promise<number> {
+    const since = Number(cursor) || 0;
+    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
+    try {
+      const r = await db.execute({
+        sql: `SELECT COUNT(*) as cnt FROM part p JOIN message m ON p.message_id = m.id WHERE p.time_created > ?`,
+        args: [since],
+      });
+      return Number((r.rows[0] as unknown as { cnt: number }).cnt);
+    } finally {
+      db.close();
+    }
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      const rowsResult = await db.execute({
-        sql: `
-        SELECT
-          p.data as pdata,
-          json_extract(m.data, '$.role') as role,
-          p.time_created as tc,
-          p.session_id as sid
-        FROM part p
-        JOIN message m ON p.message_id = m.id
-        WHERE p.time_created > ?
-        ORDER BY p.time_created
-      `,
-        args: [since],
-      });
-      const rows = rowsResult.rows as unknown as {
-        pdata: string;
-        role: string;
-        tc: number;
-        sid: string;
-      }[];
+      let lastTc = since;
+      let lastRowid = 0;
+      while (true) {
+        const rowsResult = await db.execute({
+          sql: `
+          SELECT
+            substr(p.data, 1, 16000) as pdata,
+            json_extract(m.data, '$.role') as role,
+            p.time_created as tc,
+            p.session_id as sid,
+            p.rowid as rid
+          FROM part p
+          JOIN message m ON p.message_id = m.id
+          WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))
+          ORDER BY p.time_created, p.rowid
+          LIMIT ?
+        `,
+          args: [lastTc, lastTc, lastRowid, WINDOW],
+        });
+        const rows = rowsResult.rows as unknown as {
+          pdata: string;
+          role: string;
+          tc: number;
+          sid: string;
+          rid: number;
+        }[];
+
+        if (rows.length === 0) break;
+        const last = rows[rows.length - 1];
+        lastTc = last.tc;
+        lastRowid = last.rid;
 
       for (const row of rows) {
         if (row.role !== "user" && row.role !== "assistant") continue;
@@ -94,10 +122,10 @@ export class OpenCodeSource implements Source {
                 toolCallId: String(part.toolCallId || part.id || ""),
                 toolInput:
                   typeof part.args === "string"
-                    ? part.args
+                    ? part.args.slice(0, 8000)
                     : typeof part.input === "string"
-                      ? part.input
-                      : JSON.stringify(part.args || part.input || ""),
+                      ? part.input.slice(0, 8000)
+                      : JSON.stringify(part.args || part.input || "").slice(0, 8000),
               },
             ],
             channel: this.channel,
@@ -124,6 +152,7 @@ export class OpenCodeSource implements Source {
             author: { platform: "cli", name: "opencode", isBot: true },
           };
         }
+      }
       }
     } finally {
       db.close();

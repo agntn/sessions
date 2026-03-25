@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from "citty";
-import { consola } from "consola";
+import { intro, outro, spinner, progress, log } from "@clack/prompts";
 import { existsSync } from "node:fs";
 
 import { ingest } from "./core/ingest.ts";
@@ -9,10 +9,8 @@ import { allSources } from "./sources/index.ts";
 import { defaultDbPath } from "./core/paths.ts";
 import type { Message } from "./core/types.ts";
 
-function resolveDb(db?: string, quiet?: boolean): string {
-  const resolved = db || defaultDbPath();
-  if (!db && !quiet) consola.info(`Using default database: ${resolved}`);
-  return resolved;
+function resolveDb(db?: string): string {
+  return db || defaultDbPath();
 }
 
 function preview(msg: Message): string {
@@ -35,32 +33,91 @@ const ingestCommand = defineCommand({
     json: { type: "boolean", description: "Output as JSON" },
   },
   async run({ args }) {
-    const storage = await createSqliteStorage(resolveDb(args.db, args.json));
+    const dbPath = resolveDb(args.db);
+    const storage = await createSqliteStorage(dbPath);
+
     try {
       const only = args.only
         ?.split(",")
         .map((s) => s.trim())
         .filter(Boolean);
 
+      if (!args.json) {
+        intro(`memxa ingest`);
+        log.info(`Database: ${dbPath}`);
+      }
+
       if (only?.length) {
         const known = new Set(allSources().map((s) => s.name));
         const unknown = only.filter((s) => !known.has(s));
         if (unknown.length) {
-          consola.warn(`Unknown source${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}`);
+          log.warn(`Unknown source${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}`);
         }
       }
 
-      const results = await ingest(allSources(), storage, {
+      let spin: ReturnType<typeof spinner> | null = null;
+      let prog: ReturnType<typeof progress> | null = null;
+      let progressSent = 0;
+
+      const stopIndicator = () => {
+        if (prog) { try { prog.stop("interrupted"); } catch {} prog = null; }
+        if (spin) { try { spin.stop("interrupted"); } catch {} spin = null; }
+      };
+
+      let results: Awaited<ReturnType<typeof ingest>>;
+      try {
+      results = await ingest(allSources(), storage, {
         only,
-        verbose: !args.json,
         dryRun: args.dryRun,
-        onLog: (m) => consola.log(m),
+        onSourceStart: (source, estimate) => {
+          if (args.json) return;
+          progressSent = 0;
+          if (estimate && estimate > 0) {
+            prog = progress({ max: estimate });
+            prog.start(`${source}: 0/${estimate}`);
+          } else {
+            spin = spinner();
+            spin.start(`${source}: scanning...`);
+          }
+        },
+        onSourceSkip: (source, reason) => {
+          if (args.json) return;
+          const msg = reason === "unavailable" ? "not available" : "up to date";
+          if (prog) { prog.stop(`${source}: ${msg}`); prog = null; }
+          else if (spin) { spin.stop(`${source}: ${msg}`); spin = null; }
+          else log.step(`${source}: ${msg}`);
+        },
+        onProgress: (source, count, estimate) => {
+          if (prog && estimate) {
+            const delta = count - progressSent;
+            if (delta > 0) prog.advance(delta, `${source}: ${count}/${estimate}`);
+            progressSent = count;
+          } else {
+            spin?.message(`${source}: ${count} messages...`);
+          }
+        },
+        onSourceDone: (source, count, opts) => {
+          if (args.json) return;
+          const suffix = opts?.dryRun ? " (dry run)" : "";
+          if (prog) { prog.stop(`${source}: ${count} messages${suffix}`); prog = null; }
+          else if (spin) { spin.stop(`${source}: ${count} messages${suffix}`); spin = null; }
+        },
+        onSourceError: (source, error) => {
+          if (args.json) return;
+          if (prog) { prog.error(`${source}: ${error}`); prog = null; }
+          else if (spin) { spin.error(`${source}: ${error}`); spin = null; }
+          else log.warn(`${source}: ${error}`);
+        },
         onMessage: args.json
           ? undefined
           : (msg) => {
-              consola.log(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
+              log.step(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
             },
       });
+      } catch (e) {
+        stopIndicator();
+        throw e;
+      }
 
       const failed = results.filter((r) => r.error);
       if (failed.length) process.exitCode = 1;
@@ -75,8 +132,8 @@ const ingestCommand = defineCommand({
       }
 
       const total = results.reduce((sum, r) => sum + r.count, 0);
-      consola.info(`Total: ${total} messages`);
-      for (const r of failed) consola.warn(`${r.source}: ${r.error}`);
+      for (const r of failed) log.warn(`${r.source}: ${r.error}`);
+      outro(`Done: ${total} messages`);
     } finally {
       await storage.close();
     }
@@ -92,7 +149,7 @@ const statsCommand = defineCommand({
   async run({ args }) {
     const dbPath = resolveDb(args.db);
     if (!existsSync(dbPath)) {
-      consola.warn(`Database not found: ${dbPath}`);
+      log.warn(`Database not found: ${dbPath}`);
       return;
     }
 
@@ -119,21 +176,18 @@ const statsCommand = defineCommand({
         return;
       }
 
-      consola.info(`Database: ${dbPath}`);
-      consola.info("");
+      intro("memxa stats");
+      log.info(`Database: ${dbPath}`);
 
-      consola.info("Messages:");
-      consola.info(`  Total: ${totalMessages}`);
-
+      const lines = [`Total: ${totalMessages}`];
       for (const s of stats) {
-        consola.info(`  ${s.source}: ${s.messages} messages, ${s.sessions} sessions`);
+        lines.push(`${s.source}: ${s.messages} messages, ${s.sessions} sessions`);
       }
+      log.message(lines.join("\n"));
 
-      consola.info("");
-      consola.info(`Sessions: ${totalSessions}`);
+      log.info(`Sessions: ${totalSessions}`);
 
-      consola.info("");
-      consola.info("Cursors:");
+      const cursorLines: string[] = [];
       for (const [name, state] of Object.entries(cursorStates)) {
         const ts = Number(state.cursor);
         const date = new Date(ts);
@@ -146,10 +200,13 @@ const statsCommand = defineCommand({
 
         const lastRunDisplay = state.lastRun ? new Date(state.lastRun).toISOString() : null;
 
-        const parts = [`  ${name}: cursor ${cursorDisplay}`];
+        const parts = [`${name}: cursor ${cursorDisplay}`];
         if (lastRunDisplay) parts.push(`last run ${lastRunDisplay}`);
-        consola.info(parts.join(", "));
+        cursorLines.push(parts.join(", "));
       }
+      log.message(cursorLines.join("\n"));
+
+      outro("done");
     } finally {
       await storage.close();
     }
@@ -170,7 +227,8 @@ const sourcesCommand = defineCommand({
     }
 
     for (const s of all) {
-      consola.log(`${s.available ? "✓" : "✗"} ${s.name}`);
+      if (s.available) log.success(s.name);
+      else log.warn(s.name);
     }
   },
 });
@@ -190,7 +248,7 @@ const searchCommand = defineCommand({
   async run({ args }) {
     const dbPath = resolveDb(args.db);
     if (!existsSync(dbPath)) {
-      consola.warn(`Database not found: ${dbPath}`);
+      log.warn(`Database not found: ${dbPath}`);
       return;
     }
 
@@ -210,14 +268,13 @@ const searchCommand = defineCommand({
       }
 
       if (!results.length) {
-        consola.info("No results found");
+        log.info("No results found");
         return;
       }
 
       for (const r of results) {
-        consola.log(`[${r.date}] ${r.source} (${r.role}) ${r.sessionId}`);
-        consola.log(`  ${r.text?.trim()}`);
-        consola.log("");
+        log.step(`[${r.date}] ${r.source} (${r.role}) ${r.sessionId}`);
+        log.message(`  ${r.text?.trim()}`);
       }
     } finally {
       await storage.close();
@@ -233,7 +290,7 @@ const cursorListCommand = defineCommand({
   async run({ args }) {
     const dbPath = resolveDb(args.db);
     if (!existsSync(dbPath)) {
-      consola.warn(`Database not found: ${dbPath}`);
+      log.warn(`Database not found: ${dbPath}`);
       return;
     }
 
@@ -252,7 +309,7 @@ const cursorListCommand = defineCommand({
         const display = hasValidDate
           ? `${cursor} (${date.toISOString()})`
           : cursor && cursor !== "0" ? cursor : "(none)";
-        consola.log(`${source}: ${display}`);
+        log.step(`${source}: ${display}`);
       }
     } finally {
       await storage.close();
@@ -269,14 +326,14 @@ const cursorResetCommand = defineCommand({
   async run({ args }) {
     const dbPath = resolveDb(args.db);
     if (!existsSync(dbPath)) {
-      consola.warn(`Database not found: ${dbPath}`);
+      log.warn(`Database not found: ${dbPath}`);
       return;
     }
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       await storage.deleteCursor(args.source);
-      consola.success(`Cursor reset for "${args.source}"`);
+      log.success(`Cursor reset for "${args.source}"`);
     } finally {
       await storage.close();
     }
@@ -300,14 +357,14 @@ const purgeCommand = defineCommand({
   async run({ args }) {
     const dbPath = resolveDb(args.db);
     if (!existsSync(dbPath)) {
-      consola.warn(`Database not found: ${dbPath}`);
+      log.warn(`Database not found: ${dbPath}`);
       return;
     }
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       const deleted = await storage.purgeSource(args.source);
-      consola.success(`Purged "${args.source}": ${deleted} sessions removed, cursor reset`);
+      log.success(`Purged "${args.source}": ${deleted} sessions removed, cursor reset`);
     } finally {
       await storage.close();
     }

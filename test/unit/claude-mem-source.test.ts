@@ -15,6 +15,9 @@ vi.mock("@libsql/client", () => ({
 import { ClaudeMemSource } from "../../src/sources/claude-mem.ts";
 import type { Message } from "../../src/core/types.ts";
 
+// With windowed queries the flow is:
+// obs window 1 → obs window 2 (empty = done) → sum window 1 → sum window 2 (empty = done)
+
 describe("ClaudeMemSource", () => {
   beforeEach(() => {
     executeMock.mockReset();
@@ -23,6 +26,7 @@ describe("ClaudeMemSource", () => {
 
   it("ingests observations with title, narrative, and text", async () => {
     executeMock
+      // obs window 1: data
       .mockResolvedValueOnce({
         rows: [
           {
@@ -42,6 +46,8 @@ describe("ClaudeMemSource", () => {
           },
         ],
       })
+      // obs window 2: empty (< WINDOW so loop ends)
+      // sum window 1: empty
       .mockResolvedValueOnce({ rows: [] });
 
     const source = new ClaudeMemSource("/tmp/test.db");
@@ -66,7 +72,9 @@ describe("ClaudeMemSource", () => {
 
   it("ingests session summaries", async () => {
     executeMock
+      // obs window 1: empty
       .mockResolvedValueOnce({ rows: [] })
+      // sum window 1: data
       .mockResolvedValueOnce({
         rows: [
           {
@@ -85,6 +93,7 @@ describe("ClaudeMemSource", () => {
           },
         ],
       });
+    // sum has <WINDOW rows so no second sum query needed
 
     const source = new ClaudeMemSource("/tmp/test.db");
     const msgs: Message[] = [];
@@ -103,7 +112,9 @@ describe("ClaudeMemSource", () => {
 
   it("filters by cursor timestamp", async () => {
     executeMock
+      // obs window 1: empty
       .mockResolvedValueOnce({ rows: [] })
+      // sum window 1: empty
       .mockResolvedValueOnce({ rows: [] });
 
     const source = new ClaudeMemSource("/tmp/test.db");
@@ -113,11 +124,11 @@ describe("ClaudeMemSource", () => {
     expect(executeMock).toHaveBeenCalledTimes(2);
     expect(executeMock).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ args: [1700000000000] }),
+      expect.objectContaining({ args: [1700000000000, 100, 0] }),
     );
     expect(executeMock).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ args: [1700000000000] }),
+      expect.objectContaining({ args: [1700000000000, 100, 0] }),
     );
   });
 
@@ -142,6 +153,7 @@ describe("ClaudeMemSource", () => {
           },
         ],
       })
+      // sum window 1: empty
       .mockResolvedValueOnce({ rows: [] });
 
     const source = new ClaudeMemSource("/tmp/test.db");
@@ -172,6 +184,20 @@ describe("ClaudeMemSource", () => {
     await expect(drain()).rejects.toThrow("db error");
 
     expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("estimate() returns sum of pending observations and summaries", async () => {
+    executeMock
+      .mockResolvedValueOnce({ rows: [{ c: 10 }] })
+      .mockResolvedValueOnce({ rows: [{ c: 5 }] });
+
+    const source = new ClaudeMemSource("/tmp/test.db");
+    const count = await source.estimate("1700000000000");
+
+    expect(count).toBe(15);
+    expect(executeMock).toHaveBeenCalledTimes(2);
+    expect(executeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ args: [1700000000000] }));
+    expect(executeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ args: [1700000000000] }));
   });
 
   it("cursor returns timestamp string", () => {

@@ -15,13 +15,22 @@ vi.mock("@libsql/client", () => ({
 import { AeiSource } from "../../src/sources/aei.ts";
 import type { Message } from "../../src/core/types.ts";
 
+const ALL_EXTRA_MSG_COLS = ["cwd", "git_branch", "git_commit", "git_worktree", "git_dirty", "model", "sender_id"];
+const ALL_SESSION_COLS = ["id", "project", "git_remote", "hostname", "os_user", "initiator_id"];
+
+function mockPragma(msgCols: string[] = ALL_EXTRA_MSG_COLS, sesCols: string[] = ALL_SESSION_COLS): void {
+  const msgBaseRows = ["id", "session_id", "role", "timestamp", "date", "source"].map((name) => ({ name }));
+  const msgExtraRows = msgCols.map((name) => ({ name }));
+  executeMock.mockResolvedValueOnce({ rows: [...msgBaseRows, ...msgExtraRows] });
+  const sesRows = sesCols.map((name) => ({ name }));
+  executeMock.mockResolvedValueOnce({ rows: sesRows });
+}
+
 function mockMessagesAndBlocks(
   messages: Record<string, unknown>[],
   blocksByMessage: Record<string, unknown>[][],
 ): void {
   executeMock.mockResolvedValueOnce({ rows: messages });
-  // The batch blocks query returns ALL blocks for ALL messages in one result.
-  // Each block row needs a message_id to map back to its parent message.
   const allBlocks: Record<string, unknown>[] = [];
   for (let i = 0; i < messages.length; i++) {
     const msgId = messages[i].id;
@@ -46,6 +55,7 @@ describe("AeiSource", () => {
   });
 
   it("parses user message with rich context", async () => {
+    mockPragma();
     mockMessagesAndBlocks(
       [
         {
@@ -107,6 +117,7 @@ describe("AeiSource", () => {
   });
 
   it("parses assistant message with correct author", async () => {
+    mockPragma();
     mockMessagesAndBlocks(
       [
         {
@@ -151,6 +162,7 @@ describe("AeiSource", () => {
   });
 
   it("parses tool_call blocks", async () => {
+    mockPragma();
     mockMessagesAndBlocks(
       [
         {
@@ -200,6 +212,7 @@ describe("AeiSource", () => {
   });
 
   it("skips messages with no blocks", async () => {
+    mockPragma();
     mockMessagesAndBlocks(
       [
         {
@@ -232,6 +245,7 @@ describe("AeiSource", () => {
   });
 
   it("skips messages with invalid role", async () => {
+    mockPragma();
     mockMessagesAndBlocks(
       [
         {
@@ -275,6 +289,7 @@ describe("AeiSource", () => {
   });
 
   it("skips messages with non-finite timestamp", async () => {
+    mockPragma();
     mockMessagesAndBlocks(
       [
         {
@@ -318,15 +333,18 @@ describe("AeiSource", () => {
   });
 
   it("passes cursor as since parameter to SQL", async () => {
+    mockPragma();
     executeMock.mockResolvedValueOnce({ rows: [] });
 
     const source = new AeiSource("/tmp/aei.db");
     await collect(source, "1710000000000");
 
-    expect(executeMock).toHaveBeenCalledTimes(1);
-    expect(executeMock).toHaveBeenCalledWith(
+    // call 1: PRAGMA messages, call 2: PRAGMA sessions, call 3: windowed messages query
+    expect(executeMock).toHaveBeenCalledTimes(3);
+    expect(executeMock).toHaveBeenNthCalledWith(
+      3,
       expect.objectContaining({
-        args: [1710000000000],
+        args: [1710000000000, 500, 0],
       }),
     );
   });
@@ -356,6 +374,7 @@ describe("AeiSource", () => {
   });
 
   it("omits context when all fields are null", async () => {
+    mockPragma();
     mockMessagesAndBlocks(
       [
         {
@@ -400,6 +419,7 @@ describe("AeiSource", () => {
   });
 
   it("falls back to date from timestamp when row.date is null", async () => {
+    mockPragma();
     mockMessagesAndBlocks(
       [
         {
@@ -454,5 +474,69 @@ describe("AeiSource", () => {
     }).rejects.toThrow("db error");
 
     expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("estimate() returns count of pending messages", async () => {
+    executeMock.mockResolvedValueOnce({ rows: [{ c: 42 }] });
+
+    const source = new AeiSource("/tmp/aei.db");
+    const count = await source.estimate("1710000000000");
+
+    expect(count).toBe(42);
+    expect(executeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ args: [1710000000000] }),
+    );
+  });
+
+  it("handles missing columns gracefully", async () => {
+    // Simulate older schema without cwd, git_worktree, model columns and some session cols
+    mockPragma(["git_branch", "git_commit", "git_dirty", "sender_id"], ["id", "project"]);
+    mockMessagesAndBlocks(
+      [
+        {
+          id: 9,
+          session_id: "ses-9",
+          role: "user",
+          timestamp: 1710000006000,
+          date: "2026-03-10",
+          git_branch: "feat",
+          git_commit: "def456",
+          git_dirty: 0,
+          sender_id: "ori",
+          project: "test",
+          git_remote: null,
+          hostname: null,
+          os_user: null,
+          initiator_id: null,
+        },
+      ],
+      [
+        [
+          {
+            position: 0,
+            type: "text",
+            text: "old schema",
+            tool_name: null,
+            tool_input: null,
+            tool_call_id: null,
+          },
+        ],
+      ],
+    );
+
+    const source = new AeiSource("/tmp/aei.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].context).toEqual({
+      git_branch: "feat",
+      git_commit: "def456",
+      git_dirty: "0",
+      sender_id: "ori",
+      project: "test",
+    });
+    // cwd, git_worktree, model not in context since not in schema
+    expect(msgs[0].context!.cwd).toBeUndefined();
+    expect(msgs[0].context!.model).toBeUndefined();
   });
 });

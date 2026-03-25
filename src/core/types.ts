@@ -37,6 +37,8 @@ export interface Message {
 export interface Source {
   name: string;
   available(): boolean;
+  /** Estimate total messages available for ingestion from this cursor. */
+  estimate?(cursor: string): Promise<number>;
   ingest(cursor: string): AsyncGenerator<Message>;
   cursor(message: Message): string;
 }
