@@ -21,7 +21,8 @@ export class ClaudeMemSource implements Source {
   }
 
   async estimate(cursor: string): Promise<number> {
-    const since = Number(cursor) || 0;
+    const parsed = Number(cursor);
+    const since = Number.isFinite(parsed) ? parsed : 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
       const obs = await db.execute({ sql: "SELECT COUNT(*) as c FROM observations WHERE created_at_epoch > ?", args: [since] });

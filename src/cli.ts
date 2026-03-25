@@ -69,16 +69,11 @@ const ingestCommand = defineCommand({
       results = await ingest(allSources(), storage, {
         only,
         dryRun: args.dryRun,
-        onSourceStart: (source, estimate) => {
+        onSourceStart: (source) => {
           if (args.json) return;
           progressSent = 0;
-          if (estimate && estimate > 0) {
-            prog = progress({ max: estimate });
-            prog.start(`${source}: 0/${estimate}`);
-          } else {
-            spin = spinner();
-            spin.start(`${source}: scanning...`);
-          }
+          spin = spinner();
+          spin.start(`${source}: scanning...`);
         },
         onSourceSkip: (source, reason) => {
           if (args.json) return;
@@ -88,6 +83,12 @@ const ingestCommand = defineCommand({
           else log.step(`${source}: ${msg}`);
         },
         onProgress: (source, count, estimate) => {
+          if (args.json) return;
+          if (estimate && estimate > 0 && !prog) {
+            if (spin) { spin.stop(`${source}: estimating...`); spin = null; }
+            prog = progress({ max: estimate });
+            prog.start(`${source}: 0/${estimate}`);
+          }
           if (prog && estimate) {
             const delta = count - progressSent;
             if (delta > 0) prog.advance(delta, `${source}: ${count}/${estimate}`);

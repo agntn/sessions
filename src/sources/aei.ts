@@ -24,7 +24,8 @@ export class AeiSource implements Source {
   }
 
   async estimate(cursor: string): Promise<number> {
-    const since = Number(cursor) || 0;
+    const parsed = Number(cursor);
+    const since = Number.isFinite(parsed) ? parsed : 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
       const r = await db.execute({ sql: "SELECT COUNT(*) as c FROM messages WHERE source = 'aei-cli' AND timestamp > ?", args: [since] });
@@ -64,7 +65,7 @@ export class AeiSource implements Source {
           FROM messages m
           JOIN sessions s ON m.session_id = s.id
           WHERE m.source = 'aei-cli' AND m.timestamp > ?
-          ORDER BY m.timestamp
+          ORDER BY m.timestamp, m.id
           LIMIT ? OFFSET ?
           `,
           args: [since, WINDOW, offset],
