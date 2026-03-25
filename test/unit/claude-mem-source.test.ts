@@ -165,12 +165,11 @@ describe("ClaudeMemSource", () => {
     executeMock.mockRejectedValueOnce(new Error("db error"));
 
     const source = new ClaudeMemSource("/tmp/test.db");
-    try {
+    const drain = async () => {
       for await (const _ of source.ingest("0")) {
       }
-    } catch {
-      // expected
-    }
+    };
+    await expect(drain()).rejects.toThrow("db error");
 
     expect(closeMock).toHaveBeenCalledTimes(1);
   });
