@@ -60,8 +60,8 @@ const ingestCommand = defineCommand({
       let progressSent = 0;
 
       const stopIndicator = () => {
-        if (prog) { try { prog.stop("interrupted"); } catch {} prog = null; }
-        if (spin) { try { spin.stop("interrupted"); } catch {} spin = null; }
+        if (prog) { try { prog.stop("interrupted"); } catch { /* already stopped */ } prog = null; }
+        if (spin) { try { spin.stop("interrupted"); } catch { /* already stopped */ } spin = null; }
       };
 
       let results: Awaited<ReturnType<typeof ingest>>;
