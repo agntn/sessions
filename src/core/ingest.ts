@@ -1,14 +1,18 @@
 import type { Source, Storage, Message, IngestResult } from "./types.ts";
 
-export interface IngestOptions {
-  only?: string[];
-  verbose?: boolean;
-  dryRun?: boolean;
-  /** Max messages to show in dry-run preview. */
-  previewLimit?: number;
+export interface IngestCallbacks {
+  onSourceStart?: (source: string, estimate?: number) => void;
+  onSourceSkip?: (source: string, reason: "unavailable" | "up-to-date") => void;
+  onProgress?: (source: string, count: number, estimate?: number) => void;
+  onSourceDone?: (source: string, count: number, opts?: { dryRun?: boolean }) => void;
+  onSourceError?: (source: string, error: string) => void;
   onMessage?: (message: Message) => void;
-  /** Receives verbose status lines (replaces console.error). */
-  onLog?: (message: string) => void;
+}
+
+export interface IngestOptions extends IngestCallbacks {
+  only?: string[];
+  dryRun?: boolean;
+  previewLimit?: number;
 }
 
 export const BATCH_SIZE = 1000;
@@ -27,18 +31,27 @@ export async function ingest(
     }
 
     if (!source.available()) {
-      if (options.verbose) {
-        options.onLog?.(`  ${source.name}: not available, skipping`);
-      }
+      options.onSourceSkip?.(source.name, "unavailable");
       results.push({ source: source.name, count: 0, cursor: "", skipped: true });
       continue;
     }
 
     const cursor = await storage.getCursor(source.name);
+    options.onSourceStart?.(source.name);
+
+    let estimate: number | undefined;
+    if (source.estimate) {
+      try {
+        estimate = await source.estimate(cursor);
+        options.onProgress?.(source.name, 0, estimate);
+      } catch (err) {
+        options.onSourceError?.(source.name, `estimate failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     let count = 0;
     let ingestedCount = 0;
     let resultCursor = cursor;
-    
+
     let batch: Message[] = [];
     let cursorSeed: Message | null = null;
 
@@ -61,7 +74,8 @@ export async function ingest(
         if (batch.length >= BATCH_SIZE) {
           await storage.insert(batch);
           ingestedCount += batch.length;
-          
+          options.onProgress?.(source.name, ingestedCount, estimate);
+
           if (cursorSeed) {
             const newCursor = source.cursor(cursorSeed);
             await storage.setCursor(source.name, newCursor);
@@ -78,25 +92,18 @@ export async function ingest(
       }
 
       if (!count) {
-        if (options.verbose) options.onLog?.(`  ${source.name}: up to date`);
+        options.onSourceSkip?.(source.name, "up-to-date");
         results.push({ source: source.name, count: 0, cursor, skipped: false });
         continue;
       }
 
-      if (options.dryRun) {
-        if (count > previewLimit && options.verbose) {
-          options.onLog?.(`  ... and ${count - previewLimit} more`);
-        }
-      } else if (cursorSeed) {
+      if (!options.dryRun && cursorSeed) {
         const newCursor = source.cursor(cursorSeed);
         await storage.setCursor(source.name, newCursor);
         resultCursor = newCursor;
       }
 
-      if (options.verbose) {
-        const suffix = options.dryRun ? " (dry run)" : " ingested";
-        options.onLog?.(`  ${source.name}: ${ingestedCount} messages${suffix}`);
-      }
+      options.onSourceDone?.(source.name, ingestedCount, { dryRun: options.dryRun });
 
       results.push({
         source: source.name,
@@ -117,17 +124,13 @@ export async function ingest(
           resultCursor = newCursor;
         }
       } catch (cleanupErr) {
-        if (options.verbose) {
-          const cleanupError =
-            cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
-          options.onLog?.(`  ${source.name}: recovery failed - ${cleanupError}`);
-        }
+        const cleanupError =
+          cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+        options.onSourceError?.(source.name, `recovery failed - ${cleanupError}`);
       }
 
       const error = err instanceof Error ? err.message : String(err);
-      if (options.verbose) {
-        options.onLog?.(`  ${source.name}: error - ${error}`);
-      }
+      options.onSourceError?.(source.name, error);
       results.push({
         source: source.name,
         count: ingestedCount,

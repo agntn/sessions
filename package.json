@@ -62,9 +62,9 @@
     "release": "pnpm test:run && pnpm build && changelogen --release --push"
   },
   "dependencies": {
+    "@clack/prompts": "^1.1.0",
     "@libsql/client": "^0.15.15",
     "citty": "^0.2.1",
-    "consola": "^3.4.2",
     "drizzle-orm": "^0.45.1"
   },
   "devDependencies": {
