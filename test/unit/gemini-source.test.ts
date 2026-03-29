@@ -241,4 +241,67 @@ describe("GeminiSource", () => {
     expect(msgs).toHaveLength(1);
     expect(msgs[0].blocks[0].text).toBe("valid");
   });
+
+  it("truncates long content at 8000 chars", async () => {
+    writeChat("project-trunc", "chat-trunc.json", {
+      messages: [{ type: "user", timestamp: "2026-03-10T10:00:00Z", content: "x".repeat(10000) }],
+    });
+    const source = new GeminiSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs[0].blocks[0].text).toHaveLength(8000);
+  });
+
+  it("uses displayName as toolName fallback", async () => {
+    writeChat("project-dn", "chat-dn.json", {
+      messages: [
+        {
+          type: "gemini",
+          timestamp: "2026-03-10T10:00:00Z",
+          content: "",
+          toolCalls: [{ displayName: "myTool", id: "tc-dn", args: {} }],
+        },
+      ],
+    });
+    const source = new GeminiSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs[0].blocks[0].toolName).toBe("myTool");
+  });
+
+  it("available() returns false for nonexistent directory", () => {
+    const source = new GeminiSource("/tmp/nonexistent-gemini-12345");
+    expect(source.available()).toBe(false);
+  });
+
+  it("available() returns true for existing directory", () => {
+    const source = new GeminiSource(tempDir);
+    expect(source.available()).toBe(true);
+  });
+
+  it("skips files that are not .json", async () => {
+    const dir = join(tempDir, "project-txt", "chats");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "notes.txt"), "not a json file");
+    writeChat("project-txt", "real.json", {
+      messages: [{ type: "user", timestamp: "2026-03-10T10:00:00Z", content: "json file" }],
+    });
+
+    const source = new GeminiSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("json file");
+  });
+
+  it("falls back to file mtime when message has no timestamp", async () => {
+    writeChat("project-nots", "chat-nots.json", {
+      messages: [{ type: "user", content: "no timestamp" }],
+    });
+    const source = new GeminiSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].timestamp).toBeGreaterThan(0);
+  });
 });
