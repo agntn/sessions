@@ -297,4 +297,81 @@ describe("ClaudeSource", () => {
     const source = new ClaudeSource(projectsDir);
     expect(source.available()).toBe(true);
   });
+
+  it("skips entries with missing message field", async () => {
+    writeJsonl("session-no-msg.jsonl", [
+      { type: "user", timestamp: "2026-03-10T10:00:00Z" },
+      { type: "user", timestamp: "2026-03-10T10:00:01Z", message: { content: "valid" } },
+    ]);
+    const source = new ClaudeSource(projectsDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("valid");
+  });
+
+  it("handles nested project subdirectories", async () => {
+    const dir = join(projectsDir, "test-project", "subdir");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "deep.jsonl"),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-03-10T10:00:00Z",
+        message: { content: "from nested dir" },
+      }),
+    );
+
+    const source = new ClaudeSource(projectsDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("from nested dir");
+  });
+
+  it("truncates long text blocks at 8000 chars", async () => {
+    writeJsonl("session-long.jsonl", [
+      {
+        type: "user",
+        timestamp: "2026-03-10T10:00:00Z",
+        message: { content: "x".repeat(10000) },
+      },
+    ]);
+    const source = new ClaudeSource(projectsDir);
+    const msgs = await collect(source);
+
+    expect(msgs[0].blocks[0].text).toHaveLength(8000);
+  });
+
+  it("falls back to file mtime when entry has no timestamp", async () => {
+    writeJsonl("session-no-ts.jsonl", [{ type: "user", message: { content: "no timestamp" } }]);
+    const source = new ClaudeSource(projectsDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].timestamp).toBeGreaterThan(0);
+  });
+
+  it("parses tool_use with string input", async () => {
+    writeJsonl("session-tool-str.jsonl", [
+      {
+        type: "assistant",
+        timestamp: "2026-03-10T10:00:00Z",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              name: "bash",
+              id: "call-str",
+              input: "raw string input",
+            },
+          ],
+        },
+      },
+    ]);
+    const source = new ClaudeSource(projectsDir);
+    const msgs = await collect(source);
+
+    expect(msgs[0].blocks[0].toolInput).toBe("raw string input");
+  });
 });
