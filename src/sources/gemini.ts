@@ -75,6 +75,16 @@ export class GeminiSource implements Source {
     return existsSync(this.geminiDir);
   }
 
+  async estimate(cursor: string): Promise<number> {
+    const parsed = Number(cursor);
+    const since = Number.isFinite(parsed) ? parsed : 0;
+    let count = 0;
+    for (const f of walkChatFiles(this.geminiDir)) {
+      if (f.mtime >= since) count++;
+    }
+    return count;
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
