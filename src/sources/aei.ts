@@ -7,9 +7,34 @@ import type { Source, Message, Block, Channel, Participant } from "../core/types
 // Medium window: rows are narrow, blocks fetched in separate query
 const WINDOW = 500;
 
+function parseCursor(cursor: string): { since: number; lastId: number } {
+  if (!cursor) return { since: 0, lastId: 0 };
+  const [tsRaw, idRaw] = cursor.split("|");
+  const since = Number(tsRaw || "0");
+  const lastId = Number(idRaw || "0");
+  return {
+    since: Number.isFinite(since) ? since : 0,
+    lastId: Number.isFinite(lastId) && lastId > 0 ? lastId : 0,
+  };
+}
+
 const BASE_COLS = ["id", "session_id", "role", "timestamp", "date"] as const;
-const EXTRA_MSG_COLS = ["cwd", "git_branch", "git_commit", "git_worktree", "git_dirty", "model", "sender_id"] as const;
-const EXTRA_SESSION_COLS = ["project", "git_remote", "hostname", "os_user", "initiator_id"] as const;
+const EXTRA_MSG_COLS = [
+  "cwd",
+  "git_branch",
+  "git_commit",
+  "git_worktree",
+  "git_dirty",
+  "model",
+  "sender_id",
+] as const;
+const EXTRA_SESSION_COLS = [
+  "project",
+  "git_remote",
+  "hostname",
+  "os_user",
+  "initiator_id",
+] as const;
 
 export class AeiSource implements Source {
   name = "aei";
@@ -24,11 +49,13 @@ export class AeiSource implements Source {
   }
 
   async estimate(cursor: string): Promise<number> {
-    const parsed = Number(cursor);
-    const since = Number.isFinite(parsed) ? parsed : 0;
+    const { since } = parseCursor(cursor);
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      const r = await db.execute({ sql: "SELECT COUNT(*) as c FROM messages WHERE source = 'aei-cli' AND timestamp > ?", args: [since] });
+      const r = await db.execute({
+        sql: "SELECT COUNT(*) as c FROM messages WHERE source = 'aei-cli' AND timestamp > ?",
+        args: [since],
+      });
       return Number(r.rows[0].c);
     } finally {
       db.close();
@@ -36,8 +63,7 @@ export class AeiSource implements Source {
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {
-    const parsedCursor = Number(cursor);
-    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
+    const { since, lastId } = parseCursor(cursor);
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
 
     try {
@@ -56,19 +82,21 @@ export class AeiSource implements Source {
         ...availableSession.map((c) => `s.${c}`),
       ].join(", ");
 
-      // Windowed initial query
-      let offset = 0;
+      // Keyset pagination: use (timestamp, id) bounds instead of OFFSET
+      let keyTs = since;
+      let keyId = lastId;
       while (true) {
         const rowsResult = await db.execute({
           sql: `
           SELECT ${selectCols}
           FROM messages m
           JOIN sessions s ON m.session_id = s.id
-          WHERE m.source = 'aei-cli' AND m.timestamp > ?
+          WHERE m.source = 'aei-cli'
+            AND (m.timestamp > ? OR (m.timestamp = ? AND m.id > ?))
           ORDER BY m.timestamp, m.id
-          LIMIT ? OFFSET ?
+          LIMIT ?
           `,
-          args: [since, WINDOW, offset],
+          args: [keyTs, keyTs, keyId, WINDOW],
         });
         const rows = rowsResult.rows as unknown as Record<string, unknown>[];
 
@@ -125,7 +153,7 @@ export class AeiSource implements Source {
           const blocks = blocksByMessage.get(row.id as number) ?? [];
           if (!blocks.length) continue;
 
-          const context: Record<string, string> = {};
+          const context: Record<string, string> = { aeiMsgId: String(row.id) };
           for (const col of availableExtra) {
             const val = row[col];
             if (val !== null && val !== undefined) {
@@ -141,7 +169,11 @@ export class AeiSource implements Source {
           let author: Participant;
           if (role === "user") {
             const name = (row.sender_id as string) || (row.os_user as string) || osUser();
-            author = { platform: "cli", name, platformId: (row.initiator_id as string) ?? undefined };
+            author = {
+              platform: "cli",
+              name,
+              platformId: (row.initiator_id as string) ?? undefined,
+            };
           } else {
             author = { platform: "cli", name: (row.sender_id as string) || "aei", isBot: true };
           }
@@ -159,8 +191,11 @@ export class AeiSource implements Source {
           };
         }
 
+        const lastRow = rows[rows.length - 1];
+        keyTs = Number(lastRow.timestamp);
+        keyId = Number(lastRow.id);
+
         if (rows.length < WINDOW) break;
-        offset += WINDOW;
       }
     } finally {
       db.close();
@@ -168,6 +203,7 @@ export class AeiSource implements Source {
   }
 
   cursor(message: Message): string {
-    return String(message.timestamp);
+    const id = message.context?.aeiMsgId;
+    return id ? `${message.timestamp}|${id}` : String(message.timestamp);
   }
 }
