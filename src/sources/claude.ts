@@ -99,6 +99,19 @@ export class ClaudeSource implements Source {
     return existsSync(this.projectsDir);
   }
 
+  async estimate(cursor: string): Promise<number> {
+    const parsed = Number(cursor);
+    const since = Number.isFinite(parsed) ? parsed : 0;
+    let count = 0;
+    for (const f of walkJsonl(this.projectsDir)) {
+      if (statSync(f).mtimeMs >= since) count++;
+    }
+    for (const f of walkMemoryFiles(this.projectsDir)) {
+      if (f.mtime >= since) count++;
+    }
+    return count;
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
