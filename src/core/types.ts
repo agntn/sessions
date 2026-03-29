@@ -1,5 +1,7 @@
+export type BlockType = "text" | "thinking" | "tool_call" | "tool_result" | (string & {});
+
 export interface Block {
-  type: string;
+  type: BlockType;
   text?: string;
   toolName?: string;
   toolInput?: string;
