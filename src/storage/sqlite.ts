@@ -158,6 +158,15 @@ export class SqliteStorage implements Storage {
         INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
       END
     `);
+
+    await this.client.execute(`
+      CREATE TRIGGER blocks_fts_au AFTER UPDATE OF text ON blocks
+      WHEN new.type NOT IN ('tool_call', 'tool_result')
+      BEGIN
+        INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+        INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
+      END
+    `);
   }
 
   async init(): Promise<void> {
