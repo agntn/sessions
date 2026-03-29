@@ -62,7 +62,10 @@ describe("ClaudeMemSource", () => {
     expect(msgs[0].blocks).toHaveLength(6);
     expect(msgs[0].blocks[0]).toEqual({ type: "title", text: "Found a bug" });
     expect(msgs[0].blocks[1]).toEqual({ type: "subtitle", text: "in auth module" });
-    expect(msgs[0].blocks[2]).toEqual({ type: "narrative", text: "The auth module has a race condition" });
+    expect(msgs[0].blocks[2]).toEqual({
+      type: "narrative",
+      text: "The auth module has a race condition",
+    });
     expect(msgs[0].blocks[3]).toEqual({ type: "text", text: "raw observation text" });
     expect(msgs[0].blocks[4]).toEqual({ type: "facts", text: '["race condition in login"]' });
     expect(msgs[0].blocks[5]).toEqual({ type: "concepts", text: '["concurrency"]' });
@@ -102,7 +105,10 @@ describe("ClaudeMemSource", () => {
     expect(msgs).toHaveLength(1);
     expect(msgs[0].blocks).toHaveLength(5);
     expect(msgs[0].blocks[0]).toEqual({ type: "request", text: "Fix login page" });
-    expect(msgs[0].blocks[1]).toEqual({ type: "investigated", text: "Auth flow and session handling" });
+    expect(msgs[0].blocks[1]).toEqual({
+      type: "investigated",
+      text: "Auth flow and session handling",
+    });
     expect(msgs[0].blocks[2]).toEqual({ type: "learned", text: "Sessions expire after 30min" });
     expect(msgs[0].blocks[3]).toEqual({ type: "completed", text: "Added refresh token logic" });
     expect(msgs[0].blocks[4]).toEqual({ type: "next_steps", text: "Add tests" });
@@ -196,8 +202,14 @@ describe("ClaudeMemSource", () => {
 
     expect(count).toBe(15);
     expect(executeMock).toHaveBeenCalledTimes(2);
-    expect(executeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ args: [1700000000000] }));
-    expect(executeMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ args: [1700000000000] }));
+    expect(executeMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ args: [1700000000000] }),
+    );
+    expect(executeMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ args: [1700000000000] }),
+    );
   });
 
   it("cursor returns timestamp string", () => {

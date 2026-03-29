@@ -45,7 +45,10 @@ export async function ingest(
         estimate = await source.estimate(cursor);
         options.onProgress?.(source.name, 0, estimate);
       } catch (err) {
-        options.onSourceError?.(source.name, `estimate failed: ${err instanceof Error ? err.message : String(err)}`);
+        options.onSourceError?.(
+          source.name,
+          `estimate failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
     let count = 0;
@@ -56,7 +59,6 @@ export async function ingest(
     let cursorSeed: Message | null = null;
 
     try {
-
       for await (const msg of source.ingest(cursor)) {
         count++;
 
@@ -124,8 +126,7 @@ export async function ingest(
           resultCursor = newCursor;
         }
       } catch (cleanupErr) {
-        const cleanupError =
-          cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+        const cleanupError = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
         options.onSourceError?.(source.name, `recovery failed - ${cleanupError}`);
       }
 

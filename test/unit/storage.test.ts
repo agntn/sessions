@@ -849,9 +849,7 @@ describe("SqliteStorage CRUD", () => {
     ]);
 
     const allChannels = await storage.listChannels();
-    const relevant = allChannels.filter(
-      (c) => c.platform === "a" || c.platform === "a|b",
-    );
+    const relevant = allChannels.filter((c) => c.platform === "a" || c.platform === "a|b");
     expect(relevant).toHaveLength(2);
   });
 

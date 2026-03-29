@@ -1,6 +1,6 @@
 import { home } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel } from "../core/types.ts";
 
@@ -20,13 +20,23 @@ export class ClaudeMemSource implements Source {
     return existsSync(this.dbPath);
   }
 
+  watchPaths(): string[] {
+    return [dirname(this.dbPath)];
+  }
+
   async estimate(cursor: string): Promise<number> {
     const parsed = Number(cursor);
     const since = Number.isFinite(parsed) ? parsed : 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      const obs = await db.execute({ sql: "SELECT COUNT(*) as c FROM observations WHERE created_at_epoch > ?", args: [since] });
-      const sum = await db.execute({ sql: "SELECT COUNT(*) as c FROM session_summaries WHERE created_at_epoch > ?", args: [since] });
+      const obs = await db.execute({
+        sql: "SELECT COUNT(*) as c FROM observations WHERE created_at_epoch > ?",
+        args: [since],
+      });
+      const sum = await db.execute({
+        sql: "SELECT COUNT(*) as c FROM session_summaries WHERE created_at_epoch > ?",
+        args: [since],
+      });
       return Number(obs.rows[0].c) + Number(sum.rows[0].c);
     } finally {
       db.close();
