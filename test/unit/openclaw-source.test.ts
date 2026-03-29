@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+// writeFileSync used directly for malformed content test
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { OpenClawSource } from "../../src/sources/openclaw.ts";
@@ -388,5 +389,113 @@ describe("OpenClawSource multi-dir support", () => {
     ];
 
     expect(source.cursor(msgs[1])).toBe("300");
+  });
+});
+
+describe("OpenClawSource error handling", () => {
+  it("skips malformed JSONL lines and continues", async () => {
+    writeFileSync(
+      join(tempDir, "mixed.jsonl"),
+      [
+        "not valid json",
+        JSON.stringify({
+          type: "message",
+          timestamp: "2026-03-10T10:00:00Z",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "survived" }],
+          },
+        }),
+      ].join("\n"),
+    );
+
+    const source = new OpenClawSource([tempDir]);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("survived");
+  });
+
+  it("skips messages with empty content array", async () => {
+    writeJsonl("empty-content.jsonl", [
+      {
+        type: "message",
+        timestamp: "2026-03-10T10:00:00Z",
+        message: { role: "user", content: [] },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-10T10:00:01Z",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "has content" }],
+        },
+      },
+    ]);
+    const source = new OpenClawSource([tempDir]);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("has content");
+  });
+
+  it("skips messages with missing message field", async () => {
+    writeJsonl("no-message.jsonl", [
+      { type: "message", timestamp: "2026-03-10T10:00:00Z" },
+      {
+        type: "message",
+        timestamp: "2026-03-10T10:00:01Z",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "valid" }],
+        },
+      },
+    ]);
+    const source = new OpenClawSource([tempDir]);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("valid");
+  });
+
+  it("handles toolResult role correctly", async () => {
+    writeJsonl("tool-result.jsonl", [
+      {
+        type: "message",
+        timestamp: "2026-03-10T10:00:00Z",
+        message: {
+          role: "toolResult",
+          content: [{ type: "toolResult", id: "tc-1", content: "result text" }],
+        },
+      },
+    ]);
+    const source = new OpenClawSource([tempDir]);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].role).toBe("tool");
+  });
+
+  it("falls back to session timestamp when message has no timestamp", async () => {
+    writeJsonl("no-msg-ts.jsonl", [
+      { type: "session", timestamp: "2026-03-10T10:00:00Z" },
+      {
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "no timestamp on message" }],
+        },
+      },
+    ]);
+    const source = new OpenClawSource([tempDir]);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].timestamp).toBe(new Date("2026-03-10T10:00:00Z").getTime());
+  });
+
+  it("available() returns false for non-existent directories", () => {
+    const source = new OpenClawSource(["/tmp/nonexistent-openclaw-12345"]);
+    expect(source.available()).toBe(false);
   });
 });
