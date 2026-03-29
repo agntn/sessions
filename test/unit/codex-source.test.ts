@@ -310,6 +310,116 @@ describe("CodexSource JSON", () => {
   });
 });
 
+describe("CodexSource error handling", () => {
+  it("skips malformed JSONL lines and continues", async () => {
+    writeFileSync(
+      join(tempDir, "mixed.jsonl"),
+      [
+        "not valid json {{{",
+        JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-03-10T10:00:00Z",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "survived" }],
+          },
+        }),
+        "{truncated",
+      ].join("\n"),
+    );
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("survived");
+  });
+
+  it("skips corrupted JSON files gracefully", async () => {
+    writeFileSync(join(tempDir, "bad.json"), "not json at all");
+    writeJsonl("good.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "from jsonl" }],
+        },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("from jsonl");
+  });
+
+  it("skips response_item with null payload", async () => {
+    writeJsonl("null-payload.jsonl", [
+      { type: "response_item", timestamp: "2026-03-10T10:00:00Z", payload: null },
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:01Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "valid" }],
+        },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("valid");
+  });
+
+  it("skips message with empty content array", async () => {
+    writeJsonl("empty-content.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "message", role: "assistant", content: [] },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
+  it("skips function_call_output with empty output", async () => {
+    writeJsonl("empty-output.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "function_call_output", call_id: "fc-1", output: "" },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
+  it("available() returns false for non-existent directory", () => {
+    const source = new CodexSource("/tmp/nonexistent-codex-dir-12345");
+    expect(source.available()).toBe(false);
+  });
+
+  it("JSON session falls back to filename sessionId when session.id missing", async () => {
+    writeJson("fallback-session.json", {
+      items: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] }],
+    });
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].sessionId).toBe("fallback-session");
+  });
+});
+
 describe("CodexSource cursor", () => {
   it("filters by cursor across formats", async () => {
     const ts = new Date("2026-03-10T10:00:00Z").getTime();
