@@ -71,6 +71,22 @@ export class MastraSource implements Source {
     return existsSync(this.dbPath);
   }
 
+  async estimate(cursor: string): Promise<number> {
+    const { createdAt, rowId } = parseCursor(cursor);
+    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
+    try {
+      const r = await db.execute({
+        sql: `SELECT COUNT(*) as c FROM mastra_messages
+              WHERE role IN ('user', 'assistant')
+                AND (createdAt > ? OR (createdAt = ? AND rowid > ?))`,
+        args: [createdAt, createdAt, rowId],
+      });
+      return Number(r.rows[0].c);
+    } finally {
+      db.close();
+    }
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = parseCursor(cursor);
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
