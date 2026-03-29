@@ -9,7 +9,7 @@ function makeSource(name: string, messages: Message[]): Source {
     async *ingest() {
       for (const m of messages) yield m;
     },
-    cursor: (msgs) => (msgs.length ? String(msgs[msgs.length - 1].timestamp) : "0"),
+    cursor: (msg) => String(msg.timestamp),
   };
 }
 
@@ -58,8 +58,21 @@ function makeStorage(): Storage {
     async getCursor(source) {
       return cursors.get(source) ?? "0";
     },
+    async getCursorState(source) {
+      return { cursor: cursors.get(source) ?? "0", lastRun: null };
+    },
     async setCursor(source, cursor) {
       cursors.set(source, cursor);
+    },
+    async listCursors() {
+      return [];
+    },
+    async deleteCursor() {},
+    async deleteBySource() {
+      return 0;
+    },
+    async purgeSource() {
+      return 0;
     },
     async count() {
       return 0;
@@ -179,6 +192,107 @@ describe("ingest error handling", () => {
     expect(results[0].error).toBe("source crashed");
     expect(inserted).toHaveLength(2);
     expect(await storage.getCursor("partial")).toBe("600");
+  });
+
+  it("reports error when storage.insert() fails on first batch", async () => {
+    const storage = makeStorage();
+    storage.insert = async () => {
+      throw new Error("disk full");
+    };
+
+    const source = makeSource("s1", [
+      {
+        source: "s1",
+        sessionId: "1",
+        role: "user",
+        timestamp: 100,
+        date: "2026-03-14",
+        blocks: [{ type: "text", text: "test" }],
+      },
+    ]);
+
+    const results = await ingest([source], storage);
+
+    expect(results[0].error).toBe("disk full");
+    expect(results[0].count).toBe(0);
+  });
+
+  it("reports recovery failure when cleanup insert also fails", async () => {
+    const storage = makeStorage();
+    let insertCount = 0;
+    storage.insert = async () => {
+      insertCount++;
+      throw new Error(insertCount === 1 ? "first fail" : "recovery fail");
+    };
+
+    const errors: string[] = [];
+    const source: Source = {
+      name: "s1",
+      available: () => true,
+      async *ingest() {
+        for (let i = 0; i < BATCH_SIZE + 1; i++) {
+          yield {
+            source: "s1",
+            sessionId: "1",
+            role: "user",
+            timestamp: 100 + i,
+            date: "2026-03-14",
+            blocks: [],
+          };
+        }
+      },
+      cursor: () => "0",
+    };
+
+    const results = await ingest([source], storage, {
+      onSourceError: (_s, err) => errors.push(err),
+    });
+
+    expect(results[0].error).toBe("first fail");
+    expect(errors.some((e) => e.includes("recovery failed"))).toBe(true);
+  });
+
+  it("does not advance cursor when storage.insert fails in error handler", async () => {
+    const storage = makeStorage();
+    let insertCallCount = 0;
+    storage.insert = async () => {
+      insertCallCount++;
+      if (insertCallCount > 1) throw new Error("insert failed in cleanup");
+    };
+
+    const source: Source = {
+      name: "s1",
+      available: () => true,
+      async *ingest() {
+        for (let i = 0; i < BATCH_SIZE; i++) {
+          yield {
+            source: "s1",
+            sessionId: "1",
+            role: "user",
+            timestamp: 100 + i,
+            date: "2026-03-14",
+            blocks: [],
+          };
+        }
+        yield {
+          source: "s1",
+          sessionId: "1",
+          role: "user",
+          timestamp: 9999,
+          date: "2026-03-14",
+          blocks: [],
+        };
+        throw new Error("source error");
+      },
+      cursor: (msg) => String(msg.timestamp),
+    };
+
+    const results = await ingest([source], storage);
+
+    expect(results[0].error).toBe("source error");
+    // First batch succeeded, so cursor should reflect that
+    const cursor = await storage.getCursor("s1");
+    expect(cursor).not.toBe("0"); // cursor was set after successful first batch
   });
 
   it("reports count of successfully inserted batches even when failure happens later", async () => {
