@@ -7,6 +7,17 @@ import type { Source, Message, Block, Channel } from "../core/types.ts";
 // Small window: many wide text columns per row (~16 KB each after substr)
 const WINDOW = 100;
 
+function parseCursor(cursor: string): { since: number; lastId: number } {
+  if (!cursor) return { since: 0, lastId: 0 };
+  const [tsRaw, idRaw] = cursor.split("|");
+  const since = Number(tsRaw || "0");
+  const lastId = Number(idRaw || "0");
+  return {
+    since: Number.isFinite(since) ? since : 0,
+    lastId: Number.isFinite(lastId) && lastId > 0 ? lastId : 0,
+  };
+}
+
 export class ClaudeMemSource implements Source {
   name = "claude-mem";
   private dbPath: string;
@@ -25,8 +36,14 @@ export class ClaudeMemSource implements Source {
     const since = Number.isFinite(parsed) ? parsed : 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      const obs = await db.execute({ sql: "SELECT COUNT(*) as c FROM observations WHERE created_at_epoch > ?", args: [since] });
-      const sum = await db.execute({ sql: "SELECT COUNT(*) as c FROM session_summaries WHERE created_at_epoch > ?", args: [since] });
+      const obs = await db.execute({
+        sql: "SELECT COUNT(*) as c FROM observations WHERE created_at_epoch > ?",
+        args: [since],
+      });
+      const sum = await db.execute({
+        sql: "SELECT COUNT(*) as c FROM session_summaries WHERE created_at_epoch > ?",
+        args: [since],
+      });
       return Number(obs.rows[0].c) + Number(sum.rows[0].c);
     } finally {
       db.close();
@@ -34,13 +51,13 @@ export class ClaudeMemSource implements Source {
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {
-    const parsedCursor = Number(cursor);
-    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
+    const { since, lastId } = parseCursor(cursor);
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
 
     try {
-      // Observations — windowed
-      let obsOffset = 0;
+      // Observations — keyset pagination
+      let obsKeyTs = since;
+      let obsKeyId = lastId;
       while (true) {
         const obsResult = await db.execute({
           sql: `
@@ -56,11 +73,11 @@ export class ClaudeMemSource implements Source {
             substr(o.files_modified, 1, 500) as files_modified,
             o.created_at_epoch
           FROM observations o
-          WHERE o.created_at_epoch > ?
-          ORDER BY o.created_at_epoch
-          LIMIT ? OFFSET ?
+          WHERE (o.created_at_epoch > ? OR (o.created_at_epoch = ? AND o.id > ?))
+          ORDER BY o.created_at_epoch, o.id
+          LIMIT ?
           `,
-          args: [since, WINDOW, obsOffset],
+          args: [obsKeyTs, obsKeyTs, obsKeyId, WINDOW],
         });
         const obsRows = obsResult.rows as unknown as Array<{
           id: number;
@@ -106,18 +123,22 @@ export class ClaudeMemSource implements Source {
             timestamp: ts,
             date: new Date(ts).toISOString().split("T")[0],
             blocks,
-            context,
+            context: { ...context, cmId: String(row.id) },
             channel: this.channel,
             author: { platform: "cli", name: "claude-mem", isBot: true },
           };
         }
 
+        const lastObs = obsRows[obsRows.length - 1];
+        obsKeyTs = Number(lastObs.created_at_epoch);
+        obsKeyId = lastObs.id;
+
         if (obsRows.length < WINDOW) break;
-        obsOffset += WINDOW;
       }
 
-      // Session summaries — windowed
-      let sumOffset = 0;
+      // Session summaries — keyset pagination
+      let sumKeyTs = since;
+      let sumKeyId = lastId;
       while (true) {
         const sumResult = await db.execute({
           sql: `
@@ -133,11 +154,11 @@ export class ClaudeMemSource implements Source {
             substr(s.notes, 1, 2000) as notes,
             s.created_at_epoch
           FROM session_summaries s
-          WHERE s.created_at_epoch > ?
-          ORDER BY s.created_at_epoch
-          LIMIT ? OFFSET ?
+          WHERE (s.created_at_epoch > ? OR (s.created_at_epoch = ? AND s.id > ?))
+          ORDER BY s.created_at_epoch, s.id
+          LIMIT ?
           `,
-          args: [since, WINDOW, sumOffset],
+          args: [sumKeyTs, sumKeyTs, sumKeyId, WINDOW],
         });
         const sumRows = sumResult.rows as unknown as Array<{
           id: number;
@@ -182,14 +203,17 @@ export class ClaudeMemSource implements Source {
             timestamp: ts,
             date: new Date(ts).toISOString().split("T")[0],
             blocks,
-            context,
+            context: { ...context, cmId: String(row.id) },
             channel: { ...this.channel, type: "summary" },
             author: { platform: "cli", name: "claude-mem", isBot: true },
           };
         }
 
+        const lastSum = sumRows[sumRows.length - 1];
+        sumKeyTs = Number(lastSum.created_at_epoch);
+        sumKeyId = lastSum.id;
+
         if (sumRows.length < WINDOW) break;
-        sumOffset += WINDOW;
       }
     } finally {
       db.close();
@@ -197,6 +221,7 @@ export class ClaudeMemSource implements Source {
   }
 
   cursor(message: Message): string {
-    return String(message.timestamp);
+    const id = message.context?.cmId;
+    return id ? `${message.timestamp}|${id}` : String(message.timestamp);
   }
 }
