@@ -127,6 +127,16 @@ export class OpenClawSource implements Source {
     return this.sessionsDirs.some((d) => existsSync(d));
   }
 
+  async estimate(cursor: string): Promise<number> {
+    const parsed = Number(cursor);
+    const since = Number.isFinite(parsed) ? parsed : 0;
+    let count = 0;
+    for (const f of walkJsonl(this.sessionsDirs)) {
+      if (statSync(f).mtimeMs >= since) count++;
+    }
+    return count;
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
