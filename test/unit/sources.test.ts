@@ -6,6 +6,7 @@ import {
   has,
   AeiSource,
   ClaudeSource,
+  ClaudeMemSource,
   MastraSource,
   CodexSource,
   GeminiSource,
@@ -96,5 +97,48 @@ describe("source providers", () => {
     const source = new OpenCodeSource("/tmp/nonexistent-opencode.db");
     expect(source.name).toBe("opencode");
     expect(source.available()).toBe(false);
+  });
+
+  it("ClaudeMemSource accepts custom db path", () => {
+    const source = new ClaudeMemSource("/tmp/nonexistent-claude-mem.db");
+    expect(source.name).toBe("claude-mem");
+    expect(source.available()).toBe(false);
+  });
+
+  it("has() returns false for empty string", () => {
+    expect(has("")).toBe(false);
+  });
+
+  it("sources() returns consistent order", () => {
+    const first = sources();
+    const second = sources();
+    expect(first).toEqual(second);
+  });
+
+  it("allSources() count matches sources() count", () => {
+    expect(allSources().length).toBe(sources().length);
+  });
+
+  it("each source name in sources() can be created", () => {
+    for (const name of sources()) {
+      const source = create(name);
+      expect(source.name).toBe(name);
+    }
+  });
+
+  it("allSources() names match sources() list", () => {
+    const names = allSources().map((s) => s.name);
+    expect(names.sort()).toEqual([...sources()].sort());
+  });
+
+  it("create() returns a new instance each time", () => {
+    const a = create("aei");
+    const b = create("aei");
+    expect(a).not.toBe(b);
+  });
+
+  it("claude-mem source is included in registry", () => {
+    expect(has("claude-mem")).toBe(true);
+    expect(sources()).toContain("claude-mem");
   });
 });
