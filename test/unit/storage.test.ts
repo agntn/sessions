@@ -849,9 +849,7 @@ describe("SqliteStorage CRUD", () => {
     ]);
 
     const allChannels = await storage.listChannels();
-    const relevant = allChannels.filter(
-      (c) => c.platform === "a" || c.platform === "a|b",
-    );
+    const relevant = allChannels.filter((c) => c.platform === "a" || c.platform === "a|b");
     expect(relevant).toHaveLength(2);
   });
 
@@ -902,6 +900,65 @@ describe("SqliteStorage CRUD", () => {
     const found = await storage.findChannel("discord", { platformId: "999" });
     expect(found).not.toBeNull();
     expect(found!.id).toBe(matching[0].id);
+  });
+
+  it("listSessions returns sessions ordered by updatedAt", async () => {
+    await storage.insert([msg("s1", "user", 1000, "first"), msg("s2", "user", 2000, "second")]);
+
+    const sessions = await storage.listSessions();
+    expect(sessions.length).toBeGreaterThanOrEqual(2);
+    expect(sessions[0].source === "s2" || sessions[0].updatedAt! >= sessions[1].updatedAt!).toBe(
+      true,
+    );
+  });
+
+  it("listSessions filters by source", async () => {
+    await storage.insert([msg("alpha", "user", 1000, "a"), msg("beta", "user", 2000, "b")]);
+
+    const alphaSessions = await storage.listSessions({ source: "alpha" });
+    expect(alphaSessions).toHaveLength(1);
+    expect(alphaSessions[0].source).toBe("alpha");
+  });
+
+  it("getCursorState returns lastRun after setCursor", async () => {
+    await storage.setCursor("test-cursor", "12345");
+    const state = await storage.getCursorState("test-cursor");
+
+    expect(state.cursor).toBe("12345");
+    expect(state.lastRun).not.toBeNull();
+    expect(state.lastRun).toBeGreaterThan(0);
+  });
+
+  it("listCursors returns all stored cursors", async () => {
+    await storage.setCursor("src-a", "100");
+    await storage.setCursor("src-b", "200");
+
+    const cursors = await storage.listCursors();
+    expect(cursors.length).toBeGreaterThanOrEqual(2);
+    expect(cursors.find((c) => c.source === "src-a")?.cursor).toBe("100");
+    expect(cursors.find((c) => c.source === "src-b")?.cursor).toBe("200");
+  });
+
+  it("deleteCursor removes cursor entry", async () => {
+    await storage.setCursor("to-delete", "999");
+    expect(await storage.getCursor("to-delete")).toBe("999");
+
+    await storage.deleteCursor("to-delete");
+    expect(await storage.getCursor("to-delete")).toBe("0");
+  });
+
+  it("search filters by date range", async () => {
+    await storage.insert([
+      msg("date-test", "user", new Date("2026-01-15").getTime(), "january message"),
+      msg("date-test", "user", new Date("2026-03-15").getTime(), "march message"),
+    ]);
+
+    const janOnly = await storage.search("message", {
+      dateFrom: "2026-01-01",
+      dateTo: "2026-02-01",
+    });
+    expect(janOnly).toHaveLength(1);
+    expect(janOnly[0].text).toContain("january");
   });
 
   it("backfills channelId and updates updatedAt for existing sessions", async () => {
