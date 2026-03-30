@@ -116,6 +116,7 @@ describe("AeiSource", () => {
     expect(msgs[0].date).toBe("2026-03-10");
     expect(msgs[0].blocks).toEqual([{ type: "text", text: "hello world" }]);
     expect(msgs[0].context).toEqual({
+      aeiMsgId: "1",
       cwd: "/home/user/project",
       git_branch: "main",
       git_commit: "abc123",
@@ -345,48 +346,99 @@ describe("AeiSource", () => {
     expect(msgs).toHaveLength(0);
   });
 
-  it("passes cursor as since parameter to SQL", async () => {
+  it("passes cursor as keyset parameters to SQL", async () => {
+    mockPragma();
+    executeMock.mockResolvedValueOnce({ rows: [] });
+
+    const source = new AeiSource("/tmp/aei.db");
+    await collect(source, "1710000000000|42");
+
+    // call 1: PRAGMA messages, call 2: PRAGMA sessions, call 3: keyset query
+    expect(executeMock).toHaveBeenCalledTimes(3);
+    expect(executeMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        args: [1710000000000, 1710000000000, 42, 500],
+      }),
+    );
+  });
+
+  it("handles legacy cursor format (timestamp only)", async () => {
     mockPragma();
     executeMock.mockResolvedValueOnce({ rows: [] });
 
     const source = new AeiSource("/tmp/aei.db");
     await collect(source, "1710000000000");
 
-    // call 1: PRAGMA messages, call 2: PRAGMA sessions, call 3: windowed messages query
-    expect(executeMock).toHaveBeenCalledTimes(3);
     expect(executeMock).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({
-        args: [1710000000000, 500, 0],
+        args: [1710000000000, 1710000000000, Number.MAX_SAFE_INTEGER, 500],
       }),
     );
   });
 
-  it("cursor() returns last message timestamp as string", () => {
-    const source = new AeiSource("/tmp/aei.db");
-    const msgs: Message[] = [
-      {
-        source: "aei",
-        sessionId: "s1",
-        role: "user",
-        timestamp: 100,
-        date: "1970-01-01",
-        blocks: [{ type: "text", text: "a" }],
-      },
-      {
-        source: "aei",
-        sessionId: "s1",
-        role: "user",
-        timestamp: 300,
-        date: "1970-01-01",
-        blocks: [{ type: "text", text: "b" }],
-      },
-    ];
+  it("advances keyset across two pages sharing the same timestamp", async () => {
+    mockPragma();
+    // Page 1: exactly 500 rows (WINDOW) at the same timestamp, ending at id=500
+    const page1Rows = Array.from({ length: 500 }, (_, i) => ({
+      id: i + 1,
+      session_id: "s1",
+      role: "user",
+      timestamp: 1710000000000,
+      date: "2026-03-10",
+    }));
+    const page1Blocks = page1Rows.map(() => [{ position: 0, type: "text", text: "x" }]);
+    mockMessagesAndBlocks(page1Rows, page1Blocks);
+    // Page 2: next row at same timestamp, id=501
+    mockMessagesAndBlocks(
+      [{ id: 501, session_id: "s1", role: "user", timestamp: 1710000000000, date: "2026-03-10" }],
+      [[{ position: 0, type: "text", text: "y" }]],
+    );
 
-    expect(source.cursor(msgs[1])).toBe("300");
+    const source = new AeiSource("/tmp/aei.db");
+    const msgs = await collect(source, "0|0");
+
+    expect(msgs).toHaveLength(501);
+    // Page 2 query should advance keyset to (1710000000000, 500)
+    expect(executeMock).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        args: [1710000000000, 1710000000000, 500, 500],
+      }),
+    );
   });
 
-  it("omits context when all fields are null", async () => {
+  it("cursor() returns timestamp|id format", () => {
+    const source = new AeiSource("/tmp/aei.db");
+    const msg: Message = {
+      source: "aei",
+      sessionId: "s1",
+      role: "user",
+      timestamp: 300,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "b" }],
+      context: { aeiMsgId: "42" },
+    };
+
+    expect(source.cursor(msg)).toBe("300|42");
+  });
+
+  it("cursor() falls back to timestamp-only when no aeiMsgId", () => {
+    const source = new AeiSource("/tmp/aei.db");
+    const msg: Message = {
+      source: "aei",
+      sessionId: "s1",
+      role: "user",
+      timestamp: 300,
+      date: "1970-01-01",
+      blocks: [{ type: "text", text: "b" }],
+    };
+
+    expect(source.cursor(msg)).toBe("300");
+  });
+
+  it("includes only aeiMsgId in context when all other fields are null", async () => {
     mockPragma();
     mockMessagesAndBlocks(
       [
@@ -428,7 +480,7 @@ describe("AeiSource", () => {
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
-    expect(msgs[0].context).toBeUndefined();
+    expect(msgs[0].context).toEqual({ aeiMsgId: "7" });
   });
 
   it("falls back to date from timestamp when row.date is null", async () => {
@@ -540,6 +592,7 @@ describe("AeiSource", () => {
 
     expect(msgs).toHaveLength(1);
     expect(msgs[0].context).toEqual({
+      aeiMsgId: "9",
       git_branch: "feat",
       git_commit: "def456",
       git_dirty: "0",
