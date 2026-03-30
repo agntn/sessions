@@ -15,11 +15,24 @@ vi.mock("@libsql/client", () => ({
 import { AeiSource } from "../../src/sources/aei.ts";
 import type { Message } from "../../src/core/types.ts";
 
-const ALL_EXTRA_MSG_COLS = ["cwd", "git_branch", "git_commit", "git_worktree", "git_dirty", "model", "sender_id"];
+const ALL_EXTRA_MSG_COLS = [
+  "cwd",
+  "git_branch",
+  "git_commit",
+  "git_worktree",
+  "git_dirty",
+  "model",
+  "sender_id",
+];
 const ALL_SESSION_COLS = ["id", "project", "git_remote", "hostname", "os_user", "initiator_id"];
 
-function mockPragma(msgCols: string[] = ALL_EXTRA_MSG_COLS, sesCols: string[] = ALL_SESSION_COLS): void {
-  const msgBaseRows = ["id", "session_id", "role", "timestamp", "date", "source"].map((name) => ({ name }));
+function mockPragma(
+  msgCols: string[] = ALL_EXTRA_MSG_COLS,
+  sesCols: string[] = ALL_SESSION_COLS,
+): void {
+  const msgBaseRows = ["id", "session_id", "role", "timestamp", "date", "source"].map((name) => ({
+    name,
+  }));
   const msgExtraRows = msgCols.map((name) => ({ name }));
   executeMock.mockResolvedValueOnce({ rows: [...msgBaseRows, ...msgExtraRows] });
   const sesRows = sesCols.map((name) => ({ name }));
@@ -483,9 +496,7 @@ describe("AeiSource", () => {
     const count = await source.estimate("1710000000000");
 
     expect(count).toBe(42);
-    expect(executeMock).toHaveBeenCalledWith(
-      expect.objectContaining({ args: [1710000000000] }),
-    );
+    expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({ args: [1710000000000] }));
   });
 
   it("handles missing columns gracefully", async () => {

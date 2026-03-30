@@ -1,6 +1,6 @@
 import { home, osUser } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
@@ -85,6 +85,10 @@ export class MastraSource implements Source {
     } finally {
       db.close();
     }
+  }
+
+  watchPaths(): string[] {
+    return [dirname(this.dbPath)];
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {

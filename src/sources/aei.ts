@@ -1,6 +1,6 @@
 import { home, osUser } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
@@ -8,8 +8,22 @@ import type { Source, Message, Block, Channel, Participant } from "../core/types
 const WINDOW = 500;
 
 const BASE_COLS = ["id", "session_id", "role", "timestamp", "date"] as const;
-const EXTRA_MSG_COLS = ["cwd", "git_branch", "git_commit", "git_worktree", "git_dirty", "model", "sender_id"] as const;
-const EXTRA_SESSION_COLS = ["project", "git_remote", "hostname", "os_user", "initiator_id"] as const;
+const EXTRA_MSG_COLS = [
+  "cwd",
+  "git_branch",
+  "git_commit",
+  "git_worktree",
+  "git_dirty",
+  "model",
+  "sender_id",
+] as const;
+const EXTRA_SESSION_COLS = [
+  "project",
+  "git_remote",
+  "hostname",
+  "os_user",
+  "initiator_id",
+] as const;
 
 export class AeiSource implements Source {
   name = "aei";
@@ -23,12 +37,19 @@ export class AeiSource implements Source {
     return existsSync(this.dbPath);
   }
 
+  watchPaths(): string[] {
+    return [dirname(this.dbPath)];
+  }
+
   async estimate(cursor: string): Promise<number> {
     const parsed = Number(cursor);
     const since = Number.isFinite(parsed) ? parsed : 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      const r = await db.execute({ sql: "SELECT COUNT(*) as c FROM messages WHERE source = 'aei-cli' AND timestamp > ?", args: [since] });
+      const r = await db.execute({
+        sql: "SELECT COUNT(*) as c FROM messages WHERE source = 'aei-cli' AND timestamp > ?",
+        args: [since],
+      });
       return Number(r.rows[0].c);
     } finally {
       db.close();
@@ -141,7 +162,11 @@ export class AeiSource implements Source {
           let author: Participant;
           if (role === "user") {
             const name = (row.sender_id as string) || (row.os_user as string) || osUser();
-            author = { platform: "cli", name, platformId: (row.initiator_id as string) ?? undefined };
+            author = {
+              platform: "cli",
+              name,
+              platformId: (row.initiator_id as string) ?? undefined,
+            };
           } else {
             author = { platform: "cli", name: (row.sender_id as string) || "aei", isBot: true };
           }
