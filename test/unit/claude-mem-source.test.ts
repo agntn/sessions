@@ -71,6 +71,7 @@ describe("ClaudeMemSource", () => {
     expect(msgs[0].blocks[5]).toEqual({ type: "concepts", text: '["concurrency"]' });
     expect(msgs[0].context?.project).toBe("myproject");
     expect(msgs[0].context?.observationType).toBe("discovery");
+    expect(msgs[0].context?.cmId).toBe("1");
   });
 
   it("ingests session summaries", async () => {
@@ -116,7 +117,7 @@ describe("ClaudeMemSource", () => {
     expect(msgs[0].context?.observationType).toBe("summary");
   });
 
-  it("filters by cursor timestamp", async () => {
+  it("filters by keyset cursor", async () => {
     executeMock
       // obs window 1: empty
       .mockResolvedValueOnce({ rows: [] })
@@ -124,17 +125,30 @@ describe("ClaudeMemSource", () => {
       .mockResolvedValueOnce({ rows: [] });
 
     const source = new ClaudeMemSource("/tmp/test.db");
-    for await (const _ of source.ingest("1700000000000")) {
+    for await (const _ of source.ingest("1700000000000|5")) {
     }
 
     expect(executeMock).toHaveBeenCalledTimes(2);
     expect(executeMock).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ args: [1700000000000, 100, 0] }),
+      expect.objectContaining({ args: [1700000000000, 1700000000000, 5, 100] }),
     );
     expect(executeMock).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ args: [1700000000000, 100, 0] }),
+      expect.objectContaining({ args: [1700000000000, 1700000000000, 5, 100] }),
+    );
+  });
+
+  it("handles legacy cursor format (timestamp only)", async () => {
+    executeMock.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+
+    const source = new ClaudeMemSource("/tmp/test.db");
+    for await (const _ of source.ingest("1700000000000")) {
+    }
+
+    expect(executeMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ args: [1700000000000, 1700000000000, 0, 100] }),
     );
   });
 
@@ -212,7 +226,37 @@ describe("ClaudeMemSource", () => {
     );
   });
 
-  it("cursor returns timestamp string", () => {
+  it("estimate() parses compound cursor without NaN", async () => {
+    executeMock
+      .mockResolvedValueOnce({ rows: [{ c: 3 }] })
+      .mockResolvedValueOnce({ rows: [{ c: 7 }] });
+
+    const source = new ClaudeMemSource("/tmp/test.db");
+    const count = await source.estimate("1700000000000|42");
+
+    expect(count).toBe(10);
+    expect(executeMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ args: [1700000000000] }),
+    );
+  });
+
+  it("cursor returns timestamp|id format", () => {
+    const source = new ClaudeMemSource("/tmp/test.db");
+    expect(
+      source.cursor({
+        source: "claude-mem",
+        sessionId: "s1",
+        role: "assistant",
+        timestamp: 1700000000000,
+        date: "2023-11-14",
+        blocks: [{ type: "text", text: "test" }],
+        context: { cmId: "42" },
+      }),
+    ).toBe("1700000000000|42");
+  });
+
+  it("cursor falls back to timestamp-only when no cmId", () => {
     const source = new ClaudeMemSource("/tmp/test.db");
     expect(
       source.cursor({
