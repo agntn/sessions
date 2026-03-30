@@ -29,7 +29,12 @@ export async function watchSources(
   storage: Storage,
   options: WatchOptions = {},
 ): Promise<void> {
-  const debounceMs = options.debounceMs ?? 2000;
+  const debounceMs =
+    typeof options.debounceMs === "number" &&
+    Number.isFinite(options.debounceMs) &&
+    options.debounceMs >= 0
+      ? options.debounceMs
+      : 2000;
 
   // Build path → source[] mapping
   const pathSources = new Map<string, Set<string>>();
@@ -71,9 +76,9 @@ export async function watchSources(
     const state = stateMap.get(sourceName)!;
     const source = sourcesByName.get(sourceName)!;
     state.running = true;
-    options.onTrigger?.(sourceName);
-
+    state.queued = false;
     try {
+      options.onTrigger?.(sourceName);
       const results = await ingest([source], storage);
       for (const r of results) {
         if (r.error) {
