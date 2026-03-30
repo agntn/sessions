@@ -226,6 +226,21 @@ describe("ClaudeMemSource", () => {
     );
   });
 
+  it("estimate() parses compound cursor without NaN", async () => {
+    executeMock
+      .mockResolvedValueOnce({ rows: [{ c: 3 }] })
+      .mockResolvedValueOnce({ rows: [{ c: 7 }] });
+
+    const source = new ClaudeMemSource("/tmp/test.db");
+    const count = await source.estimate("1700000000000|42");
+
+    expect(count).toBe(10);
+    expect(executeMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ args: [1700000000000] }),
+    );
+  });
+
   it("cursor returns timestamp|id format", () => {
     const source = new ClaudeMemSource("/tmp/test.db");
     expect(

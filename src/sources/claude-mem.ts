@@ -32,8 +32,7 @@ export class ClaudeMemSource implements Source {
   }
 
   async estimate(cursor: string): Promise<number> {
-    const parsed = Number(cursor);
-    const since = Number.isFinite(parsed) ? parsed : 0;
+    const { since } = parseCursor(cursor);
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
       const obs = await db.execute({
