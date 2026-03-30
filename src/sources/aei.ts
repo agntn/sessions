@@ -14,7 +14,12 @@ function parseCursor(cursor: string): { since: number; lastId: number } {
   const lastId = Number(idRaw || "0");
   return {
     since: Number.isFinite(since) ? since : 0,
-    lastId: Number.isFinite(lastId) && lastId > 0 ? lastId : 0,
+    lastId:
+      Number.isFinite(lastId) && lastId > 0
+        ? lastId
+        : idRaw === undefined
+          ? Number.MAX_SAFE_INTEGER
+          : 0,
   };
 }
 
@@ -192,8 +197,11 @@ export class AeiSource implements Source {
         }
 
         const lastRow = rows[rows.length - 1];
-        keyTs = Number(lastRow.timestamp);
-        keyId = Number(lastRow.id);
+        const nextTs = Number(lastRow.timestamp);
+        const nextId = Number(lastRow.id);
+        if (!Number.isFinite(nextTs) || !Number.isFinite(nextId)) break;
+        keyTs = nextTs;
+        keyId = nextId;
 
         if (rows.length < WINDOW) break;
       }

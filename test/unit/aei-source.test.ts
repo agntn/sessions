@@ -373,7 +373,38 @@ describe("AeiSource", () => {
     expect(executeMock).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({
-        args: [1710000000000, 1710000000000, 0, 500],
+        args: [1710000000000, 1710000000000, Number.MAX_SAFE_INTEGER, 500],
+      }),
+    );
+  });
+
+  it("advances keyset across two pages sharing the same timestamp", async () => {
+    mockPragma();
+    // Page 1: exactly 500 rows (WINDOW) at the same timestamp, ending at id=500
+    const page1Rows = Array.from({ length: 500 }, (_, i) => ({
+      id: i + 1,
+      session_id: "s1",
+      role: "user",
+      timestamp: 1710000000000,
+      date: "2026-03-10",
+    }));
+    const page1Blocks = page1Rows.map(() => [{ position: 0, type: "text", text: "x" }]);
+    mockMessagesAndBlocks(page1Rows, page1Blocks);
+    // Page 2: next row at same timestamp, id=501
+    mockMessagesAndBlocks(
+      [{ id: 501, session_id: "s1", role: "user", timestamp: 1710000000000, date: "2026-03-10" }],
+      [[{ position: 0, type: "text", text: "y" }]],
+    );
+
+    const source = new AeiSource("/tmp/aei.db");
+    const msgs = await collect(source, "0|0");
+
+    expect(msgs).toHaveLength(501);
+    // Page 2 query should advance keyset to (1710000000000, 500)
+    expect(executeMock).toHaveBeenNthCalledWith(
+      5,
+      expect.objectContaining({
+        args: [1710000000000, 1710000000000, 500, 500],
       }),
     );
   });
