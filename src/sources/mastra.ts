@@ -68,7 +68,7 @@ export class MastraSource implements Source {
   }
 
   available(): boolean {
-    return existsSync(dirname(this.dbPath));
+    return existsSync(this.dbPath);
   }
 
   async estimate(cursor: string): Promise<number> {
