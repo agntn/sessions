@@ -194,7 +194,7 @@ describe("ingest error handling", () => {
     expect(await storage.getCursor("partial")).toBe("600");
   });
 
-  it("reports error when storage.insert() fails on first batch", async () => {
+  it("reports error when storage.insert() fails on final flush", async () => {
     const storage = makeStorage();
     storage.insert = async () => {
       throw new Error("disk full");
