@@ -127,6 +127,10 @@ export class OpenClawSource implements Source {
     return this.sessionsDirs.some((d) => existsSync(d));
   }
 
+  watchPaths(): string[] {
+    return [...this.sessionsDirs];
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;

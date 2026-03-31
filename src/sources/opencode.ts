@@ -1,6 +1,6 @@
 import { home, osUser } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Channel, Participant } from "../core/types.ts";
 
@@ -20,6 +20,10 @@ export class OpenCodeSource implements Source {
 
   available(): boolean {
     return existsSync(this.dbPath);
+  }
+
+  watchPaths(): string[] {
+    return [dirname(this.dbPath)];
   }
 
   async estimate(cursor: string): Promise<number> {
@@ -74,86 +78,86 @@ export class OpenCodeSource implements Source {
         lastTc = last.tc;
         lastRowid = last.rid;
 
-      for (const row of rows) {
-        if (row.role !== "user" && row.role !== "assistant") continue;
+        for (const row of rows) {
+          if (row.role !== "user" && row.role !== "assistant") continue;
 
-        const ts = Number(row.tc);
-        if (!Number.isFinite(ts)) continue;
-        const dateValue = new Date(ts);
-        if (Number.isNaN(dateValue.getTime())) continue;
-        const date = dateValue.toISOString().split("T")[0];
+          const ts = Number(row.tc);
+          if (!Number.isFinite(ts)) continue;
+          const dateValue = new Date(ts);
+          if (Number.isNaN(dateValue.getTime())) continue;
+          const date = dateValue.toISOString().split("T")[0];
 
-        let part: Record<string, unknown>;
-        try {
-          part = JSON.parse(row.pdata);
-        } catch {
-          continue;
+          let part: Record<string, unknown>;
+          try {
+            part = JSON.parse(row.pdata);
+          } catch {
+            continue;
+          }
+
+          const ptype = String(part.type || "");
+          if (ptype === "text") {
+            const text = String(part.text || "");
+            if (text.length === 0) continue;
+
+            const author =
+              row.role === "user"
+                ? this.user
+                : ({ platform: "cli", name: "opencode", isBot: true } as Participant);
+            yield {
+              source: this.name,
+              sessionId: row.sid,
+              role: row.role as "user" | "assistant",
+              timestamp: ts,
+              date,
+              blocks: [{ type: "text", text: text.slice(0, 8000) }],
+              channel: this.channel,
+              author,
+            };
+          } else if (ptype === "tool-invocation" || ptype === "tool-call") {
+            yield {
+              source: this.name,
+              sessionId: row.sid,
+              role: row.role as "user" | "assistant",
+              timestamp: ts,
+              date,
+              blocks: [
+                {
+                  type: "tool_call",
+                  toolName: String(part.toolName || part.name || ""),
+                  toolCallId: String(part.toolCallId || part.id || ""),
+                  toolInput:
+                    typeof part.args === "string"
+                      ? part.args.slice(0, 8000)
+                      : typeof part.input === "string"
+                        ? part.input.slice(0, 8000)
+                        : JSON.stringify(part.args || part.input || "").slice(0, 8000),
+                },
+              ],
+              channel: this.channel,
+              author: { platform: "cli", name: "opencode", isBot: true },
+            };
+          } else if (ptype === "tool-result") {
+            yield {
+              source: this.name,
+              sessionId: row.sid,
+              role: "tool",
+              timestamp: ts,
+              date,
+              blocks: [
+                {
+                  type: "tool_result",
+                  toolCallId: String(part.toolCallId || ""),
+                  text:
+                    typeof part.result === "string"
+                      ? part.result.slice(0, 8000)
+                      : JSON.stringify(part.result || "").slice(0, 8000),
+                },
+              ],
+              channel: this.channel,
+              author: { platform: "cli", name: "opencode", isBot: true },
+            };
+          }
         }
-
-        const ptype = String(part.type || "");
-        if (ptype === "text") {
-          const text = String(part.text || "");
-          if (text.length === 0) continue;
-
-          const author =
-            row.role === "user"
-              ? this.user
-              : ({ platform: "cli", name: "opencode", isBot: true } as Participant);
-          yield {
-            source: this.name,
-            sessionId: row.sid,
-            role: row.role as "user" | "assistant",
-            timestamp: ts,
-            date,
-            blocks: [{ type: "text", text: text.slice(0, 8000) }],
-            channel: this.channel,
-            author,
-          };
-        } else if (ptype === "tool-invocation" || ptype === "tool-call") {
-          yield {
-            source: this.name,
-            sessionId: row.sid,
-            role: row.role as "user" | "assistant",
-            timestamp: ts,
-            date,
-            blocks: [
-              {
-                type: "tool_call",
-                toolName: String(part.toolName || part.name || ""),
-                toolCallId: String(part.toolCallId || part.id || ""),
-                toolInput:
-                  typeof part.args === "string"
-                    ? part.args.slice(0, 8000)
-                    : typeof part.input === "string"
-                      ? part.input.slice(0, 8000)
-                      : JSON.stringify(part.args || part.input || "").slice(0, 8000),
-              },
-            ],
-            channel: this.channel,
-            author: { platform: "cli", name: "opencode", isBot: true },
-          };
-        } else if (ptype === "tool-result") {
-          yield {
-            source: this.name,
-            sessionId: row.sid,
-            role: "tool",
-            timestamp: ts,
-            date,
-            blocks: [
-              {
-                type: "tool_result",
-                toolCallId: String(part.toolCallId || ""),
-                text:
-                  typeof part.result === "string"
-                    ? part.result.slice(0, 8000)
-                    : JSON.stringify(part.result || "").slice(0, 8000),
-              },
-            ],
-            channel: this.channel,
-            author: { platform: "cli", name: "opencode", isBot: true },
-          };
-        }
-      }
       }
     } finally {
       db.close();
