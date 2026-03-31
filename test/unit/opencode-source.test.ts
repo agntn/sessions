@@ -13,6 +13,11 @@ vi.mock("@libsql/client", () => ({
   }),
 }));
 
+vi.mock("../../src/core/env.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/core/env.ts")>();
+  return { ...actual, osUser: () => "testuser" };
+});
+
 import { OpenCodeSource } from "../../src/sources/opencode.ts";
 
 async function collect(source: OpenCodeSource, cursor = "0"): Promise<Message[]> {
@@ -52,7 +57,7 @@ describe("OpenCodeSource", () => {
     expect(msgs[0].timestamp).toBe(1700000000000);
     expect(msgs[0].date).toBe("2023-11-14");
     expect(msgs[0].blocks).toEqual([{ type: "text", text: "hello from user" }]);
-    expect(msgs[0].author?.isBot).toBeUndefined();
+    expect(msgs[0].author).toEqual({ platform: "cli", name: "testuser" });
     expect(msgs[0].channel?.name).toBe("opencode");
   });
 
