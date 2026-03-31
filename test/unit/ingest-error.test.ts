@@ -290,9 +290,11 @@ describe("ingest error handling", () => {
     const results = await ingest([source], storage);
 
     expect(results[0].error).toBe("source error");
-    // First batch succeeded, so cursor should reflect that
+    // First batch succeeded, so cursor should reflect last successful checkpoint
+    const expectedCheckpoint = String(100 + BATCH_SIZE - 1);
     const cursor = await storage.getCursor("s1");
-    expect(cursor).not.toBe("0"); // cursor was set after successful first batch
+    expect(cursor).toBe(expectedCheckpoint);
+    expect(results[0].cursor).toBe(expectedCheckpoint);
   });
 
   it("reports count of successfully inserted batches even when failure happens later", async () => {
