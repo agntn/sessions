@@ -15,8 +15,9 @@ export function parseFrontmatter(content: string): { meta: Frontmatter; body: st
     if (field) {
       let value = field[2].trim();
       if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
+        value.length >= 2 &&
+        ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'")))
       ) {
         value = value.slice(1, -1);
       }

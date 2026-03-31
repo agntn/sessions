@@ -98,4 +98,24 @@ Body`;
     const { meta } = parseFrontmatter(input);
     expect(meta.name).toBe('"half quoted');
   });
+
+  it("preserves lone quote character as value", () => {
+    const input = `---
+name: "
+---
+Body`;
+
+    const { meta } = parseFrontmatter(input);
+    expect(meta.name).toBe('"');
+  });
+
+  it("preserves lone single-quote character as value", () => {
+    const input = `---
+name: '
+---
+Body`;
+
+    const { meta } = parseFrontmatter(input);
+    expect(meta.name).toBe("'");
+  });
 });
