@@ -327,6 +327,7 @@ const cursorListCommand = defineCommand({
   meta: { name: "list", description: "Show cursor values for all sources" },
   args: {
     db: { type: "string", description: "Database path (default: platform data dir)" },
+    json: { type: "boolean", description: "Output as JSON" },
   },
   async run({ args }) {
     const dbPath = resolveDb(args.db);
@@ -338,20 +339,40 @@ const cursorListCommand = defineCommand({
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       const cursors = await storage.listCursors();
-      const cursorMap = new Map(cursors.map((c) => [c.source, c.cursor]));
+      const cursorMap = new Map<string, { cursor: string; lastRun: number | null }>(
+        cursors.map((c) => [c.source, { cursor: c.cursor, lastRun: c.lastRun }]),
+      );
       for (const source of allSources()) {
-        if (!cursorMap.has(source.name)) cursorMap.set(source.name, "0");
+        if (!cursorMap.has(source.name)) cursorMap.set(source.name, { cursor: "0", lastRun: null });
       }
-      for (const [source, cursor] of cursorMap) {
-        const ts = Number(cursor);
+
+      if (args.json) {
+        const entries = Object.fromEntries(
+          [...cursorMap].map(([name, state]) => [
+            name,
+            {
+              cursor: state.cursor && state.cursor !== "0" ? state.cursor : null,
+              lastRun: state.lastRun || null,
+            },
+          ]),
+        );
+        console.log(JSON.stringify(entries, null, 2));
+        return;
+      }
+
+      for (const [source, state] of cursorMap) {
+        const ts = Number(state.cursor);
         const date = new Date(ts);
         const hasValidDate = Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
         const display = hasValidDate
-          ? `${cursor} (${date.toISOString()})`
-          : cursor && cursor !== "0"
-            ? cursor
+          ? `${state.cursor} (${date.toISOString()})`
+          : state.cursor && state.cursor !== "0"
+            ? state.cursor
             : "(none)";
-        log.step(`${source}: ${display}`);
+        const lastRunDisplay = state.lastRun ? new Date(state.lastRun).toISOString() : null;
+        const parts = [`${source}: cursor ${display}`];
+        if (lastRunDisplay) parts.push(`last run ${lastRunDisplay}`);
+        log.step(parts.join(", "));
       }
     } finally {
       await storage.close();
