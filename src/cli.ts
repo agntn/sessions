@@ -339,11 +339,11 @@ const cursorListCommand = defineCommand({
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       const cursors = await storage.listCursors();
-      const cursorMap = new Map(
+      const cursorMap = new Map<string, { cursor: string; lastRun: number | null }>(
         cursors.map((c) => [c.source, { cursor: c.cursor, lastRun: c.lastRun }]),
       );
       for (const source of allSources()) {
-        if (!cursorMap.has(source.name)) cursorMap.set(source.name, { cursor: "0", lastRun: 0 });
+        if (!cursorMap.has(source.name)) cursorMap.set(source.name, { cursor: "0", lastRun: null });
       }
 
       if (args.json) {
@@ -369,7 +369,10 @@ const cursorListCommand = defineCommand({
           : state.cursor && state.cursor !== "0"
             ? state.cursor
             : "(none)";
-        log.step(`${source}: ${display}`);
+        const lastRunDisplay = state.lastRun ? new Date(state.lastRun).toISOString() : null;
+        const parts = [`${source}: cursor ${display}`];
+        if (lastRunDisplay) parts.push(`last run ${lastRunDisplay}`);
+        log.step(parts.join(", "));
       }
     } finally {
       await storage.close();
