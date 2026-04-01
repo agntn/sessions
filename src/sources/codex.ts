@@ -134,6 +134,10 @@ export class CodexSource implements Source {
     return existsSync(this.sessionsDir);
   }
 
+  watchPaths(): string[] {
+    return [this.sessionsDir];
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
