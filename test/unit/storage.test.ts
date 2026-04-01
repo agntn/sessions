@@ -907,9 +907,8 @@ describe("SqliteStorage CRUD", () => {
 
     const sessions = await storage.listSessions();
     expect(sessions.length).toBeGreaterThanOrEqual(2);
-    expect(sessions[0].source === "s2" || sessions[0].updatedAt! >= sessions[1].updatedAt!).toBe(
-      true,
-    );
+    expect(sessions[0].source).toBe("s2");
+    expect(sessions[0].updatedAt!).toBeGreaterThanOrEqual(sessions[1].updatedAt!);
   });
 
   it("listSessions filters by source", async () => {
