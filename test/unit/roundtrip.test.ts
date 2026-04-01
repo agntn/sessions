@@ -198,4 +198,100 @@ describe("round-trip: source → ingest → storage → search", () => {
     expect(msgs[1].blocks[0].toolCallId).toBe("call-abc");
     expect(msgs[1].blocks[0].text).toBe("file contents here");
   });
+
+  it("search filters by source correctly", async () => {
+    const claudeDir = join(tempDir, "claude-proj", "proj");
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(claudeDir, "session-sf.jsonl"),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-03-10T10:00:00Z",
+        message: { content: "search filtering test from claude" },
+      }),
+    );
+
+    const geminiDir = join(tempDir, "gemini-proj", "proj", "chats");
+    mkdirSync(geminiDir, { recursive: true });
+    writeFileSync(
+      join(geminiDir, "chat-sf.json"),
+      JSON.stringify({
+        messages: [
+          {
+            type: "user",
+            timestamp: "2026-03-10T10:00:01Z",
+            content: "search filtering test from gemini",
+          },
+        ],
+      }),
+    );
+
+    const claude = new ClaudeSource(join(tempDir, "claude-proj"));
+    const gemini = new GeminiSource(join(tempDir, "gemini-proj"));
+    await ingest([claude, gemini], storage);
+
+    const claudeResults = await storage.search("filtering test", { source: "claude" });
+    expect(claudeResults).toHaveLength(1);
+    expect(claudeResults[0].source).toBe("claude");
+
+    const geminiResults = await storage.search("filtering test", { source: "gemini" });
+    expect(geminiResults).toHaveLength(1);
+    expect(geminiResults[0].source).toBe("gemini");
+  });
+
+  it("search filters by role correctly", async () => {
+    const projectsDir = join(tempDir, "projects-role", "proj");
+    mkdirSync(projectsDir, { recursive: true });
+    writeFileSync(
+      join(projectsDir, "session-role.jsonl"),
+      [
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-03-10T10:00:00Z",
+          message: { content: "user asks about deployment" },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-03-10T10:00:01Z",
+          message: { content: [{ type: "text", text: "assistant explains deployment" }] },
+        }),
+      ].join("\n"),
+    );
+
+    const source = new ClaudeSource(join(tempDir, "projects-role"));
+    await ingest([source], storage);
+
+    const userResults = await storage.search("deployment", { role: "user" });
+    expect(userResults).toHaveLength(1);
+    expect(userResults[0].role).toBe("user");
+
+    const assistantResults = await storage.search("deployment", { role: "assistant" });
+    expect(assistantResults).toHaveLength(1);
+    expect(assistantResults[0].role).toBe("assistant");
+  });
+
+  it("purgeSource removes data and cursor for a source", async () => {
+    const projectsDir = join(tempDir, "projects-purge", "proj");
+    mkdirSync(projectsDir, { recursive: true });
+    writeFileSync(
+      join(projectsDir, "session-purge.jsonl"),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-03-10T10:00:00Z",
+        message: { content: "will be purged" },
+      }),
+    );
+
+    const source = new ClaudeSource(join(tempDir, "projects-purge"));
+    await ingest([source], storage);
+
+    expect(await storage.count("claude")).toBe(1);
+    const cursor = await storage.getCursor("claude");
+    expect(cursor).not.toBe("0");
+
+    await storage.purgeSource("claude");
+
+    expect(await storage.count("claude")).toBe(0);
+    expect(await storage.getCursor("claude")).toBe("0");
+  });
 });
