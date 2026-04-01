@@ -84,7 +84,21 @@ export class GeminiSource implements Source {
     const since = Number.isFinite(parsed) ? parsed : 0;
     let count = 0;
     for (const f of walkChatFiles(this.geminiDir)) {
-      if (f.mtime >= since) count++;
+      if (f.mtime < since) continue;
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(readFileSync(f.path, "utf-8"));
+      } catch {
+        continue;
+      }
+      const msgs = data.messages as Record<string, unknown>[] | undefined;
+      if (!Array.isArray(msgs)) continue;
+      for (const entry of msgs) {
+        const ts = entry.timestamp ? new Date(String(entry.timestamp)).getTime() : NaN;
+        const entryTime = Number.isFinite(ts) ? ts : f.mtime;
+        if (entryTime <= since) continue;
+        count++;
+      }
     }
     return count;
   }
