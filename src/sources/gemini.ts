@@ -75,6 +75,34 @@ export class GeminiSource implements Source {
     return existsSync(this.geminiDir);
   }
 
+  watchPaths(): string[] {
+    return [this.geminiDir];
+  }
+
+  async estimate(cursor: string): Promise<number> {
+    const parsed = Number(cursor);
+    const since = Number.isFinite(parsed) ? parsed : 0;
+    let count = 0;
+    for (const f of walkChatFiles(this.geminiDir)) {
+      if (f.mtime < since) continue;
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(readFileSync(f.path, "utf-8"));
+      } catch {
+        continue;
+      }
+      const msgs = data.messages as Record<string, unknown>[] | undefined;
+      if (!Array.isArray(msgs)) continue;
+      for (const entry of msgs) {
+        const ts = entry.timestamp ? new Date(String(entry.timestamp)).getTime() : NaN;
+        const entryTime = Number.isFinite(ts) ? ts : f.mtime;
+        if (entryTime <= since) continue;
+        count++;
+      }
+    }
+    return count;
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
