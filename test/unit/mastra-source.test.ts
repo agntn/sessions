@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Message } from "../../src/core/types.ts";
 
 const { executeMock, closeMock } = vi.hoisted(() => ({
   executeMock: vi.fn(),
@@ -14,14 +15,144 @@ vi.mock("@libsql/client", () => ({
 
 import { MastraSource } from "../../src/sources/mastra.ts";
 
+async function collect(source: MastraSource, cursor = ""): Promise<Message[]> {
+  const messages: Message[] = [];
+  for await (const m of source.ingest(cursor)) messages.push(m);
+  return messages;
+}
+
 describe("MastraSource", () => {
   beforeEach(() => {
     executeMock.mockReset();
     closeMock.mockReset();
   });
 
+  it("parses user message with correct fields", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 1,
+          role: "user",
+          content: "hello from user",
+          createdAt: "2026-03-10T12:00:00.000Z",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].source).toBe("mastra");
+    expect(msgs[0].sessionId).toBe("thread-1");
+    expect(msgs[0].role).toBe("user");
+    expect(msgs[0].date).toBe("2026-03-10");
+    expect(msgs[0].timestamp).toBe(new Date("2026-03-10T12:00:00.000Z").getTime());
+    expect(msgs[0].blocks).toEqual([{ type: "text", text: "hello from user" }]);
+    expect(msgs[0].author?.isBot).toBeUndefined();
+    expect(msgs[0].channel?.name).toBe("mastra");
+  });
+
+  it("parses assistant message with bot author", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 2,
+          role: "assistant",
+          content: "assistant reply",
+          createdAt: "2026-03-10T12:01:00.000Z",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].role).toBe("assistant");
+    expect(msgs[0].author).toEqual({ platform: "cli", name: "mastra", isBot: true });
+  });
+
+  it("parses format 2 content with text parts", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 3,
+          role: "assistant",
+          content: JSON.stringify({
+            format: 2,
+            parts: [
+              { type: "text", text: "first part" },
+              { type: "text", text: "second part" },
+            ],
+          }),
+          createdAt: "2026-03-10T12:02:00.000Z",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks).toEqual([
+      { type: "text", text: "first part" },
+      { type: "text", text: "second part" },
+    ]);
+  });
+
+  it("parses format 2 tool-invocation and tool-result parts", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 4,
+          role: "assistant",
+          content: JSON.stringify({
+            format: 2,
+            parts: [
+              {
+                type: "tool-invocation",
+                toolName: "read_file",
+                toolCallId: "tc-1",
+                args: '{"path":"/foo"}',
+              },
+              {
+                type: "tool-result",
+                toolCallId: "tc-1",
+                result: "file contents",
+              },
+            ],
+          }),
+          createdAt: "2026-03-10T12:03:00.000Z",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks).toEqual([
+      {
+        type: "tool_call",
+        toolName: "read_file",
+        toolCallId: "tc-1",
+        toolInput: '{"path":"/foo"}',
+      },
+      {
+        type: "tool_result",
+        toolCallId: "tc-1",
+        text: "file contents",
+      },
+    ]);
+  });
+
   it("falls back to raw text when content is malformed JSON", async () => {
-    executeMock.mockResolvedValue({
+    executeMock.mockResolvedValueOnce({
       rows: [
         {
           rowId: 1,
@@ -34,20 +165,119 @@ describe("MastraSource", () => {
     });
 
     const source = new MastraSource("/tmp/mastra.db");
-    const messages = [] as Awaited<ReturnType<MastraSource["ingest"]>> extends AsyncGenerator<
-      infer T
-    >
-      ? T[]
-      : never;
+    const msgs = await collect(source);
 
-    for await (const message of source.ingest("")) {
-      messages.push(message);
-    }
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0].blocks).toEqual([{ type: "text", text: "malformed-json-content" }]);
-    expect(messages[0].date).toBe("2026-03-10");
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks).toEqual([{ type: "text", text: "malformed-json-content" }]);
     expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips rows with empty content", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 5,
+          role: "user",
+          content: "",
+          createdAt: "2026-03-10T12:00:00.000Z",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
+  it("skips rows with non-finite timestamp", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 6,
+          role: "user",
+          content: "good content",
+          createdAt: "invalid-date",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
+  it("skips rows with missing date part", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 7,
+          role: "user",
+          content: "content",
+          createdAt: "",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
+  it("includes mastraCreatedAt and mastraRowId in context", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 42,
+          role: "user",
+          content: "test",
+          createdAt: "2026-03-10T12:00:00.000Z",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    const msgs = await collect(source);
+
+    expect(msgs[0].context).toEqual({
+      mastraCreatedAt: "2026-03-10T12:00:00.000Z",
+      mastraRowId: "42",
+    });
+  });
+
+  it("cursor() returns createdAt|rowId format from context", () => {
+    const source = new MastraSource("/tmp/mastra.db");
+    const msg: Message = {
+      source: "mastra",
+      sessionId: "t1",
+      role: "user",
+      timestamp: 1710072000000,
+      date: "2026-03-10",
+      blocks: [{ type: "text", text: "test" }],
+      context: { mastraCreatedAt: "2026-03-10T12:00:00.000Z", mastraRowId: "42" },
+    };
+
+    expect(source.cursor(msg)).toBe("2026-03-10T12:00:00.000Z|42");
+  });
+
+  it("cursor() falls back to ISO timestamp when no context", () => {
+    const source = new MastraSource("/tmp/mastra.db");
+    const msg: Message = {
+      source: "mastra",
+      sessionId: "t1",
+      role: "user",
+      timestamp: 1710072000000,
+      date: "2026-03-10",
+      blocks: [{ type: "text", text: "test" }],
+    };
+
+    expect(source.cursor(msg)).toBe(`${new Date(1710072000000).toISOString()}|0`);
   });
 
   it("normalizes non-finite cursor row id to zero", async () => {
@@ -78,5 +308,31 @@ describe("MastraSource", () => {
         args: ["1970-01-01", "1970-01-01", 7],
       }),
     );
+  });
+
+  it("uses empty cursor as epoch defaults", async () => {
+    executeMock.mockResolvedValue({ rows: [] });
+
+    const source = new MastraSource("/tmp/mastra.db");
+    for await (const _ of source.ingest("")) {
+    }
+
+    expect(executeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: ["1970-01-01", "1970-01-01", 0],
+      }),
+    );
+  });
+
+  it("always closes database connection", async () => {
+    executeMock.mockRejectedValueOnce(new Error("db error"));
+
+    const source = new MastraSource("/tmp/mastra.db");
+    await expect(async () => {
+      for await (const _ of source.ingest("")) {
+      }
+    }).rejects.toThrow("db error");
+
+    expect(closeMock).toHaveBeenCalledTimes(1);
   });
 });

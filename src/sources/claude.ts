@@ -99,12 +99,30 @@ export class ClaudeSource implements Source {
     return existsSync(this.projectsDir);
   }
 
+  watchPaths(): string[] {
+    return [this.projectsDir];
+  }
+
   async estimate(cursor: string): Promise<number> {
     const parsed = Number(cursor);
     const since = Number.isFinite(parsed) ? parsed : 0;
     let count = 0;
     for (const f of walkJsonl(this.projectsDir)) {
-      if (statSync(f).mtimeMs >= since) count++;
+      const mtime = statSync(f).mtimeMs;
+      if (mtime < since) continue;
+      const lines = readFileSync(f, "utf-8").split("\n");
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let entry: Record<string, unknown>;
+        try { entry = JSON.parse(line); } catch { continue; }
+        const type = String(entry.type || "");
+        if (type !== "assistant" && type !== "user" && type !== "human") continue;
+        if (!entry.message) continue;
+        const ts = entry.timestamp ? new Date(String(entry.timestamp)).getTime() : NaN;
+        const entryTime = Number.isFinite(ts) ? ts : mtime;
+        if (entryTime <= since) continue;
+        count++;
+      }
     }
     for (const f of walkMemoryFiles(this.projectsDir)) {
       if (f.mtime >= since) count++;
