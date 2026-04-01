@@ -1,7 +1,9 @@
 // Core API
 export { create, sources, allSources, has } from "./sources/index.ts";
-export { ingest } from "./core/ingest.ts";
-export type { IngestOptions } from "./core/ingest.ts";
+export { ingest, BATCH_SIZE } from "./core/ingest.ts";
+export type { IngestOptions, IngestCallbacks } from "./core/ingest.ts";
+export { watchSources } from "./core/watch.ts";
+export type { WatchOptions, WatchCallbacks } from "./core/watch.ts";
 
 // Utils
 export { parseFrontmatter } from "./core/frontmatter.ts";
@@ -23,6 +25,7 @@ export {
 export type {
   Message,
   Block,
+  BlockType,
   Channel,
   Participant,
   Source,
