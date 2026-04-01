@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { ingest } from "./core/ingest.ts";
 import { watchSources } from "./core/watch.ts";
 import { createSqliteStorage } from "./storage/sqlite.ts";
-import { allSources } from "./sources/index.ts";
+import { allSources, has as hasSource } from "./sources/index.ts";
 import { defaultDbPath } from "./core/paths.ts";
 import type { Message } from "./core/types.ts";
 
@@ -393,6 +393,14 @@ const cursorResetCommand = defineCommand({
       return;
     }
 
+    if (!hasSource(args.source)) {
+      log.warn(
+        `Unknown source "${args.source}". Known sources: ${allSources()
+          .map((s) => s.name)
+          .join(", ")}`,
+      );
+    }
+
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       await storage.deleteCursor(args.source);
@@ -422,6 +430,14 @@ const purgeCommand = defineCommand({
     if (!existsSync(dbPath)) {
       log.warn(`Database not found: ${dbPath}`);
       return;
+    }
+
+    if (!hasSource(args.source)) {
+      log.warn(
+        `Unknown source "${args.source}". Known sources: ${allSources()
+          .map((s) => s.name)
+          .join(", ")}`,
+      );
     }
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
