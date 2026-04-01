@@ -270,7 +270,7 @@ describe("GeminiSource", () => {
   });
 
   it("available() returns false for nonexistent directory", () => {
-    const source = new GeminiSource("/tmp/nonexistent-gemini-12345");
+    const source = new GeminiSource(join(tempDir, "does-not-exist"));
     expect(source.available()).toBe(false);
   });
 
