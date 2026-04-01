@@ -249,6 +249,7 @@ describe("ingest error handling", () => {
     });
 
     expect(results[0].error).toBe("first fail");
+    expect(errors).toContain("first fail");
     expect(errors.some((e) => e.includes("recovery failed"))).toBe(true);
   });
 
