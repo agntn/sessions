@@ -344,12 +344,13 @@ describe("ClaudeSource", () => {
   });
 
   it("falls back to file mtime when entry has no timestamp", async () => {
-    writeJsonl("session-no-ts.jsonl", [{ type: "user", message: { content: "no timestamp" } }]);
+    const mtime = new Date("2026-03-10T10:00:05.000Z");
+    writeJsonl("session-no-ts.jsonl", [{ type: "user", message: { content: "no timestamp" } }], mtime);
     const source = new ClaudeSource(projectsDir);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
-    expect(msgs[0].timestamp).toBeGreaterThan(0);
+    expect(Math.abs(msgs[0].timestamp - mtime.getTime())).toBeLessThan(2000);
   });
 
   it("parses tool_use with string input", async () => {
