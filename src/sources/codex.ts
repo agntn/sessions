@@ -134,6 +134,10 @@ export class CodexSource implements Source {
     return existsSync(this.sessionsDir);
   }
 
+  watchPaths(): string[] {
+    return [this.sessionsDir];
+  }
+
   async estimate(cursor: string): Promise<number> {
     const parsed = Number(cursor);
     const since = Number.isFinite(parsed) ? parsed : 0;
