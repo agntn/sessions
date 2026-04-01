@@ -404,7 +404,8 @@ describe("CodexSource error handling", () => {
   });
 
   it("available() returns false for non-existent directory", () => {
-    const source = new CodexSource("/tmp/nonexistent-codex-dir-12345");
+    const missingDir = join(tempDir, "nonexistent-codex-dir");
+    const source = new CodexSource(missingDir);
     expect(source.available()).toBe(false);
   });
 
