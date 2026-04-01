@@ -99,6 +99,10 @@ export class ClaudeSource implements Source {
     return existsSync(this.projectsDir);
   }
 
+  watchPaths(): string[] {
+    return [this.projectsDir];
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
