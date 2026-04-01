@@ -1,6 +1,6 @@
 import { home, osUser } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
@@ -69,6 +69,26 @@ export class MastraSource implements Source {
 
   available(): boolean {
     return existsSync(this.dbPath);
+  }
+
+  async estimate(cursor: string): Promise<number> {
+    const { createdAt, rowId } = parseCursor(cursor);
+    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
+    try {
+      const r = await db.execute({
+        sql: `SELECT COUNT(*) as c FROM mastra_messages
+              WHERE role IN ('user', 'assistant')
+                AND (createdAt > ? OR (createdAt = ? AND rowid > ?))`,
+        args: [createdAt, createdAt, rowId],
+      });
+      return Number(r.rows[0].c);
+    } finally {
+      db.close();
+    }
+  }
+
+  watchPaths(): string[] {
+    return [dirname(this.dbPath)];
   }
 
   async *ingest(cursor: string): AsyncGenerator<Message> {
