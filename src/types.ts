@@ -1,6 +1,7 @@
 export type {
   Message,
   Block,
+  BlockType,
   Channel,
   Participant,
   Source,
@@ -12,4 +13,4 @@ export type {
   IngestResult,
 } from "./core/types.ts";
 
-export type { IngestOptions } from "./core/ingest.ts";
+export type { IngestOptions, IngestCallbacks } from "./core/ingest.ts";

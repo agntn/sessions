@@ -155,4 +155,65 @@ describe("ClaudeSource memory files", () => {
 
     expect(msgs[0].blocks[0].text).toHaveLength(8000);
   });
+
+  it("handles frontmatter-only files (no body) by skipping", async () => {
+    writeMemory(
+      "-home-user-proj",
+      "meta-only.md",
+      ["---", "name: just metadata", "type: user", "---"].join("\n"),
+    );
+
+    const source = new ClaudeSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
+  it("handles files with only whitespace body by skipping", async () => {
+    writeMemory(
+      "-home-user-proj",
+      "whitespace.md",
+      ["---", "name: test", "---", "   ", "  ", ""].join("\n"),
+    );
+
+    const source = new ClaudeSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
+  it("handles files with no frontmatter delimiter", async () => {
+    writeMemory("-home-user-proj", "plain.md", "Just plain text without any frontmatter.");
+
+    const source = new ClaudeSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("Just plain text without any frontmatter.");
+  });
+
+  it("handles non-md files by ignoring them", async () => {
+    const dir = join(tempDir, "-home-user-proj", "memory");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "notes.txt"), "should be ignored");
+    writeMemory("-home-user-proj", "valid.md", "valid content");
+
+    const source = new ClaudeSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("valid content");
+  });
+
+  it("groups memory files by project as session", async () => {
+    writeMemory("-project-a", "file1.md", "content a");
+    writeMemory("-project-b", "file2.md", "content b");
+
+    const source = new ClaudeSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(2);
+    const sessions = new Set(msgs.map((m) => m.sessionId));
+    expect(sessions.size).toBe(2);
+  });
 });
