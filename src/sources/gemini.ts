@@ -75,6 +75,10 @@ export class GeminiSource implements Source {
     return existsSync(this.geminiDir);
   }
 
+  watchPaths(): string[] {
+    return [this.geminiDir];
+  }
+
   async *ingest(cursor: string): AsyncGenerator<Message> {
     const parsedCursor = Number(cursor);
     const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
