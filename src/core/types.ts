@@ -1,5 +1,7 @@
+export type BlockType = "text" | "thinking" | "tool_call" | "tool_result" | (string & {});
+
 export interface Block {
-  type: string;
+  type: BlockType;
   text?: string;
   toolName?: string;
   toolInput?: string;
@@ -41,6 +43,7 @@ export interface Source {
   estimate?(cursor: string): Promise<number>;
   ingest(cursor: string): AsyncGenerator<Message>;
   cursor(message: Message): string;
+  watchPaths?(): string[];
 }
 
 export interface Session {
