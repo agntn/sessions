@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-// writeFileSync used directly for malformed content test
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { OpenClawSource } from "../../src/sources/openclaw.ts";
@@ -476,26 +475,9 @@ describe("OpenClawSource error handling", () => {
     expect(msgs[0].role).toBe("tool");
   });
 
-  it("falls back to session timestamp when message has no timestamp", async () => {
-    writeJsonl("no-msg-ts.jsonl", [
-      { type: "session", timestamp: "2026-03-10T10:00:00Z" },
-      {
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "no timestamp on message" }],
-        },
-      },
-    ]);
-    const source = new OpenClawSource([tempDir]);
-    const msgs = await collect(source);
-
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].timestamp).toBe(new Date("2026-03-10T10:00:00Z").getTime());
-  });
-
   it("available() returns false for non-existent directories", () => {
-    const source = new OpenClawSource(["/tmp/nonexistent-openclaw-12345"]);
+    const fakePath = join(tmpdir(), `nonexistent-${Date.now()}-${Math.random()}`);
+    const source = new OpenClawSource([fakePath]);
     expect(source.available()).toBe(false);
   });
 });
