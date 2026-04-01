@@ -43,6 +43,7 @@ export interface Source {
   estimate?(cursor: string): Promise<number>;
   ingest(cursor: string): AsyncGenerator<Message>;
   cursor(message: Message): string;
+  watchPaths?(): string[];
 }
 
 export interface Session {

@@ -4,8 +4,9 @@ import { intro, outro, spinner, progress, log } from "@clack/prompts";
 import { existsSync } from "node:fs";
 
 import { ingest } from "./core/ingest.ts";
+import { watchSources } from "./core/watch.ts";
 import { createSqliteStorage } from "./storage/sqlite.ts";
-import { allSources } from "./sources/index.ts";
+import { allSources, has as hasSource } from "./sources/index.ts";
 import { defaultDbPath } from "./core/paths.ts";
 import type { Message } from "./core/types.ts";
 
@@ -60,61 +61,91 @@ const ingestCommand = defineCommand({
       let progressSent = 0;
 
       const stopIndicator = () => {
-        if (prog) { try { prog.stop("interrupted"); } catch { /* already stopped */ } prog = null; }
-        if (spin) { try { spin.stop("interrupted"); } catch { /* already stopped */ } spin = null; }
+        if (prog) {
+          try {
+            prog.stop("interrupted");
+          } catch {
+            /* already stopped */
+          }
+          prog = null;
+        }
+        if (spin) {
+          try {
+            spin.stop("interrupted");
+          } catch {
+            /* already stopped */
+          }
+          spin = null;
+        }
       };
 
       let results: Awaited<ReturnType<typeof ingest>>;
       try {
-      results = await ingest(allSources(), storage, {
-        only,
-        dryRun: args.dryRun,
-        onSourceStart: (source) => {
-          if (args.json) return;
-          progressSent = 0;
-          spin = spinner();
-          spin.start(`${source}: scanning...`);
-        },
-        onSourceSkip: (source, reason) => {
-          if (args.json) return;
-          const msg = reason === "unavailable" ? "not available" : "up to date";
-          if (prog) { prog.stop(`${source}: ${msg}`); prog = null; }
-          else if (spin) { spin.stop(`${source}: ${msg}`); spin = null; }
-          else log.step(`${source}: ${msg}`);
-        },
-        onProgress: (source, count, estimate) => {
-          if (args.json) return;
-          if (estimate && estimate > 0 && !prog) {
-            if (spin) { spin.stop(`${source}: estimating...`); spin = null; }
-            prog = progress({ max: estimate });
-            prog.start(`${source}: 0/${estimate}`);
-          }
-          if (prog && estimate) {
-            const delta = count - progressSent;
-            if (delta > 0) prog.advance(delta, `${source}: ${count}/${estimate}`);
-            progressSent = count;
-          } else {
-            spin?.message(`${source}: ${count} messages...`);
-          }
-        },
-        onSourceDone: (source, count, opts) => {
-          if (args.json) return;
-          const suffix = opts?.dryRun ? " (dry run)" : "";
-          if (prog) { prog.stop(`${source}: ${count} messages${suffix}`); prog = null; }
-          else if (spin) { spin.stop(`${source}: ${count} messages${suffix}`); spin = null; }
-        },
-        onSourceError: (source, error) => {
-          if (args.json) return;
-          if (prog) { prog.error(`${source}: ${error}`); prog = null; }
-          else if (spin) { spin.error(`${source}: ${error}`); spin = null; }
-          else log.warn(`${source}: ${error}`);
-        },
-        onMessage: args.json
-          ? undefined
-          : (msg) => {
-              log.step(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
-            },
-      });
+        results = await ingest(allSources(), storage, {
+          only,
+          dryRun: args.dryRun,
+          onSourceStart: (source) => {
+            if (args.json) return;
+            progressSent = 0;
+            spin = spinner();
+            spin.start(`${source}: scanning...`);
+          },
+          onSourceSkip: (source, reason) => {
+            if (args.json) return;
+            const msg = reason === "unavailable" ? "not available" : "up to date";
+            if (prog) {
+              prog.stop(`${source}: ${msg}`);
+              prog = null;
+            } else if (spin) {
+              spin.stop(`${source}: ${msg}`);
+              spin = null;
+            } else log.step(`${source}: ${msg}`);
+          },
+          onProgress: (source, count, estimate) => {
+            if (args.json) return;
+            if (estimate && estimate > 0 && !prog) {
+              if (spin) {
+                spin.stop(`${source}: estimating...`);
+                spin = null;
+              }
+              prog = progress({ max: estimate });
+              prog.start(`${source}: 0/${estimate}`);
+            }
+            if (prog && estimate) {
+              const delta = count - progressSent;
+              if (delta > 0) prog.advance(delta, `${source}: ${count}/${estimate}`);
+              progressSent = count;
+            } else {
+              spin?.message(`${source}: ${count} messages...`);
+            }
+          },
+          onSourceDone: (source, count, opts) => {
+            if (args.json) return;
+            const suffix = opts?.dryRun ? " (dry run)" : "";
+            if (prog) {
+              prog.stop(`${source}: ${count} messages${suffix}`);
+              prog = null;
+            } else if (spin) {
+              spin.stop(`${source}: ${count} messages${suffix}`);
+              spin = null;
+            }
+          },
+          onSourceError: (source, error) => {
+            if (args.json) return;
+            if (prog) {
+              prog.error(`${source}: ${error}`);
+              prog = null;
+            } else if (spin) {
+              spin.error(`${source}: ${error}`);
+              spin = null;
+            } else log.warn(`${source}: ${error}`);
+          },
+          onMessage: args.json
+            ? undefined
+            : (msg) => {
+                log.step(`[dry] ${msg.source} ${msg.date} ${msg.role}: ${preview(msg)}`);
+              },
+        });
       } catch (e) {
         stopIndicator();
         throw e;
@@ -168,12 +199,21 @@ const statsCommand = defineCommand({
 
       if (args.json) {
         const cursors = Object.fromEntries(
-          Object.entries(cursorStates).map(([name, state]) => [name, {
-            cursor: state.cursor && state.cursor !== "0" ? state.cursor : null,
-            lastRun: state.lastRun,
-          }]),
+          Object.entries(cursorStates).map(([name, state]) => [
+            name,
+            {
+              cursor: state.cursor && state.cursor !== "0" ? state.cursor : null,
+              lastRun: state.lastRun,
+            },
+          ]),
         );
-        console.log(JSON.stringify({ database: dbPath, totalMessages, totalSessions, sources: stats, cursors }, null, 2));
+        console.log(
+          JSON.stringify(
+            { database: dbPath, totalMessages, totalSessions, sources: stats, cursors },
+            null,
+            2,
+          ),
+        );
         return;
       }
 
@@ -287,6 +327,7 @@ const cursorListCommand = defineCommand({
   meta: { name: "list", description: "Show cursor values for all sources" },
   args: {
     db: { type: "string", description: "Database path (default: platform data dir)" },
+    json: { type: "boolean", description: "Output as JSON" },
   },
   async run({ args }) {
     const dbPath = resolveDb(args.db);
@@ -298,19 +339,40 @@ const cursorListCommand = defineCommand({
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       const cursors = await storage.listCursors();
-      const cursorMap = new Map(cursors.map((c) => [c.source, c.cursor]));
+      const cursorMap = new Map<string, { cursor: string; lastRun: number | null }>(
+        cursors.map((c) => [c.source, { cursor: c.cursor, lastRun: c.lastRun }]),
+      );
       for (const source of allSources()) {
-        if (!cursorMap.has(source.name)) cursorMap.set(source.name, "0");
+        if (!cursorMap.has(source.name)) cursorMap.set(source.name, { cursor: "0", lastRun: null });
       }
-      for (const [source, cursor] of cursorMap) {
-        const ts = Number(cursor);
+
+      if (args.json) {
+        const entries = Object.fromEntries(
+          [...cursorMap].map(([name, state]) => [
+            name,
+            {
+              cursor: state.cursor && state.cursor !== "0" ? state.cursor : null,
+              lastRun: state.lastRun || null,
+            },
+          ]),
+        );
+        console.log(JSON.stringify(entries, null, 2));
+        return;
+      }
+
+      for (const [source, state] of cursorMap) {
+        const ts = Number(state.cursor);
         const date = new Date(ts);
-        const hasValidDate =
-          Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
+        const hasValidDate = Number.isFinite(ts) && ts > 0 && Number.isFinite(date.getTime());
         const display = hasValidDate
-          ? `${cursor} (${date.toISOString()})`
-          : cursor && cursor !== "0" ? cursor : "(none)";
-        log.step(`${source}: ${display}`);
+          ? `${state.cursor} (${date.toISOString()})`
+          : state.cursor && state.cursor !== "0"
+            ? state.cursor
+            : "(none)";
+        const lastRunDisplay = state.lastRun ? new Date(state.lastRun).toISOString() : null;
+        const parts = [`${source}: cursor ${display}`];
+        if (lastRunDisplay) parts.push(`last run ${lastRunDisplay}`);
+        log.step(parts.join(", "));
       }
     } finally {
       await storage.close();
@@ -329,6 +391,14 @@ const cursorResetCommand = defineCommand({
     if (!existsSync(dbPath)) {
       log.warn(`Database not found: ${dbPath}`);
       return;
+    }
+
+    if (!hasSource(args.source)) {
+      log.warn(
+        `Unknown source "${args.source}". Known sources: ${allSources()
+          .map((s) => s.name)
+          .join(", ")}`,
+      );
     }
 
     const storage = await createSqliteStorage(dbPath, { initialize: false });
@@ -362,11 +432,114 @@ const purgeCommand = defineCommand({
       return;
     }
 
+    if (!hasSource(args.source)) {
+      log.warn(
+        `Unknown source "${args.source}". Known sources: ${allSources()
+          .map((s) => s.name)
+          .join(", ")}`,
+      );
+    }
+
     const storage = await createSqliteStorage(dbPath, { initialize: false });
     try {
       const deleted = await storage.purgeSource(args.source);
       log.success(`Purged "${args.source}": ${deleted} sessions removed, cursor reset`);
     } finally {
+      await storage.close();
+    }
+  },
+});
+
+const watchCommand = defineCommand({
+  meta: { name: "watch", description: "Watch source directories and auto-ingest on changes" },
+  args: {
+    db: { type: "string", description: "Database path (default: platform data dir)" },
+    only: { type: "string", description: "Comma-separated list of sources" },
+    debounce: { type: "string", description: "Debounce interval in ms (default: 2000)" },
+    noInitial: { type: "boolean", description: "Skip initial ingest on startup" },
+    json: { type: "boolean", description: "Output events as JSON lines" },
+  },
+  async run({ args }) {
+    const dbPath = resolveDb(args.db);
+    const storage = await createSqliteStorage(dbPath);
+
+    const only = args.only
+      ?.split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const debounceMs = Math.max(500, parseInt(args.debounce || "2000") || 2000);
+
+    if (!args.json) {
+      intro("memxa watch");
+      log.info(`Database: ${dbPath}`);
+      log.info(`Debounce: ${debounceMs}ms`);
+    }
+
+    const ac = new AbortController();
+    const shutdown = () => ac.abort();
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+
+    try {
+      await watchSources(allSources(), storage, {
+        only,
+        debounceMs,
+        initial: !args.noInitial,
+        signal: ac.signal,
+        onReady: (watchedPaths) => {
+          if (args.json) {
+            const paths = Object.fromEntries([...watchedPaths].map(([p, s]) => [p, s]));
+            console.log(JSON.stringify({ event: "ready", paths }));
+            return;
+          }
+          for (const [path, sources] of watchedPaths) {
+            log.step(`Watching: ${path} (${sources.join(", ")})`);
+          }
+          log.info("Waiting for changes... (Ctrl+C to stop)");
+        },
+        onTrigger: (source) => {
+          if (args.json) {
+            console.log(JSON.stringify({ event: "trigger", source }));
+          } else {
+            log.step(`${source}: change detected, ingesting...`);
+          }
+        },
+        onIngestDone: (result) => {
+          if (args.json) {
+            const normalized = {
+              ...result,
+              cursor: result.cursor && result.cursor !== "0" ? result.cursor : null,
+            };
+            console.log(JSON.stringify({ event: "ingest", ...normalized }));
+          } else if (result.count > 0) {
+            log.success(`${result.source}: ${result.count} new messages`);
+          }
+        },
+        onIngestError: (source, error) => {
+          if (args.json) {
+            console.log(JSON.stringify({ event: "error", source, error }));
+          } else {
+            log.warn(`${source}: ${error}`);
+          }
+        },
+        onWatchError: (path, err) => {
+          if (args.json) {
+            console.log(JSON.stringify({ event: "watch_error", path, error: err.message }));
+          } else {
+            const hint =
+              (err as NodeJS.ErrnoException).code === "ENOSPC"
+                ? " (increase fs.inotify.max_user_watches)"
+                : "";
+            log.warn(`Watch error on ${path}: ${err.message}${hint}`);
+          }
+        },
+        onShutdown: () => {
+          if (!args.json) outro("Watch stopped");
+        },
+      });
+    } finally {
+      process.off("SIGINT", shutdown);
+      process.off("SIGTERM", shutdown);
       await storage.close();
     }
   },
@@ -385,6 +558,7 @@ const main = defineCommand({
     search: searchCommand,
     cursor: cursorCommand,
     purge: purgeCommand,
+    watch: watchCommand,
   },
 });
 
