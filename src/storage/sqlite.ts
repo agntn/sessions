@@ -131,7 +131,22 @@ export class SqliteStorage implements Storage {
     const tableExists = await this.client.execute(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks_fts'",
     );
-    if (tableExists.rows.length) return;
+    if (tableExists.rows.length) {
+      const triggerExists = await this.client.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name='blocks_fts_au'",
+      );
+      if (!triggerExists.rows.length) {
+        await this.client.execute(`
+          CREATE TRIGGER blocks_fts_au AFTER UPDATE OF text ON blocks
+          WHEN new.type NOT IN ('tool_call', 'tool_result')
+          BEGIN
+            INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+            INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
+          END
+        `);
+      }
+      return;
+    }
 
     await this.client.execute(
       "CREATE VIRTUAL TABLE blocks_fts USING fts5(text, content=blocks, content_rowid=id)",
