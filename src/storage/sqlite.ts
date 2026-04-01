@@ -138,10 +138,10 @@ export class SqliteStorage implements Storage {
       if (!triggerExists.rows.length) {
         await this.client.execute(`
           CREATE TRIGGER blocks_fts_au AFTER UPDATE OF text ON blocks
-          WHEN new.type NOT IN ('tool_call', 'tool_result') AND new.text IS NOT NULL
+          WHEN new.type NOT IN ('tool_call', 'tool_result')
           BEGIN
-            INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
-            INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
+            INSERT INTO blocks_fts(blocks_fts, rowid, text) SELECT 'delete', old.id, old.text WHERE old.text IS NOT NULL;
+            INSERT INTO blocks_fts(rowid, text) SELECT new.id, new.text WHERE new.text IS NOT NULL;
           END
         `);
       }
@@ -178,8 +178,8 @@ export class SqliteStorage implements Storage {
       CREATE TRIGGER blocks_fts_au AFTER UPDATE OF text ON blocks
       WHEN new.type NOT IN ('tool_call', 'tool_result')
       BEGIN
-        INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
-        INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
+        INSERT INTO blocks_fts(blocks_fts, rowid, text) SELECT 'delete', old.id, old.text WHERE old.text IS NOT NULL;
+        INSERT INTO blocks_fts(rowid, text) SELECT new.id, new.text WHERE new.text IS NOT NULL;
       END
     `);
   }
