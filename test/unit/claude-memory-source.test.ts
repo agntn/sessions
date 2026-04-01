@@ -29,15 +29,19 @@ afterEach(() => {
 
 describe("ClaudeSource memory files", () => {
   it("ingests memory file with frontmatter", async () => {
-    writeMemory("-home-user-project", "overview.md", [
-      "---",
-      "name: project overview",
-      "description: what this project does",
-      "type: project",
-      "---",
-      "",
-      "This is a TypeScript library for data processing.",
-    ].join("\n"));
+    writeMemory(
+      "-home-user-project",
+      "overview.md",
+      [
+        "---",
+        "name: project overview",
+        "description: what this project does",
+        "type: project",
+        "---",
+        "",
+        "This is a TypeScript library for data processing.",
+      ].join("\n"),
+    );
 
     const source = new ClaudeSource(tempDir);
     const msgs = await collect(source);
@@ -64,7 +68,11 @@ describe("ClaudeSource memory files", () => {
 
   it("skips MEMORY.md index file", async () => {
     writeMemory("-home-user-proj", "MEMORY.md", "# Index\n- [overview](overview.md)");
-    writeMemory("-home-user-proj", "overview.md", "---\nname: overview\ntype: project\n---\n\nReal content.");
+    writeMemory(
+      "-home-user-proj",
+      "overview.md",
+      "---\nname: overview\ntype: project\n---\n\nReal content.",
+    );
 
     const source = new ClaudeSource(tempDir);
     const msgs = await collect(source);
