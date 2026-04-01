@@ -138,7 +138,7 @@ export class SqliteStorage implements Storage {
       if (!triggerExists.rows.length) {
         await this.client.execute(`
           CREATE TRIGGER blocks_fts_au AFTER UPDATE OF text ON blocks
-          WHEN new.type NOT IN ('tool_call', 'tool_result')
+          WHEN new.type NOT IN ('tool_call', 'tool_result') AND new.text IS NOT NULL
           BEGIN
             INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
             INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
