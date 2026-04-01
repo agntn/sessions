@@ -61,7 +61,13 @@ function makeStorage(): Storage & { inserted: Message[][]; cursors: Map<string, 
     async deleteCursor(source) {
       cursors.delete(source);
     },
+    async listCursors() {
+      return [];
+    },
     async deleteBySource() {
+      return 0;
+    },
+    async purgeSource() {
       return 0;
     },
     async count() {
@@ -208,6 +214,96 @@ describe("ingest", () => {
 
     expect(results[0].count).toBe(8);
     expect(onMessage).toHaveBeenCalledTimes(5);
+  });
+
+  it("calls onSourceStart and onSourceDone callbacks", async () => {
+    const storage = makeStorage();
+    const source = makeSource("test", [msg("test", 100)]);
+    const starts: string[] = [];
+    const dones: Array<{ source: string; count: number }> = [];
+
+    await ingest([source], storage, {
+      onSourceStart: (s) => starts.push(s),
+      onSourceDone: (s, c) => dones.push({ source: s, count: c }),
+    });
+
+    expect(starts).toEqual(["test"]);
+    expect(dones).toEqual([{ source: "test", count: 1 }]);
+  });
+
+  it("calls onSourceSkip for unavailable sources", async () => {
+    const storage = makeStorage();
+    const source = makeUnavailableSource("missing");
+    const skips: Array<{ source: string; reason: string }> = [];
+
+    await ingest([source], storage, {
+      onSourceSkip: (s, r) => skips.push({ source: s, reason: r }),
+    });
+
+    expect(skips).toEqual([{ source: "missing", reason: "unavailable" }]);
+  });
+
+  it("calls onSourceSkip for up-to-date sources", async () => {
+    const storage = makeStorage();
+    const source: Source = {
+      name: "empty",
+      available: () => true,
+      async *ingest() {},
+      cursor: (m) => String(m.timestamp),
+    };
+    const skips: Array<{ source: string; reason: string }> = [];
+
+    await ingest([source], storage, {
+      onSourceSkip: (s, r) => skips.push({ source: s, reason: r }),
+    });
+
+    expect(skips).toEqual([{ source: "empty", reason: "up-to-date" }]);
+  });
+
+  it("calls onProgress with estimate when source has estimate()", async () => {
+    const storage = makeStorage();
+    const source: Source = {
+      name: "test",
+      available: () => true,
+      async estimate() {
+        return 42;
+      },
+      async *ingest() {
+        yield msg("test", 100);
+      },
+      cursor: (m) => String(m.timestamp),
+    };
+    const progressCalls: Array<{ count: number; estimate?: number }> = [];
+
+    await ingest([source], storage, {
+      onProgress: (_s, count, est) => progressCalls.push({ count, estimate: est }),
+    });
+
+    expect(progressCalls[0]).toEqual({ count: 0, estimate: 42 });
+    expect(progressCalls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("handles estimate() failure gracefully", async () => {
+    const storage = makeStorage();
+    const source: Source = {
+      name: "test",
+      available: () => true,
+      async estimate() {
+        throw new Error("estimate failed");
+      },
+      async *ingest() {
+        yield msg("test", 100);
+      },
+      cursor: (m) => String(m.timestamp),
+    };
+    const errors: string[] = [];
+
+    const results = await ingest([source], storage, {
+      onSourceError: (_s, err) => errors.push(err),
+    });
+
+    expect(results[0].count).toBe(1);
+    expect(errors.some((e) => e.includes("estimate failed"))).toBe(true);
   });
 
   it("advances cursor to max timestamp even when messages arrive out of order", async () => {

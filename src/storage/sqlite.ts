@@ -131,7 +131,31 @@ export class SqliteStorage implements Storage {
     const tableExists = await this.client.execute(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='blocks_fts'",
     );
-    if (tableExists.rows.length) return;
+    if (tableExists.rows.length) {
+      await this.client.execute(`
+        CREATE TRIGGER IF NOT EXISTS blocks_fts_ai AFTER INSERT ON blocks
+        WHEN new.type NOT IN ('tool_call', 'tool_result') AND new.text IS NOT NULL
+        BEGIN
+          INSERT INTO blocks_fts(rowid, text) VALUES (new.id, new.text);
+        END
+      `);
+      await this.client.execute(`
+        CREATE TRIGGER IF NOT EXISTS blocks_fts_ad AFTER DELETE ON blocks
+        WHEN old.type NOT IN ('tool_call', 'tool_result') AND old.text IS NOT NULL
+        BEGIN
+          INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+        END
+      `);
+      await this.client.execute(`
+        CREATE TRIGGER IF NOT EXISTS blocks_fts_au AFTER UPDATE OF text ON blocks
+        WHEN new.type NOT IN ('tool_call', 'tool_result')
+        BEGIN
+          INSERT INTO blocks_fts(blocks_fts, rowid, text) SELECT 'delete', old.id, old.text WHERE old.text IS NOT NULL;
+          INSERT INTO blocks_fts(rowid, text) SELECT new.id, new.text WHERE new.text IS NOT NULL;
+        END
+      `);
+      return;
+    }
 
     await this.client.execute(
       "CREATE VIRTUAL TABLE blocks_fts USING fts5(text, content=blocks, content_rowid=id)",
@@ -156,6 +180,15 @@ export class SqliteStorage implements Storage {
       WHEN old.type NOT IN ('tool_call', 'tool_result') AND old.text IS NOT NULL
       BEGIN
         INSERT INTO blocks_fts(blocks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+      END
+    `);
+
+    await this.client.execute(`
+      CREATE TRIGGER blocks_fts_au AFTER UPDATE OF text ON blocks
+      WHEN new.type NOT IN ('tool_call', 'tool_result')
+      BEGIN
+        INSERT INTO blocks_fts(blocks_fts, rowid, text) SELECT 'delete', old.id, old.text WHERE old.text IS NOT NULL;
+        INSERT INTO blocks_fts(rowid, text) SELECT new.id, new.text WHERE new.text IS NOT NULL;
       END
     `);
   }
