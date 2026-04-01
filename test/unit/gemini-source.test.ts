@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { GeminiSource } from "../../src/sources/gemini.ts";
@@ -298,10 +298,12 @@ describe("GeminiSource", () => {
     writeChat("project-nots", "chat-nots.json", {
       messages: [{ type: "user", content: "no timestamp" }],
     });
+    const chatPath = join(tempDir, "project-nots", "chats", "chat-nots.json");
+    const mtimeMs = statSync(chatPath).mtimeMs;
     const source = new GeminiSource(tempDir);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
-    expect(msgs[0].timestamp).toBeGreaterThan(0);
+    expect(msgs[0].timestamp).toBe(mtimeMs);
   });
 });
