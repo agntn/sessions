@@ -25,6 +25,7 @@ export {
 export type {
   Message,
   Block,
+  BlockType,
   Channel,
   Participant,
   Source,
