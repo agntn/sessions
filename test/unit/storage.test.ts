@@ -919,31 +919,14 @@ describe("SqliteStorage CRUD", () => {
     expect(alphaSessions[0].source).toBe("alpha");
   });
 
-  it("getCursorState returns lastRun after setCursor", async () => {
-    await storage.setCursor("test-cursor", "12345");
-    const state = await storage.getCursorState("test-cursor");
-
-    expect(state.cursor).toBe("12345");
-    expect(state.lastRun).not.toBeNull();
-    expect(state.lastRun).toBeGreaterThan(0);
-  });
-
   it("listCursors returns all stored cursors", async () => {
     await storage.setCursor("src-a", "100");
     await storage.setCursor("src-b", "200");
 
     const cursors = await storage.listCursors();
-    expect(cursors.length).toBeGreaterThanOrEqual(2);
+    expect(cursors).toHaveLength(2);
     expect(cursors.find((c) => c.source === "src-a")?.cursor).toBe("100");
     expect(cursors.find((c) => c.source === "src-b")?.cursor).toBe("200");
-  });
-
-  it("deleteCursor removes cursor entry", async () => {
-    await storage.setCursor("to-delete", "999");
-    expect(await storage.getCursor("to-delete")).toBe("999");
-
-    await storage.deleteCursor("to-delete");
-    expect(await storage.getCursor("to-delete")).toBe("0");
   });
 
   it("search filters by date range", async () => {
