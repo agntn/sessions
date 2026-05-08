@@ -906,7 +906,7 @@ describe("SqliteStorage CRUD", () => {
     await storage.insert([msg("s1", "user", 1000, "first"), msg("s2", "user", 2000, "second")]);
 
     const sessions = await storage.listSessions();
-    expect(sessions.length).toBeGreaterThanOrEqual(2);
+    expect(sessions).toHaveLength(2);
     expect(sessions[0].source).toBe("s2");
     expect(sessions[0].updatedAt!).toBeGreaterThanOrEqual(sessions[1].updatedAt!);
   });
