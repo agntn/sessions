@@ -902,6 +902,47 @@ describe("SqliteStorage CRUD", () => {
     expect(found!.id).toBe(matching[0].id);
   });
 
+  it("listSessions returns sessions ordered by updatedAt", async () => {
+    await storage.insert([msg("s1", "user", 1000, "first"), msg("s2", "user", 2000, "second")]);
+
+    const sessions = await storage.listSessions();
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0].source).toBe("s2");
+    expect(sessions[0].updatedAt!).toBeGreaterThanOrEqual(sessions[1].updatedAt!);
+  });
+
+  it("listSessions filters by source", async () => {
+    await storage.insert([msg("alpha", "user", 1000, "a"), msg("beta", "user", 2000, "b")]);
+
+    const alphaSessions = await storage.listSessions({ source: "alpha" });
+    expect(alphaSessions).toHaveLength(1);
+    expect(alphaSessions[0].source).toBe("alpha");
+  });
+
+  it("listCursors returns all stored cursors", async () => {
+    await storage.setCursor("src-a", "100");
+    await storage.setCursor("src-b", "200");
+
+    const cursors = await storage.listCursors();
+    expect(cursors).toHaveLength(2);
+    expect(cursors.find((c) => c.source === "src-a")?.cursor).toBe("100");
+    expect(cursors.find((c) => c.source === "src-b")?.cursor).toBe("200");
+  });
+
+  it("search filters by date range", async () => {
+    await storage.insert([
+      msg("date-test", "user", new Date("2026-01-15").getTime(), "january message"),
+      msg("date-test", "user", new Date("2026-03-15").getTime(), "march message"),
+    ]);
+
+    const janOnly = await storage.search("message", {
+      dateFrom: "2026-01-01",
+      dateTo: "2026-02-01",
+    });
+    expect(janOnly).toHaveLength(1);
+    expect(janOnly[0].text).toContain("january");
+  });
+
   it("backfills channelId and updates updatedAt for existing sessions", async () => {
     const base: Omit<Message, "timestamp" | "channel"> = {
       source: "test",
