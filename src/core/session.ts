@@ -9,11 +9,11 @@ export interface Session {
   readonly messages: readonly Message[];
 }
 
-/** Reads normalized sessions from one harness source. */
+/** Lists normalized sessions from one harness source. */
 export interface SessionReader {
   readonly name: string;
   available(): boolean;
-  read(): AsyncGenerator<Session>;
+  list(): Promise<Session[]>;
 }
 
 function toSession(source: string, id: string, messages: Message[]): Session {
@@ -32,7 +32,7 @@ export function createSessionReader(source: Source): SessionReader {
   return {
     name: source.name,
     available: () => source.available(),
-    async *read(): AsyncGenerator<Session> {
+    async list(): Promise<Session[]> {
       const sessions = new Map<string, Message[]>();
       for await (const message of source.read()) {
         const messages = sessions.get(message.sessionId);
@@ -40,10 +40,9 @@ export function createSessionReader(source: Source): SessionReader {
         else sessions.set(message.sessionId, [message]);
       }
 
-      const normalized = [...sessions.entries()]
+      return [...sessions.entries()]
         .map(([id, messages]) => toSession(source.name, id, messages))
         .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id));
-      yield* normalized;
     },
   };
 }

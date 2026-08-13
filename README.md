@@ -31,7 +31,7 @@ import { create } from "@agntn/sessions";
 
 const claude = create("claude");
 if (claude.available()) {
-  for await (const session of claude.read()) {
+  for (const session of await claude.list()) {
     console.log(session.id, session.updatedAt, session.messages.length);
   }
 }
@@ -45,7 +45,7 @@ import { allSources } from "@agntn/sessions";
 for (const reader of allSources()) {
   if (!reader.available()) continue;
 
-  for await (const session of reader.read()) {
+  for (const session of await reader.list()) {
     // Index, render, export, or persist the normalized session in your application.
   }
 }

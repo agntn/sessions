@@ -41,9 +41,7 @@ class FixtureSource implements Source {
 
 describe("createSessionReader", () => {
   it("groups messages into newest-first sessions and orders messages chronologically", async () => {
-    const sessions = [];
-    for await (const session of createSessionReader(new FixtureSource()).read())
-      sessions.push(session);
+    const sessions = await createSessionReader(new FixtureSource()).list();
 
     expect(sessions.map((session) => session.id)).toEqual(["second", "first"]);
     expect(sessions[1]).toMatchObject({ createdAt: 10, updatedAt: 20 });
