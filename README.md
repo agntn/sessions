@@ -29,7 +29,7 @@ pnpm add @agntn/sessions
 ```ts
 import { create } from "@agntn/sessions";
 
-const claude = create("claude");
+const claude = create("claude", { path: "/custom/claude/projects" });
 if (claude.available()) {
   for (const session of await claude.list()) {
     console.log(session.id, session.updatedAt, session.messages.length);

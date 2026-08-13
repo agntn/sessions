@@ -52,6 +52,12 @@ describe("MastraSource", () => {
     expect(msgs[0].blocks).toEqual([{ type: "text", text: "hello from user" }]);
     expect(msgs[0].author?.isBot).toBeUndefined();
     expect(msgs[0].channel?.name).toBe("mastra");
+    expect(executeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sql: expect.not.stringContaining("createdAt >"),
+        args: [],
+      }),
+    );
   });
 
   it("parses assistant message with bot author", async () => {

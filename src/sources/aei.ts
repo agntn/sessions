@@ -7,22 +7,6 @@ import type { Source, Message, Block, Channel, Participant } from "../core/types
 // Medium window: rows are narrow, blocks fetched in separate query
 const WINDOW = 500;
 
-function parseCursor(cursor: string): { since: number; lastId: number } {
-  if (!cursor) return { since: 0, lastId: 0 };
-  const [tsRaw, idRaw] = cursor.split("|");
-  const since = Number(tsRaw || "0");
-  const lastId = Number(idRaw || "0");
-  return {
-    since: Number.isFinite(since) ? since : 0,
-    lastId:
-      Number.isFinite(lastId) && lastId > 0
-        ? lastId
-        : idRaw === undefined
-          ? Number.MAX_SAFE_INTEGER
-          : 0,
-  };
-}
-
 const BASE_COLS = ["id", "session_id", "role", "timestamp", "date"] as const;
 const EXTRA_MSG_COLS = [
   "cwd",
@@ -54,7 +38,7 @@ export class AeiSource implements Source {
   }
 
   async *read(): AsyncGenerator<Message> {
-    const { since, lastId } = parseCursor("");
+    const initialBoundary = Number.MIN_SAFE_INTEGER;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
 
     try {
@@ -74,8 +58,8 @@ export class AeiSource implements Source {
       ].join(", ");
 
       // Keyset pagination: use (timestamp, id) bounds instead of OFFSET
-      let keyTs = since;
-      let keyId = lastId;
+      let keyTs = initialBoundary;
+      let keyId = initialBoundary;
       while (true) {
         const rowsResult = await db.execute({
           sql: `

@@ -42,17 +42,6 @@ function parseContent(raw: string): Block[] {
   return fallback;
 }
 
-function parseCursor(cursor: string): { createdAt: string; rowId: number } {
-  if (!cursor) return { createdAt: "1970-01-01", rowId: 0 };
-  const [createdAt, rowIdRaw] = cursor.split("|");
-  const rowId = Number(rowIdRaw || "0");
-  const parsedCreatedAt = Date.parse(createdAt || "");
-  return {
-    createdAt: Number.isFinite(parsedCreatedAt) ? (createdAt as string) : "1970-01-01",
-    rowId: Number.isFinite(rowId) && rowId > 0 ? rowId : 0,
-  };
-}
-
 export class MastraSource implements Source {
   name = "mastra";
   private dbPath: string;
@@ -68,7 +57,6 @@ export class MastraSource implements Source {
     return existsSync(this.dbPath);
   }
   async *read(): AsyncGenerator<Message> {
-    const parsedCursor = parseCursor("");
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
       const rowsResult = await db.execute({
@@ -76,10 +64,9 @@ export class MastraSource implements Source {
   SELECT rowid as rowId, role, content, createdAt, thread_id
   FROM mastra_messages
   WHERE role IN ('user', 'assistant')
-    AND (createdAt > ? OR (createdAt = ? AND rowid > ?))
   ORDER BY createdAt, rowid
 `,
-        args: [parsedCursor.createdAt, parsedCursor.createdAt, parsedCursor.rowId],
+        args: [],
       });
       const rows = rowsResult.rows as unknown as {
         rowId: number;
