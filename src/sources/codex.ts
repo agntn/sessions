@@ -36,7 +36,7 @@ function parseBlocks(
     for (const c of content) {
       const cType = String(c.type || "");
       if ((cType === "input_text" || cType === "output_text") && c.text) {
-        const text = String(c.text).slice(0, 8000);
+        const text = String(c.text);
         if (text.length > 0) blocks.push({ type: "text", text });
       }
     }
@@ -59,7 +59,7 @@ function parseBlocks(
   }
 
   if (type === "function_call_output") {
-    const output = String(payload.output || "").slice(0, 8000);
+    const output = String(payload.output || "");
     if (!output) return null;
     return {
       role: "tool",
@@ -134,23 +134,8 @@ export class CodexSource implements Source {
     return existsSync(this.sessionsDir);
   }
 
-  watchPaths(): string[] {
-    return [this.sessionsDir];
-  }
-
-  async estimate(cursor: string): Promise<number> {
-    const parsed = Number(cursor);
-    const since = Number.isFinite(parsed) ? parsed : 0;
-    let count = 0;
-    for (const f of walkSessions(this.sessionsDir)) {
-      if (statSync(f.path).mtimeMs >= since) count++;
-    }
-    return count;
-  }
-
-  async *ingest(cursor: string): AsyncGenerator<Message> {
-    const parsedCursor = Number(cursor);
-    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
+  async *read(): AsyncGenerator<Message> {
+    const since = 0;
 
     const files: { path: string; mtime: number; format: "jsonl" | "json" }[] = [];
     for (const f of walkSessions(this.sessionsDir)) {
@@ -197,7 +182,7 @@ export class CodexSource implements Source {
           const p = entry.payload as Record<string, unknown> | undefined;
           if (p?.type === "user_message" && !seenUserEvent) {
             seenUserEvent = true;
-            const text = String(p.message || "").slice(0, 8000);
+            const text = String(p.message || "");
             if (text.length > 0) {
               const parsedTs = new Date(String(entry.timestamp)).getTime();
               const ts = Number.isFinite(parsedTs) ? parsedTs : file.mtime;
@@ -248,9 +233,5 @@ export class CodexSource implements Source {
         };
       }
     }
-  }
-
-  cursor(message: Message): string {
-    return String(message.timestamp);
   }
 }

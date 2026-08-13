@@ -1,5 +1,6 @@
 export type BlockType = "text" | "thinking" | "tool_call" | "tool_result" | (string & {});
 
+/** A normalized content block within a harness message. */
 export interface Block {
   type: BlockType;
   text?: string;
@@ -8,22 +9,23 @@ export interface Block {
   toolCallId?: string;
 }
 
+/** Origin metadata retained when a harness exposes channels. */
 export interface Channel {
-  id?: string;
   platform: string;
   platformId?: string;
   name?: string;
   type?: string;
 }
 
+/** Author metadata retained when a harness exposes participants. */
 export interface Participant {
-  id?: string;
   platform: string;
   platformId?: string;
   name: string;
   isBot?: boolean;
 }
 
+/** A normalized message read from a native harness session. */
 export interface Message {
   source: string;
   sessionId: string;
@@ -36,116 +38,9 @@ export interface Message {
   channel?: Channel;
 }
 
+/** Internal parser contract implemented by each harness adapter. */
 export interface Source {
-  name: string;
+  readonly name: string;
   available(): boolean;
-  /** Estimate total messages available for ingestion from this cursor. */
-  estimate?(cursor: string): Promise<number>;
-  ingest(cursor: string): AsyncGenerator<Message>;
-  cursor(message: Message): string;
-  watchPaths?(): string[];
-}
-
-export interface Session {
-  id: string;
-  source: string;
-  channelId: string | null;
-  createdAt: number | null;
-  updatedAt: number | null;
-}
-
-export interface StoredMessage extends Message {
-  id: string;
-  author?: Participant & { id: string };
-}
-
-export interface SearchRow {
-  date: string;
-  timestamp: number;
-  source: string;
-  role: string;
-  sessionId: string;
-  text: string;
-}
-
-export interface SourceStats {
-  source: string;
-  messages: number;
-  sessions: number;
-}
-
-export interface Storage {
-  init(): Promise<void>;
-  close(): Promise<void>;
-
-  getChannel(id: string): Promise<(Channel & { id: string }) | null>;
-  findChannel(
-    platform: string,
-    by: { platformId?: string; name?: string },
-  ): Promise<(Channel & { id: string }) | null>;
-  listChannels(opts?: {
-    platform?: string;
-    limit?: number;
-    offset?: number;
-  }): Promise<Array<Channel & { id: string }>>;
-
-  createSession(session: {
-    id: string;
-    source: string;
-    channelId?: string;
-    createdAt?: number;
-  }): Promise<void>;
-  getSession(id: string): Promise<Session | null>;
-  listSessions(opts?: { source?: string; limit?: number; offset?: number }): Promise<Session[]>;
-  deleteSession(id: string): Promise<void>;
-
-  addMessage(message: Message): Promise<string>;
-  getMessage(id: string): Promise<StoredMessage | null>;
-  getMessages(
-    sessionId: string,
-    opts?: { limit?: number; offset?: number },
-  ): Promise<StoredMessage[]>;
-  insert(messages: Message[]): Promise<void>;
-
-  search(
-    query: string,
-    opts?: {
-      source?: string;
-      role?: string;
-      limit?: number;
-      dateFrom?: string;
-      dateTo?: string;
-    },
-  ): Promise<SearchRow[]>;
-  count(source?: string): Promise<number>;
-  sessionCount(): Promise<number>;
-  sourceStats(): Promise<SourceStats[]>;
-
-  getParticipant(id: string): Promise<(Participant & { id: string }) | null>;
-  findParticipant(
-    platform: string,
-    platformId: string,
-  ): Promise<(Participant & { id: string }) | null>;
-  listParticipants(opts?: {
-    platform?: string;
-    limit?: number;
-    offset?: number;
-  }): Promise<Array<Participant & { id: string }>>;
-  getSessionParticipants(sessionId: string): Promise<Array<Participant & { id: string }>>;
-
-  getCursor(source: string): Promise<string>;
-  getCursorState(source: string): Promise<{ cursor: string; lastRun: number | null }>;
-  setCursor(source: string, cursor: string): Promise<void>;
-  listCursors(): Promise<Array<{ source: string; cursor: string; lastRun: number }>>;
-  deleteCursor(source: string): Promise<void>;
-  deleteBySource(source: string): Promise<number>;
-  purgeSource(source: string): Promise<number>;
-}
-
-export interface IngestResult {
-  source: string;
-  count: number;
-  cursor: string;
-  skipped: boolean;
-  error?: string;
+  read(): AsyncGenerator<Message>;
 }

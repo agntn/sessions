@@ -1,83 +1,57 @@
-# memxa
+# @agntn/sessions
 
-[![npm version](https://img.shields.io/npm/v/memxa?style=flat&colorA=130f40&colorB=474787)](https://npmjs.com/package/memxa)
-[![npm downloads](https://img.shields.io/npm/dm/memxa?style=flat&colorA=130f40&colorB=474787)](https://npm.chart.dev/memxa)
-[![license](https://img.shields.io/github/license/oritwoen/memxa?style=flat&colorA=130f40&colorB=474787)](https://github.com/oritwoen/memxa/blob/main/LICENSE)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/oritwoen/memxa)
+Read and normalize AI coding sessions across harnesses through one TypeScript API.
 
-Universal AI conversation memory store. Ingest sessions from coding assistants into a single searchable database with relational participants and channels.
+## Scope
 
-## Features
+This package does one thing: it discovers native session data produced by supported AI coding harnesses and exposes each conversation as a normalized `Session`.
 
-- **7 source adapters** - Claude Code, Codex, Gemini CLI, Mastra, OpenCode, AEI, OpenClaw
-- **Relational memory schema** - sessions, messages, channels, participants, and authors
-- **Local SQLite backend** - `@libsql/client` with Drizzle ORM and drizzle-kit migrations
-- **Async API** - Node-friendly programmatic API and CLI
-- **CLI** - `memxa ingest`, `memxa search`, `memxa stats`, `memxa sources`
-- **Incremental** - cursor-based, re-runs only ingest new messages
+It deliberately does not provide a database, synchronization cursors, file watching, full-text search, analytics, or long-term agent memory. Applications can compose those concerns on top of the session reader API.
+
+## Supported harnesses
+
+- AEI
+- Claude Code
+- Codex
+- Gemini CLI
+- Mastra
+- OpenClaw
+- OpenCode
 
 ## Install
 
 ```bash
-npm install memxa
+pnpm add @agntn/sessions
 ```
 
-## Quick start
+## Usage
 
 ```ts
-import { createSqliteStorage, allSources, ingest } from "memxa";
+import { create } from "@agntn/sessions";
 
-const storage = await createSqliteStorage("./memory.db");
-const results = await ingest(allSources(), storage, { verbose: true });
-const hits = await storage.search("refactor auth module");
+const claude = create("claude");
+if (claude.available()) {
+  for await (const session of claude.read()) {
+    console.log(session.id, session.updatedAt, session.messages.length);
+  }
+}
 ```
 
-## CLI
-
-```bash
-# Ingest from all sources (uses default OS data path)
-memxa ingest
-
-# Only specific sources
-memxa ingest --db ./memory.db --only claude,codex
-
-# Dry run
-memxa ingest --db ./memory.db --dry-run
-
-# Search conversations
-memxa search "error handling"
-
-# Show stats
-memxa stats
-
-# List available sources
-memxa sources
-```
-
-## Storage
+Use `sources()` to list supported harness names and `allSources()` to create every reader.
 
 ```ts
-import { SqliteStorage } from "memxa";
+import { allSources } from "@agntn/sessions";
 
-const storage = new SqliteStorage("./memory.db");
-await storage.init();
+for (const reader of allSources()) {
+  if (!reader.available()) continue;
+
+  for await (const session of reader.read()) {
+    // Index, render, export, or persist the normalized session in your application.
+  }
+}
 ```
 
-Migrations are managed with `drizzle-kit`, and the runtime opens a local SQLite database through `@libsql/client`.
-
-## Sources
-
-| Source     | Reads from                                         |
-| ---------- | -------------------------------------------------- |
-| `aei`      | `~/.config/aei/.cache/memory.db`                   |
-| `claude`   | `~/.claude/projects/`                              |
-| `codex`    | `~/.codex/sessions/`                               |
-| `gemini`   | `~/.gemini/tmp/`                                   |
-| `mastra`   | `~/.local/share/mastracode/mastra.db`              |
-| `opencode` | `~/.local/share/opencode/opencode.db`              |
-| `openclaw` | `~/.config/aei/external/openclaw-sessions/*.jsonl` |
-
-All paths are defaults, each adapter accepts custom paths.
+Each adapter accepts the native session format as its source of truth. Messages preserve text, thinking, tool calls, tool results, timestamps, roles, and stable source metadata when the harness exposes them.
 
 ## License
 

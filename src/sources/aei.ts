@@ -1,6 +1,6 @@
 import { home, osUser } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
@@ -53,26 +53,8 @@ export class AeiSource implements Source {
     return existsSync(this.dbPath);
   }
 
-  watchPaths(): string[] {
-    return [dirname(this.dbPath)];
-  }
-
-  async estimate(cursor: string): Promise<number> {
-    const { since } = parseCursor(cursor);
-    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
-    try {
-      const r = await db.execute({
-        sql: "SELECT COUNT(*) as c FROM messages WHERE source = 'aei-cli' AND timestamp > ?",
-        args: [since],
-      });
-      return Number(r.rows[0].c);
-    } finally {
-      db.close();
-    }
-  }
-
-  async *ingest(cursor: string): AsyncGenerator<Message> {
-    const { since, lastId } = parseCursor(cursor);
+  async *read(): AsyncGenerator<Message> {
+    const { since, lastId } = parseCursor("");
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
 
     try {
@@ -97,14 +79,14 @@ export class AeiSource implements Source {
       while (true) {
         const rowsResult = await db.execute({
           sql: `
-          SELECT ${selectCols}
-          FROM messages m
-          JOIN sessions s ON m.session_id = s.id
-          WHERE m.source = 'aei-cli'
-            AND (m.timestamp > ? OR (m.timestamp = ? AND m.id > ?))
-          ORDER BY m.timestamp, m.id
-          LIMIT ?
-          `,
+    SELECT ${selectCols}
+    FROM messages m
+    JOIN sessions s ON m.session_id = s.id
+    WHERE m.source = 'aei-cli'
+      AND (m.timestamp > ? OR (m.timestamp = ? AND m.id > ?))
+    ORDER BY m.timestamp, m.id
+    LIMIT ?
+    `,
           args: [keyTs, keyTs, keyId, WINDOW],
         });
         const rows = rowsResult.rows as unknown as Record<string, unknown>[];
@@ -116,11 +98,11 @@ export class AeiSource implements Source {
 
         const blockResult = await db.execute({
           sql: `
-            SELECT b.message_id, b.position, b.type, b.text, b.tool_name, b.tool_input, b.tool_call_id
-            FROM blocks b
-            WHERE b.message_id IN (${placeholders})
-            ORDER BY b.message_id, b.position
-          `,
+      SELECT b.message_id, b.position, b.type, b.text, b.tool_name, b.tool_input, b.tool_call_id
+      FROM blocks b
+      WHERE b.message_id IN (${placeholders})
+      ORDER BY b.message_id, b.position
+    `,
           args: ids,
         });
         const blockRows = blockResult.rows as unknown as Array<{
@@ -136,9 +118,9 @@ export class AeiSource implements Source {
         const blocksByMessage = new Map<number, Block[]>();
         for (const b of blockRows) {
           const block: Block = { type: b.type as Block["type"] };
-          if (b.text) block.text = b.text.slice(0, 8000);
+          if (b.text) block.text = b.text;
           if (b.tool_name) block.toolName = b.tool_name;
-          if (b.tool_input) block.toolInput = b.tool_input.slice(0, 8000);
+          if (b.tool_input) block.toolInput = b.tool_input;
           if (b.tool_call_id) block.toolCallId = b.tool_call_id;
           let arr = blocksByMessage.get(b.message_id);
           if (!arr) {
@@ -212,10 +194,5 @@ export class AeiSource implements Source {
     } finally {
       db.close();
     }
-  }
-
-  cursor(message: Message): string {
-    const id = message.context?.aeiMsgId;
-    return id ? `${message.timestamp}|${id}` : String(message.timestamp);
   }
 }

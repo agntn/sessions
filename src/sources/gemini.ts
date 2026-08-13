@@ -9,12 +9,12 @@ function parseGeminiBlocks(entry: Record<string, unknown>): Block[] {
   if (Array.isArray(entry.thoughts)) {
     for (const t of entry.thoughts as Record<string, unknown>[]) {
       const text = [t.subject, t.description].filter(Boolean).join(": ");
-      if (text) out.push({ type: "thinking", text: text.slice(0, 8000) });
+      if (text) out.push({ type: "thinking", text: text });
     }
   }
 
   if (typeof entry.content === "string" && entry.content.length > 0) {
-    out.push({ type: "text", text: String(entry.content).slice(0, 8000) });
+    out.push({ type: "text", text: String(entry.content) });
   }
 
   if (Array.isArray(entry.toolCalls)) {
@@ -35,7 +35,7 @@ function parseGeminiBlocks(entry: Record<string, unknown>): Block[] {
             out.push({
               type: "tool_result",
               toolCallId: String(tc.id || ""),
-              text: String(output).slice(0, 8000),
+              text: String(output),
             });
           }
         }
@@ -75,37 +75,8 @@ export class GeminiSource implements Source {
     return existsSync(this.geminiDir);
   }
 
-  watchPaths(): string[] {
-    return [this.geminiDir];
-  }
-
-  async estimate(cursor: string): Promise<number> {
-    const parsed = Number(cursor);
-    const since = Number.isFinite(parsed) ? parsed : 0;
-    let count = 0;
-    for (const f of walkChatFiles(this.geminiDir)) {
-      if (f.mtime < since) continue;
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(readFileSync(f.path, "utf-8"));
-      } catch {
-        continue;
-      }
-      const msgs = data.messages as Record<string, unknown>[] | undefined;
-      if (!Array.isArray(msgs)) continue;
-      for (const entry of msgs) {
-        const ts = entry.timestamp ? new Date(String(entry.timestamp)).getTime() : NaN;
-        const entryTime = Number.isFinite(ts) ? ts : f.mtime;
-        if (entryTime <= since) continue;
-        count++;
-      }
-    }
-    return count;
-  }
-
-  async *ingest(cursor: string): AsyncGenerator<Message> {
-    const parsedCursor = Number(cursor);
-    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
+  async *read(): AsyncGenerator<Message> {
+    const since = 0;
 
     const files: { path: string; mtime: number }[] = [];
     for (const f of walkChatFiles(this.geminiDir)) {
@@ -137,7 +108,7 @@ export class GeminiSource implements Source {
         const entryBlocks =
           role === "user"
             ? typeof entry.content === "string" && entry.content.length > 0
-              ? [{ type: "text" as const, text: String(entry.content).slice(0, 8000) }]
+              ? [{ type: "text" as const, text: String(entry.content) }]
               : []
             : parseGeminiBlocks(entry);
 
@@ -160,9 +131,5 @@ export class GeminiSource implements Source {
         };
       }
     }
-  }
-
-  cursor(message: Message): string {
-    return String(message.timestamp);
   }
 }

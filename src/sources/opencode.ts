@@ -1,6 +1,6 @@
 import { home, osUser } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Channel, Participant } from "../core/types.ts";
 
@@ -22,28 +22,8 @@ export class OpenCodeSource implements Source {
     return existsSync(this.dbPath);
   }
 
-  watchPaths(): string[] {
-    return [dirname(this.dbPath)];
-  }
-
-  async estimate(cursor: string): Promise<number> {
-    const parsed = Number(cursor);
-    const since = Number.isFinite(parsed) ? parsed : 0;
-    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
-    try {
-      const r = await db.execute({
-        sql: `SELECT COUNT(*) as cnt FROM part p JOIN message m ON p.message_id = m.id WHERE p.time_created > ?`,
-        args: [since],
-      });
-      return Number((r.rows[0] as unknown as { cnt: number }).cnt);
-    } finally {
-      db.close();
-    }
-  }
-
-  async *ingest(cursor: string): AsyncGenerator<Message> {
-    const parsedCursor = Number(cursor);
-    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
+  async *read(): AsyncGenerator<Message> {
+    const since = 0;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
       let lastTc = since;
@@ -51,18 +31,18 @@ export class OpenCodeSource implements Source {
       while (true) {
         const rowsResult = await db.execute({
           sql: `
-          SELECT
-            substr(p.data, 1, 16000) as pdata,
-            json_extract(m.data, '$.role') as role,
-            p.time_created as tc,
-            p.session_id as sid,
-            p.rowid as rid
-          FROM part p
-          JOIN message m ON p.message_id = m.id
-          WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))
-          ORDER BY p.time_created, p.rowid
-          LIMIT ?
-        `,
+    SELECT
+      p.data as pdata,
+      json_extract(m.data, '$.role') as role,
+      p.time_created as tc,
+      p.session_id as sid,
+      p.rowid as rid
+    FROM part p
+    JOIN message m ON p.message_id = m.id
+    WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))
+    ORDER BY p.time_created, p.rowid
+    LIMIT ?
+  `,
           args: [lastTc, lastTc, lastRowid, WINDOW],
         });
         const rows = rowsResult.rows as unknown as {
@@ -109,7 +89,7 @@ export class OpenCodeSource implements Source {
               role: row.role as "user" | "assistant",
               timestamp: ts,
               date,
-              blocks: [{ type: "text", text: text.slice(0, 8000) }],
+              blocks: [{ type: "text", text: text }],
               channel: this.channel,
               author,
             };
@@ -127,10 +107,10 @@ export class OpenCodeSource implements Source {
                   toolCallId: String(part.toolCallId || part.id || ""),
                   toolInput:
                     typeof part.args === "string"
-                      ? part.args.slice(0, 8000)
+                      ? part.args
                       : typeof part.input === "string"
-                        ? part.input.slice(0, 8000)
-                        : JSON.stringify(part.args || part.input || "").slice(0, 8000),
+                        ? part.input
+                        : JSON.stringify(part.args || part.input || ""),
                 },
               ],
               channel: this.channel,
@@ -149,8 +129,8 @@ export class OpenCodeSource implements Source {
                   toolCallId: String(part.toolCallId || ""),
                   text:
                     typeof part.result === "string"
-                      ? part.result.slice(0, 8000)
-                      : JSON.stringify(part.result || "").slice(0, 8000),
+                      ? part.result
+                      : JSON.stringify(part.result || ""),
                 },
               ],
               channel: this.channel,
@@ -162,9 +142,5 @@ export class OpenCodeSource implements Source {
     } finally {
       db.close();
     }
-  }
-
-  cursor(message: Message): string {
-    return String(message.timestamp);
   }
 }

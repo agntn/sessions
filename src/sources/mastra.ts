@@ -1,18 +1,18 @@
 import { home, osUser } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
 function parseContent(raw: string): Block[] {
-  const fallback = raw.length > 0 ? [{ type: "text", text: raw.slice(0, 8000) }] : [];
+  const fallback = raw.length > 0 ? [{ type: "text", text: raw }] : [];
   try {
     const parsed = JSON.parse(raw);
     if (parsed?.format === 2 && Array.isArray(parsed.parts)) {
       const out: Block[] = [];
       for (const p of parsed.parts) {
         if (p.type === "text" && p.text) {
-          out.push({ type: "text", text: String(p.text).slice(0, 8000) });
+          out.push({ type: "text", text: String(p.text) });
         } else if (p.type === "tool-invocation" || p.type === "tool-call") {
           out.push({
             type: "tool_call",
@@ -24,20 +24,17 @@ function parseContent(raw: string): Block[] {
           out.push({
             type: "tool_result",
             toolCallId: String(p.toolCallId || ""),
-            text:
-              typeof p.result === "string"
-                ? p.result.slice(0, 8000)
-                : JSON.stringify(p.result).slice(0, 8000),
+            text: typeof p.result === "string" ? p.result : JSON.stringify(p.result),
           });
         }
       }
       return out;
     }
     if (typeof parsed?.content === "string") {
-      return [{ type: "text", text: parsed.content.slice(0, 8000) }];
+      return [{ type: "text", text: parsed.content }];
     }
     if (typeof parsed === "string") {
-      return parsed.length > 0 ? [{ type: "text", text: parsed.slice(0, 8000) }] : [];
+      return parsed.length > 0 ? [{ type: "text", text: parsed }] : [];
     }
   } catch {
     return fallback;
@@ -70,39 +67,18 @@ export class MastraSource implements Source {
   available(): boolean {
     return existsSync(this.dbPath);
   }
-
-  async estimate(cursor: string): Promise<number> {
-    const { createdAt, rowId } = parseCursor(cursor);
-    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
-    try {
-      const r = await db.execute({
-        sql: `SELECT COUNT(*) as c FROM mastra_messages
-              WHERE role IN ('user', 'assistant')
-                AND (createdAt > ? OR (createdAt = ? AND rowid > ?))`,
-        args: [createdAt, createdAt, rowId],
-      });
-      return Number(r.rows[0].c);
-    } finally {
-      db.close();
-    }
-  }
-
-  watchPaths(): string[] {
-    return [dirname(this.dbPath)];
-  }
-
-  async *ingest(cursor: string): AsyncGenerator<Message> {
-    const parsedCursor = parseCursor(cursor);
+  async *read(): AsyncGenerator<Message> {
+    const parsedCursor = parseCursor("");
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
       const rowsResult = await db.execute({
         sql: `
-        SELECT rowid as rowId, role, content, createdAt, thread_id
-        FROM mastra_messages
-        WHERE role IN ('user', 'assistant')
-          AND (createdAt > ? OR (createdAt = ? AND rowid > ?))
-        ORDER BY createdAt, rowid
-      `,
+  SELECT rowid as rowId, role, content, createdAt, thread_id
+  FROM mastra_messages
+  WHERE role IN ('user', 'assistant')
+    AND (createdAt > ? OR (createdAt = ? AND rowid > ?))
+  ORDER BY createdAt, rowid
+`,
         args: [parsedCursor.createdAt, parsedCursor.createdAt, parsedCursor.rowId],
       });
       const rows = rowsResult.rows as unknown as {
@@ -139,12 +115,5 @@ export class MastraSource implements Source {
     } finally {
       db.close();
     }
-  }
-
-  cursor(message: Message): string {
-    const createdAt = message.context?.mastraCreatedAt;
-    const rowId = message.context?.mastraRowId;
-    if (createdAt && rowId) return `${createdAt}|${rowId}`;
-    return `${new Date(message.timestamp).toISOString()}|0`;
   }
 }

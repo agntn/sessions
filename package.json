@@ -1,32 +1,26 @@
 {
-  "name": "memxa",
+  "name": "@agntn/sessions",
   "version": "0.1.0",
-  "description": "Universal AI conversation memory store with local SQLite backend.",
+  "description": "Read normalized AI coding sessions across harnesses.",
   "keywords": [
+    "agents",
     "ai",
     "claude",
     "codex",
-    "conversation",
     "gemini",
-    "ingest",
-    "memory",
-    "search",
-    "sqlite"
+    "harness",
+    "sessions"
   ],
-  "homepage": "https://github.com/oritwoen/memxa#readme",
-  "bugs": "https://github.com/oritwoen/memxa/issues",
+  "homepage": "https://github.com/agntn/sessions#readme",
+  "bugs": "https://github.com/agntn/sessions/issues",
   "license": "MIT",
   "author": "oritwoen (https://github.com/oritwoen)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/oritwoen/memxa.git"
-  },
-  "bin": {
-    "memxa": "./dist/cli.mjs"
+    "url": "git+https://github.com/agntn/sessions.git"
   },
   "files": [
-    "dist",
-    "drizzle"
+    "dist"
   ],
   "type": "module",
   "sideEffects": false,
@@ -36,22 +30,10 @@
     ".": {
       "types": "./dist/index.d.mts",
       "import": "./dist/index.mjs"
-    },
-    "./sources": {
-      "types": "./dist/sources/index.d.mts",
-      "import": "./dist/sources/index.mjs"
-    },
-    "./types": {
-      "types": "./dist/types.d.mts",
-      "import": "./dist/types.mjs"
     }
   },
   "scripts": {
     "build": "obuild",
-    "db:check": "drizzle-kit check",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio",
     "dev:prepare": "obuild --stub",
     "fmt": "oxlint . --fix && oxfmt .",
     "lint": "oxlint . && oxfmt --check .",
@@ -62,15 +44,11 @@
     "release": "pnpm test:run && pnpm build && changelogen --release --push"
   },
   "dependencies": {
-    "@clack/prompts": "^1.1.0",
-    "@libsql/client": "^0.15.15",
-    "citty": "^0.2.1",
-    "drizzle-orm": "^0.45.1"
+    "@libsql/client": "^0.15.15"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
     "changelogen": "^0.6.2",
-    "drizzle-kit": "^0.31.9",
     "obuild": "^0.4.31",
     "oxfmt": "^0.36.0",
     "oxlint": "^1.51.0",
