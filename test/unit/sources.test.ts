@@ -16,6 +16,8 @@ describe("public harness registry", () => {
     expect(create("claude").name).toBe("claude");
     expect(has("claude")).toBe(true);
     expect(has("claude-mem")).toBe(false);
+    expect(has("toString")).toBe(false);
+    expect(() => create("toString")).toThrow(UnknownSourceError);
   });
 
   it("rejects unknown harnesses", () => {

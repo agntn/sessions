@@ -22,6 +22,7 @@ const adapters: Record<string, new () => Source> = {
 
 /** Creates a session reader for a supported harness. */
 export function create(name: string): SessionReader {
+  if (!Object.hasOwn(adapters, name)) throw new UnknownSourceError(name);
   const Adapter = adapters[name];
   if (!Adapter) throw new UnknownSourceError(name);
   return createSessionReader(new Adapter());
@@ -39,5 +40,5 @@ export function allSources(): SessionReader[] {
 
 /** Returns whether a harness source is supported. */
 export function has(name: string): boolean {
-  return name in adapters;
+  return Object.hasOwn(adapters, name);
 }
