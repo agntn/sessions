@@ -15,7 +15,7 @@ vi.mock("@libsql/client", () => ({
 
 import { MastraSource } from "../../src/sources/mastra.ts";
 
-async function collect(source: MastraSource, cursor = ""): Promise<Message[]> {
+async function collect(source: MastraSource): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;

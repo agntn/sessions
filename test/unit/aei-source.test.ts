@@ -55,7 +55,7 @@ function mockMessagesAndBlocks(
   executeMock.mockResolvedValueOnce({ rows: allBlocks });
 }
 
-async function collect(source: AeiSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: AeiSource): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;
@@ -365,7 +365,7 @@ describe("AeiSource", () => {
     );
 
     const source = new AeiSource("/tmp/aei.db");
-    const msgs = await collect(source, "0|0");
+    const msgs = await collect(source);
 
     expect(msgs).toHaveLength(501);
     // Page 2 query should advance keyset to (1710000000000, 500)

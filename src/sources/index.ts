@@ -32,9 +32,7 @@ const adapters: Record<string, AdapterFactory> = {
 /** Creates a session reader for a supported harness. */
 export function create(name: string, options?: SourceOptions): SessionReader {
   if (!Object.hasOwn(adapters, name)) throw new UnknownSourceError(name);
-  const factory = adapters[name];
-  if (!factory) throw new UnknownSourceError(name);
-  return createSessionReader(factory(options));
+  return createSessionReader(adapters[name]!(options));
 }
 
 /** Lists supported harness source names. */

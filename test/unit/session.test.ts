@@ -47,4 +47,23 @@ describe("createSessionReader", () => {
     expect(sessions[1]).toMatchObject({ createdAt: 10, updatedAt: 20 });
     expect(sessions[1]?.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
   });
+
+  it("orders equal-timestamp sessions by locale-independent code units", async () => {
+    const tiedMessages: Message[] = ["ä", "z"].map((sessionId) => ({
+      source: "fixture",
+      sessionId,
+      role: "user",
+      timestamp: 10,
+      date: "2026-01-01",
+      blocks: [{ type: "text", text: sessionId }],
+    }));
+    const source = new FixtureSource();
+    source.read = async function* () {
+      yield* tiedMessages;
+    };
+
+    const sessions = await createSessionReader(source).list();
+
+    expect(sessions.map((session) => session.id)).toEqual(["z", "ä"]);
+  });
 });

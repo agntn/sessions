@@ -53,6 +53,8 @@ for (const reader of allSources()) {
 
 Each adapter accepts the native session format as its source of truth. Messages preserve text, thinking, tool calls, tool results, timestamps, roles, and stable source metadata when the harness exposes them.
 
+`list()` materializes the complete native archive and preserves full message payloads in memory. For very large archives or tool outputs, consumers should account for that memory cost before indexing, rendering, exporting, or persisting the returned sessions.
+
 ## License
 
 MIT

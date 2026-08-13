@@ -15,7 +15,7 @@ function writeJson(filename: string, data: Record<string, unknown>): void {
   writeFileSync(join(tempDir, filename), JSON.stringify(data));
 }
 
-async function collect(source: CodexSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: CodexSource): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;

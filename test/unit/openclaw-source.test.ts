@@ -11,7 +11,7 @@ function writeJsonl(filename: string, lines: Record<string, unknown>[]): void {
   writeFileSync(join(tempDir, filename), lines.map((l) => JSON.stringify(l)).join("\n"));
 }
 
-async function collect(source: OpenClawSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: OpenClawSource): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;

@@ -14,7 +14,7 @@ function writeChat(project: string, filename: string, data: Record<string, unkno
   writeFileSync(join(dir, filename), JSON.stringify(data));
 }
 
-async function collect(source: GeminiSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: GeminiSource): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;

@@ -412,6 +412,39 @@ describe("OpenCodeSource", () => {
     expect(msgs[0].blocks[0].text!.length).toBe(10000);
   });
 
+  it.each([0, false])("preserves falsy tool values: %j", async (value) => {
+    executeMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            pdata: JSON.stringify({
+              type: "tool-invocation",
+              toolName: "run",
+              toolCallId: "tc1",
+              args: value,
+            }),
+            role: "assistant",
+            tc: 1000,
+            sid: "s1",
+            rid: 1,
+          },
+          {
+            pdata: JSON.stringify({ type: "tool-result", toolCallId: "tc1", result: value }),
+            role: "assistant",
+            tc: 1001,
+            sid: "s1",
+            rid: 2,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const messages = await collect(new OpenCodeSource("/tmp/opencode.db"));
+
+    expect(messages[0].blocks[0].toolInput).toBe(JSON.stringify(value));
+    expect(messages[1].blocks[0].text).toBe(JSON.stringify(value));
+  });
+
   it("always closes database connection", async () => {
     executeMock.mockRejectedValueOnce(new Error("db error"));
 

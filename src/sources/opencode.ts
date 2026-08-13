@@ -112,7 +112,7 @@ export class OpenCodeSource implements Source {
                       ? part.args
                       : typeof part.input === "string"
                         ? part.input
-                        : JSON.stringify(part.args || part.input || ""),
+                        : JSON.stringify(part.args ?? part.input ?? ""),
                 },
               ],
               channel: this.channel,
@@ -132,7 +132,7 @@ export class OpenCodeSource implements Source {
                   text:
                     typeof part.result === "string"
                       ? part.result
-                      : JSON.stringify(part.result || ""),
+                      : JSON.stringify(part.result ?? ""),
                 },
               ],
               channel: this.channel,

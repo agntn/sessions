@@ -42,7 +42,11 @@ export function createSessionReader(source: Source): SessionReader {
 
       return [...sessions.entries()]
         .map(([id, messages]) => toSession(source.name, id, messages))
-        .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id));
+        .sort(
+          (left, right) =>
+            right.updatedAt - left.updatedAt ||
+            (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+        );
     },
   };
 }
