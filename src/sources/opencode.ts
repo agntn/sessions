@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Channel, Participant } from "../core/types.ts";
 
-// Large window: single JSON column truncated to 16 KB via substr
+// Large window keeps keyset pagination bounded without truncating native payloads.
 const WINDOW = 5000;
 
 export class OpenCodeSource implements Source {
@@ -23,10 +23,10 @@ export class OpenCodeSource implements Source {
   }
 
   async *read(): AsyncGenerator<Message> {
-    const since = 0;
+    const initialTimestamp = Number.MIN_SAFE_INTEGER;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      let lastTc = since;
+      let lastTc = initialTimestamp;
       let lastRowid = 0;
       while (true) {
         const rowsResult = await db.execute({

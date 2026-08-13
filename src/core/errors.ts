@@ -6,17 +6,6 @@ export class SessionsError extends Error {
   }
 }
 
-/** Thrown when a source exists but is unavailable on this machine. */
-export class SourceUnavailableError extends SessionsError {
-  readonly source: string;
-
-  constructor(source: string) {
-    super(`Source "${source}" is not available`);
-    this.name = "SourceUnavailableError";
-    this.source = source;
-  }
-}
-
 /** Thrown when a requested harness source is unsupported. */
 export class UnknownSourceError extends SessionsError {
   readonly source: string;

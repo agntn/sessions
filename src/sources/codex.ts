@@ -28,7 +28,7 @@ function parseBlocks(
     const role = String(payload.role || "");
     if (role === "developer") return null;
 
-    const memxaRole = role === "assistant" ? ("assistant" as const) : ("user" as const);
+    const messageRole = role === "assistant" ? ("assistant" as const) : ("user" as const);
     const content = payload.content as Array<Record<string, unknown>> | null;
     if (!content?.length) return null;
 
@@ -41,7 +41,7 @@ function parseBlocks(
       }
     }
 
-    return blocks.length ? { role: memxaRole, blocks } : null;
+    return blocks.length ? { role: messageRole, blocks } : null;
   }
 
   if (type === "function_call") {
@@ -79,7 +79,6 @@ function parseBlocks(
 function* parseJsonSession(
   path: string,
   mtime: number,
-  since: number,
   sourceName: string,
   channel: Channel,
   user: Participant,
@@ -104,7 +103,6 @@ function* parseJsonSession(
     if (!parsed) continue;
 
     const ts = sessionTs + index;
-    if (ts < since) continue;
 
     yield {
       source: sourceName,
@@ -135,8 +133,6 @@ export class CodexSource implements Source {
   }
 
   async *read(): AsyncGenerator<Message> {
-    const since = 0;
-
     const files: { path: string; mtime: number; format: "jsonl" | "json" }[] = [];
     for (const f of walkSessions(this.sessionsDir)) {
       const mt = statSync(f.path).mtimeMs;
@@ -145,10 +141,8 @@ export class CodexSource implements Source {
     files.sort((a, b) => a.mtime - b.mtime);
 
     for (const file of files) {
-      if (file.mtime < since) continue;
-
       if (file.format === "json") {
-        yield* parseJsonSession(file.path, file.mtime, since, this.name, this.channel, this.user);
+        yield* parseJsonSession(file.path, file.mtime, this.name, this.channel, this.user);
         continue;
       }
 
@@ -186,7 +180,6 @@ export class CodexSource implements Source {
             if (text.length > 0) {
               const parsedTs = new Date(String(entry.timestamp)).getTime();
               const ts = Number.isFinite(parsedTs) ? parsedTs : file.mtime;
-              if (ts < since) continue;
               yield {
                 source: this.name,
                 sessionId,
@@ -217,7 +210,6 @@ export class CodexSource implements Source {
 
         const parsedEntryTs = new Date(String(entry.timestamp)).getTime();
         const ts = Number.isFinite(parsedEntryTs) ? parsedEntryTs : file.mtime;
-        if (ts < since) continue;
 
         yield {
           source: this.name,

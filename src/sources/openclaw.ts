@@ -126,8 +126,6 @@ export class OpenClawSource implements Source {
   }
 
   async *read(): AsyncGenerator<Message> {
-    const since = 0;
-
     const files: { path: string; mtime: number }[] = [];
     for (const f of walkJsonl(this.sessionsDirs)) {
       files.push({ path: f, mtime: statSync(f).mtimeMs });
@@ -135,8 +133,6 @@ export class OpenClawSource implements Source {
     files.sort((a, b) => a.mtime - b.mtime);
 
     for (const file of files) {
-      if (file.mtime < since) continue;
-
       const sessionId = file.path.split("/").pop()?.replace(".jsonl", "") || "";
 
       const rl = createInterface({
@@ -230,7 +226,6 @@ export class OpenClawSource implements Source {
             ? new Date(sessionTimestamp).getTime()
             : NaN;
         const ts = Number.isFinite(rawTs) ? rawTs : file.mtime;
-        if (ts < since) continue;
         const date = new Date(ts).toISOString().split("T")[0];
 
         yield {
