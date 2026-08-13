@@ -116,7 +116,7 @@ export class GeminiSource implements Source {
 
         const parsed = entry.timestamp ? new Date(String(entry.timestamp)).getTime() : NaN;
         const ts = Number.isFinite(parsed) ? parsed : file.mtime;
-        if (ts <= since) continue;
+        if (ts < since) continue;
         const date = new Date(ts).toISOString().split("T")[0];
 
         yield {

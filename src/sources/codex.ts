@@ -104,7 +104,7 @@ function* parseJsonSession(
     if (!parsed) continue;
 
     const ts = sessionTs + index;
-    if (ts <= since) continue;
+    if (ts < since) continue;
 
     yield {
       source: sourceName,
@@ -186,7 +186,7 @@ export class CodexSource implements Source {
             if (text.length > 0) {
               const parsedTs = new Date(String(entry.timestamp)).getTime();
               const ts = Number.isFinite(parsedTs) ? parsedTs : file.mtime;
-              if (ts <= since) continue;
+              if (ts < since) continue;
               yield {
                 source: this.name,
                 sessionId,
@@ -217,7 +217,7 @@ export class CodexSource implements Source {
 
         const parsedEntryTs = new Date(String(entry.timestamp)).getTime();
         const ts = Number.isFinite(parsedEntryTs) ? parsedEntryTs : file.mtime;
-        if (ts <= since) continue;
+        if (ts < since) continue;
 
         yield {
           source: this.name,

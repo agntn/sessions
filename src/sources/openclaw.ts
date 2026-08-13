@@ -230,7 +230,7 @@ export class OpenClawSource implements Source {
             ? new Date(sessionTimestamp).getTime()
             : NaN;
         const ts = Number.isFinite(rawTs) ? rawTs : file.mtime;
-        if (ts <= since) continue;
+        if (ts < since) continue;
         const date = new Date(ts).toISOString().split("T")[0];
 
         yield {
