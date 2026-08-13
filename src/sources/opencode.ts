@@ -23,12 +23,13 @@ export class OpenCodeSource implements Source {
   }
 
   async *read(): AsyncGenerator<Message> {
-    const initialTimestamp = Number.MIN_SAFE_INTEGER;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      let lastTc = initialTimestamp;
-      let lastRowid = 0;
+      let boundary: { timestamp: number; rowId: number } | undefined;
       while (true) {
+        const boundarySql = boundary
+          ? "WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))"
+          : "";
         const rowsResult = await db.execute({
           sql: `
     SELECT
@@ -39,11 +40,13 @@ export class OpenCodeSource implements Source {
       p.rowid as rid
     FROM part p
     JOIN message m ON p.message_id = m.id
-    WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))
+    ${boundarySql}
     ORDER BY p.time_created, p.rowid
     LIMIT ?
   `,
-          args: [lastTc, lastTc, lastRowid, WINDOW],
+          args: boundary
+            ? [boundary.timestamp, boundary.timestamp, boundary.rowId, WINDOW]
+            : [WINDOW],
         });
         const rows = rowsResult.rows as unknown as {
           pdata: string;
@@ -55,8 +58,7 @@ export class OpenCodeSource implements Source {
 
         if (rows.length === 0) break;
         const last = rows[rows.length - 1];
-        lastTc = last.tc;
-        lastRowid = last.rid;
+        boundary = { timestamp: last.tc, rowId: last.rid };
 
         for (const row of rows) {
           if (row.role !== "user" && row.role !== "assistant") continue;

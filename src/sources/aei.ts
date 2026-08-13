@@ -38,7 +38,6 @@ export class AeiSource implements Source {
   }
 
   async *read(): AsyncGenerator<Message> {
-    const initialBoundary = Number.MIN_SAFE_INTEGER;
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
 
     try {
@@ -57,21 +56,23 @@ export class AeiSource implements Source {
         ...availableSession.map((c) => `s.${c}`),
       ].join(", ");
 
-      // Keyset pagination: use (timestamp, id) bounds instead of OFFSET
-      let keyTs = initialBoundary;
-      let keyId = initialBoundary;
+      // The first page is unbounded so every SQLite int64 timestamp is eligible.
+      let boundary: { timestamp: number; id: number } | undefined;
       while (true) {
+        const boundarySql = boundary
+          ? "AND (m.timestamp > ? OR (m.timestamp = ? AND m.id > ?))"
+          : "";
         const rowsResult = await db.execute({
           sql: `
     SELECT ${selectCols}
     FROM messages m
     JOIN sessions s ON m.session_id = s.id
     WHERE m.source = 'aei-cli'
-      AND (m.timestamp > ? OR (m.timestamp = ? AND m.id > ?))
+      ${boundarySql}
     ORDER BY m.timestamp, m.id
     LIMIT ?
     `,
-          args: [keyTs, keyTs, keyId, WINDOW],
+          args: boundary ? [boundary.timestamp, boundary.timestamp, boundary.id, WINDOW] : [WINDOW],
         });
         const rows = rowsResult.rows as unknown as Record<string, unknown>[];
 
@@ -170,9 +171,7 @@ export class AeiSource implements Source {
         const nextTs = Number(lastRow.timestamp);
         const nextId = Number(lastRow.id);
         if (!Number.isFinite(nextTs) || !Number.isFinite(nextId)) break;
-        keyTs = nextTs;
-        keyId = nextId;
-
+        boundary = { timestamp: nextTs, id: nextId };
         if (rows.length < WINDOW) break;
       }
     } finally {

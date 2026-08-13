@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -29,9 +29,20 @@ describe("public harness registry", () => {
     expect(() => create("toString")).toThrow(UnknownSourceError);
   });
 
-  it("passes a custom native data path to the selected harness", () => {
+  it("reads sessions from a custom native data path", async () => {
     customPath = mkdtempSync(join(tmpdir(), "sessions-source-"));
-    expect(create("claude", { path: customPath }).available()).toBe(true);
+    writeFileSync(
+      join(customPath, "custom.jsonl"),
+      `${JSON.stringify({
+        type: "user",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        message: { content: "custom path" },
+      })}\n`,
+    );
+
+    const sessions = await create("claude", { path: customPath }).list();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.messages[0]?.blocks[0]?.text).toBe("custom path");
   });
 
   it("rejects unknown harnesses", () => {
