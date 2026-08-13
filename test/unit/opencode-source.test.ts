@@ -20,9 +20,9 @@ vi.mock("../../src/core/env.ts", async (importOriginal) => {
 
 import { OpenCodeSource } from "../../src/sources/opencode.ts";
 
-async function collect(source: OpenCodeSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: OpenCodeSource): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.ingest(cursor)) messages.push(m);
+  for await (const message of source.read()) messages.push(message);
   return messages;
 }
 
@@ -327,21 +327,6 @@ describe("OpenCodeSource", () => {
     expect(msgs).toHaveLength(0);
   });
 
-  it("treats non-finite cursor values as zero", async () => {
-    executeMock.mockResolvedValue({ rows: [] });
-
-    const source = new OpenCodeSource("/tmp/opencode.db");
-    for await (const _ of source.ingest("Infinity")) {
-    }
-
-    expect(executeMock).toHaveBeenCalledTimes(1);
-    expect(executeMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        args: [0, 0, 0, 5000],
-      }),
-    );
-  });
-
   it("paginates through results using keyset cursor", async () => {
     executeMock
       .mockResolvedValueOnce({
@@ -376,7 +361,7 @@ describe("OpenCodeSource", () => {
     expect(executeMock.mock.calls[1][0].args).toEqual([1000, 1000, 10, 5000]);
   });
 
-  it("truncates tool_call input at 8000 chars", async () => {
+  it("preserves complete tool_call input", async () => {
     executeMock
       .mockResolvedValueOnce({
         rows: [
@@ -402,10 +387,10 @@ describe("OpenCodeSource", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].blocks[0].type).toBe("tool_call");
     const block = messages[0].blocks[0] as { toolInput: string };
-    expect(block.toolInput.length).toBe(8000);
+    expect(block.toolInput.length).toBe(10000);
   });
 
-  it("truncates text blocks at 8000 chars", async () => {
+  it("preserves complete text blocks", async () => {
     executeMock
       .mockResolvedValueOnce({
         rows: [
@@ -424,31 +409,40 @@ describe("OpenCodeSource", () => {
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
-    expect(msgs[0].blocks[0].text!.length).toBe(8000);
+    expect(msgs[0].blocks[0].text!.length).toBe(10000);
   });
 
-  it("cursor() returns timestamp as string", () => {
-    const source = new OpenCodeSource("/tmp/opencode.db");
-    const msg: Message = {
-      source: "opencode",
-      sessionId: "s1",
-      role: "user",
-      timestamp: 1700000000000,
-      date: "2023-11-14",
-      blocks: [{ type: "text", text: "test" }],
-    };
+  it.each([0, false])("preserves falsy tool values: %j", async (value) => {
+    executeMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            pdata: JSON.stringify({
+              type: "tool-invocation",
+              toolName: "run",
+              toolCallId: "tc1",
+              args: value,
+            }),
+            role: "assistant",
+            tc: 1000,
+            sid: "s1",
+            rid: 1,
+          },
+          {
+            pdata: JSON.stringify({ type: "tool-result", toolCallId: "tc1", result: value }),
+            role: "assistant",
+            tc: 1001,
+            sid: "s1",
+            rid: 2,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
 
-    expect(source.cursor(msg)).toBe("1700000000000");
-  });
+    const messages = await collect(new OpenCodeSource("/tmp/opencode.db"));
 
-  it("estimate() returns count of pending parts", async () => {
-    executeMock.mockResolvedValueOnce({ rows: [{ cnt: 42 }] });
-
-    const source = new OpenCodeSource("/tmp/opencode.db");
-    const count = await source.estimate("1700000000000");
-
-    expect(count).toBe(42);
-    expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({ args: [1700000000000] }));
+    expect(messages[0].blocks[0].toolInput).toBe(JSON.stringify(value));
+    expect(messages[1].blocks[0].text).toBe(JSON.stringify(value));
   });
 
   it("always closes database connection", async () => {
@@ -456,7 +450,7 @@ describe("OpenCodeSource", () => {
 
     const source = new OpenCodeSource("/tmp/opencode.db");
     await expect(async () => {
-      for await (const _ of source.ingest("0")) {
+      for await (const _ of source.read()) {
       }
     }).rejects.toThrow("db error");
 

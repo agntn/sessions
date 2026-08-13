@@ -15,9 +15,9 @@ function writeJson(filename: string, data: Record<string, unknown>): void {
   writeFileSync(join(tempDir, filename), JSON.stringify(data));
 }
 
-async function collect(source: CodexSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: CodexSource): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.ingest(cursor)) messages.push(m);
+  for await (const m of source.read()) messages.push(m);
   return messages;
 }
 
@@ -418,76 +418,5 @@ describe("CodexSource error handling", () => {
 
     expect(msgs).toHaveLength(1);
     expect(msgs[0].sessionId).toBe("fallback-session");
-  });
-});
-
-describe("CodexSource cursor", () => {
-  it("filters by cursor across formats", async () => {
-    const ts = new Date("2026-03-10T10:00:00Z").getTime();
-    writeJsonl("old.jsonl", [
-      {
-        type: "response_item",
-        timestamp: "2026-03-10T10:00:00Z",
-        payload: {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: "old jsonl" }],
-        },
-      },
-    ]);
-    writeJson("old.json", {
-      session: { id: "ses-old", timestamp: "2026-03-10T10:00:00Z" },
-      items: [
-        { type: "message", role: "user", content: [{ type: "input_text", text: "old json" }] },
-      ],
-    });
-    writeJsonl("new.jsonl", [
-      {
-        type: "response_item",
-        timestamp: "2026-03-10T12:00:00Z",
-        payload: {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: "new jsonl" }],
-        },
-      },
-    ]);
-    writeJson("new.json", {
-      session: { id: "ses-new", timestamp: "2026-03-10T12:00:00Z" },
-      items: [
-        { type: "message", role: "user", content: [{ type: "input_text", text: "new json" }] },
-      ],
-    });
-    const source = new CodexSource(tempDir);
-    const msgs = await collect(source, String(ts));
-
-    expect(msgs).toHaveLength(2);
-    const texts = msgs.map((m) => m.blocks[0].text);
-    expect(texts).toContain("new jsonl");
-    expect(texts).toContain("new json");
-  });
-
-  it("cursor() returns max timestamp as string", () => {
-    const source = new CodexSource(tempDir);
-    const msgs: Message[] = [
-      {
-        source: "codex",
-        sessionId: "s1",
-        role: "user",
-        timestamp: 200,
-        date: "1970-01-01",
-        blocks: [{ type: "text", text: "a" }],
-      },
-      {
-        source: "codex",
-        sessionId: "s1",
-        role: "user",
-        timestamp: 400,
-        date: "1970-01-01",
-        blocks: [{ type: "text", text: "b" }],
-      },
-    ];
-
-    expect(source.cursor(msgs[1])).toBe("400");
   });
 });

@@ -55,9 +55,9 @@ function mockMessagesAndBlocks(
   executeMock.mockResolvedValueOnce({ rows: allBlocks });
 }
 
-async function collect(source: AeiSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: AeiSource): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.ingest(cursor)) messages.push(m);
+  for await (const m of source.read()) messages.push(m);
   return messages;
 }
 
@@ -346,38 +346,6 @@ describe("AeiSource", () => {
     expect(msgs).toHaveLength(0);
   });
 
-  it("passes cursor as keyset parameters to SQL", async () => {
-    mockPragma();
-    executeMock.mockResolvedValueOnce({ rows: [] });
-
-    const source = new AeiSource("/tmp/aei.db");
-    await collect(source, "1710000000000|42");
-
-    // call 1: PRAGMA messages, call 2: PRAGMA sessions, call 3: keyset query
-    expect(executeMock).toHaveBeenCalledTimes(3);
-    expect(executeMock).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        args: [1710000000000, 1710000000000, 42, 500],
-      }),
-    );
-  });
-
-  it("handles legacy cursor format (timestamp only)", async () => {
-    mockPragma();
-    executeMock.mockResolvedValueOnce({ rows: [] });
-
-    const source = new AeiSource("/tmp/aei.db");
-    await collect(source, "1710000000000");
-
-    expect(executeMock).toHaveBeenNthCalledWith(
-      3,
-      expect.objectContaining({
-        args: [1710000000000, 1710000000000, Number.MAX_SAFE_INTEGER, 500],
-      }),
-    );
-  });
-
   it("advances keyset across two pages sharing the same timestamp", async () => {
     mockPragma();
     // Page 1: exactly 500 rows (WINDOW) at the same timestamp, ending at id=500
@@ -397,7 +365,7 @@ describe("AeiSource", () => {
     );
 
     const source = new AeiSource("/tmp/aei.db");
-    const msgs = await collect(source, "0|0");
+    const msgs = await collect(source);
 
     expect(msgs).toHaveLength(501);
     // Page 2 query should advance keyset to (1710000000000, 500)
@@ -407,35 +375,6 @@ describe("AeiSource", () => {
         args: [1710000000000, 1710000000000, 500, 500],
       }),
     );
-  });
-
-  it("cursor() returns timestamp|id format", () => {
-    const source = new AeiSource("/tmp/aei.db");
-    const msg: Message = {
-      source: "aei",
-      sessionId: "s1",
-      role: "user",
-      timestamp: 300,
-      date: "1970-01-01",
-      blocks: [{ type: "text", text: "b" }],
-      context: { aeiMsgId: "42" },
-    };
-
-    expect(source.cursor(msg)).toBe("300|42");
-  });
-
-  it("cursor() falls back to timestamp-only when no aeiMsgId", () => {
-    const source = new AeiSource("/tmp/aei.db");
-    const msg: Message = {
-      source: "aei",
-      sessionId: "s1",
-      role: "user",
-      timestamp: 300,
-      date: "1970-01-01",
-      blocks: [{ type: "text", text: "b" }],
-    };
-
-    expect(source.cursor(msg)).toBe("300");
   });
 
   it("includes only aeiMsgId in context when all other fields are null", async () => {
@@ -533,22 +472,12 @@ describe("AeiSource", () => {
 
     const source = new AeiSource("/tmp/aei.db");
     await expect(async () => {
-      for await (const _ of source.ingest("0")) {
+      for await (const _ of source.read()) {
         // consume
       }
     }).rejects.toThrow("db error");
 
     expect(closeMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("estimate() returns count of pending messages", async () => {
-    executeMock.mockResolvedValueOnce({ rows: [{ c: 42 }] });
-
-    const source = new AeiSource("/tmp/aei.db");
-    const count = await source.estimate("1710000000000");
-
-    expect(count).toBe(42);
-    expect(executeMock).toHaveBeenCalledWith(expect.objectContaining({ args: [1710000000000] }));
   });
 
   it("handles missing columns gracefully", async () => {

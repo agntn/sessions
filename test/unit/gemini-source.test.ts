@@ -14,9 +14,9 @@ function writeChat(project: string, filename: string, data: Record<string, unkno
   writeFileSync(join(dir, filename), JSON.stringify(data));
 }
 
-async function collect(source: GeminiSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: GeminiSource): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.ingest(cursor)) messages.push(m);
+  for await (const m of source.read()) messages.push(m);
   return messages;
 }
 
@@ -158,21 +158,6 @@ describe("GeminiSource", () => {
     expect(msgs[0].blocks[0].text).toBe("valid");
   });
 
-  it("filters by cursor timestamp", async () => {
-    const ts = new Date("2026-03-10T10:00:00Z").getTime();
-    writeChat("project-8", "chat-008.json", {
-      messages: [
-        { type: "user", timestamp: "2026-03-10T10:00:00Z", content: "old" },
-        { type: "user", timestamp: "2026-03-10T12:00:00Z", content: "new" },
-      ],
-    });
-    const source = new GeminiSource(tempDir);
-    const msgs = await collect(source, String(ts));
-
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].blocks[0].text).toBe("new");
-  });
-
   it("handles multiple projects with separate chat dirs", async () => {
     writeChat("alpha", "chat-a.json", {
       messages: [{ type: "user", timestamp: "2026-03-10T10:00:00Z", content: "from alpha" }],
@@ -203,30 +188,6 @@ describe("GeminiSource", () => {
     expect(msgs[1].author).toEqual({ platform: "cli", name: "gemini", isBot: true });
   });
 
-  it("cursor() returns max timestamp", () => {
-    const source = new GeminiSource(tempDir);
-    const msgs: Message[] = [
-      {
-        source: "gemini",
-        sessionId: "s1",
-        role: "user",
-        timestamp: 500,
-        date: "1970-01-01",
-        blocks: [{ type: "text", text: "a" }],
-      },
-      {
-        source: "gemini",
-        sessionId: "s1",
-        role: "user",
-        timestamp: 100,
-        date: "1970-01-01",
-        blocks: [{ type: "text", text: "b" }],
-      },
-    ];
-
-    expect(source.cursor(msgs[0])).toBe("500");
-  });
-
   it("skips invalid JSON files gracefully", async () => {
     const dir = join(tempDir, "bad-project", "chats");
     mkdirSync(dir, { recursive: true });
@@ -242,14 +203,14 @@ describe("GeminiSource", () => {
     expect(msgs[0].blocks[0].text).toBe("valid");
   });
 
-  it("truncates long content at 8000 chars", async () => {
+  it("preserves long content", async () => {
     writeChat("project-trunc", "chat-trunc.json", {
       messages: [{ type: "user", timestamp: "2026-03-10T10:00:00Z", content: "x".repeat(10000) }],
     });
     const source = new GeminiSource(tempDir);
     const msgs = await collect(source);
 
-    expect(msgs[0].blocks[0].text).toHaveLength(8000);
+    expect(msgs[0].blocks[0].text).toHaveLength(10000);
   });
 
   it("uses displayName as toolName fallback", async () => {

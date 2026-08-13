@@ -11,9 +11,9 @@ function writeJsonl(filename: string, lines: Record<string, unknown>[]): void {
   writeFileSync(join(tempDir, filename), lines.map((l) => JSON.stringify(l)).join("\n"));
 }
 
-async function collect(source: OpenClawSource, cursor = "0"): Promise<Message[]> {
+async function collect(source: OpenClawSource): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.ingest(cursor)) messages.push(m);
+  for await (const m of source.read()) messages.push(m);
   return messages;
 }
 
@@ -144,27 +144,6 @@ describe("OpenClawSource basic parsing", () => {
 
     expect(msgs).toHaveLength(1);
     expect(msgs[0].timestamp).toBe(new Date("2026-03-10T10:00:00Z").getTime());
-  });
-
-  it("filters by cursor", async () => {
-    const ts = new Date("2026-03-10T10:00:01Z").getTime();
-    writeJsonl("session-cur.jsonl", [
-      {
-        type: "message",
-        timestamp: "2026-03-10T10:00:01Z",
-        message: { role: "user", content: [{ type: "text", text: "old" }] },
-      },
-      {
-        type: "message",
-        timestamp: "2026-03-10T12:00:00Z",
-        message: { role: "user", content: [{ type: "text", text: "new" }] },
-      },
-    ]);
-    const source = new OpenClawSource([tempDir]);
-    const msgs = await collect(source, String(ts));
-
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].blocks[0].text).toBe("new");
   });
 
   it("skips unknown roles", async () => {
@@ -364,30 +343,6 @@ describe("OpenClawSource multi-dir support", () => {
     } finally {
       rmSync(dir2, { recursive: true, force: true });
     }
-  });
-
-  it("cursor() returns max timestamp", () => {
-    const source = new OpenClawSource([tempDir]);
-    const msgs: Message[] = [
-      {
-        source: "openclaw",
-        sessionId: "s1",
-        role: "user",
-        timestamp: 100,
-        date: "1970-01-01",
-        blocks: [{ type: "text", text: "a" }],
-      },
-      {
-        source: "openclaw",
-        sessionId: "s1",
-        role: "user",
-        timestamp: 300,
-        date: "1970-01-01",
-        blocks: [{ type: "text", text: "b" }],
-      },
-    ];
-
-    expect(source.cursor(msgs[1])).toBe("300");
   });
 });
 

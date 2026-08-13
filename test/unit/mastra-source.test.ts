@@ -15,9 +15,9 @@ vi.mock("@libsql/client", () => ({
 
 import { MastraSource } from "../../src/sources/mastra.ts";
 
-async function collect(source: MastraSource, cursor = ""): Promise<Message[]> {
+async function collect(source: MastraSource): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.ingest(cursor)) messages.push(m);
+  for await (const m of source.read()) messages.push(m);
   return messages;
 }
 
@@ -52,6 +52,12 @@ describe("MastraSource", () => {
     expect(msgs[0].blocks).toEqual([{ type: "text", text: "hello from user" }]);
     expect(msgs[0].author?.isBot).toBeUndefined();
     expect(msgs[0].channel?.name).toBe("mastra");
+    expect(executeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sql: expect.not.stringContaining("createdAt >"),
+        args: [],
+      }),
+    );
   });
 
   it("parses assistant message with bot author", async () => {
@@ -251,85 +257,12 @@ describe("MastraSource", () => {
     });
   });
 
-  it("cursor() returns createdAt|rowId format from context", () => {
-    const source = new MastraSource("/tmp/mastra.db");
-    const msg: Message = {
-      source: "mastra",
-      sessionId: "t1",
-      role: "user",
-      timestamp: 1710072000000,
-      date: "2026-03-10",
-      blocks: [{ type: "text", text: "test" }],
-      context: { mastraCreatedAt: "2026-03-10T12:00:00.000Z", mastraRowId: "42" },
-    };
-
-    expect(source.cursor(msg)).toBe("2026-03-10T12:00:00.000Z|42");
-  });
-
-  it("cursor() falls back to ISO timestamp when no context", () => {
-    const source = new MastraSource("/tmp/mastra.db");
-    const msg: Message = {
-      source: "mastra",
-      sessionId: "t1",
-      role: "user",
-      timestamp: 1710072000000,
-      date: "2026-03-10",
-      blocks: [{ type: "text", text: "test" }],
-    };
-
-    expect(source.cursor(msg)).toBe(`${new Date(1710072000000).toISOString()}|0`);
-  });
-
-  it("normalizes non-finite cursor row id to zero", async () => {
-    executeMock.mockResolvedValue({ rows: [] });
-
-    const source = new MastraSource("/tmp/mastra.db");
-    for await (const _ of source.ingest("2026-03-01T00:00:00.000Z|Infinity")) {
-    }
-
-    expect(executeMock).toHaveBeenCalledTimes(1);
-    expect(executeMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        args: ["2026-03-01T00:00:00.000Z", "2026-03-01T00:00:00.000Z", 0],
-      }),
-    );
-  });
-
-  it("falls back to epoch cursor date when createdAt cursor part is invalid", async () => {
-    executeMock.mockResolvedValue({ rows: [] });
-
-    const source = new MastraSource("/tmp/mastra.db");
-    for await (const _ of source.ingest("not-a-date|7")) {
-    }
-
-    expect(executeMock).toHaveBeenCalledTimes(1);
-    expect(executeMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        args: ["1970-01-01", "1970-01-01", 7],
-      }),
-    );
-  });
-
-  it("uses empty cursor as epoch defaults", async () => {
-    executeMock.mockResolvedValue({ rows: [] });
-
-    const source = new MastraSource("/tmp/mastra.db");
-    for await (const _ of source.ingest("")) {
-    }
-
-    expect(executeMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        args: ["1970-01-01", "1970-01-01", 0],
-      }),
-    );
-  });
-
   it("always closes database connection", async () => {
     executeMock.mockRejectedValueOnce(new Error("db error"));
 
     const source = new MastraSource("/tmp/mastra.db");
     await expect(async () => {
-      for await (const _ of source.ingest("")) {
+      for await (const _ of source.read()) {
       }
     }).rejects.toThrow("db error");
 

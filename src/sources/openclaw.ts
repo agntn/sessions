@@ -68,11 +68,10 @@ function parseBlocks(content: unknown[]): Block[] {
     const block = b as Record<string, unknown>;
     switch (block.type) {
       case "text":
-        if (block.text) out.push({ type: "text", text: String(block.text).slice(0, 8000) });
+        if (block.text) out.push({ type: "text", text: String(block.text) });
         break;
       case "thinking":
-        if (block.thinking)
-          out.push({ type: "thinking", text: String(block.thinking).slice(0, 8000) });
+        if (block.thinking) out.push({ type: "thinking", text: String(block.thinking) });
         break;
       case "toolCall":
         out.push({
@@ -91,9 +90,8 @@ function parseBlocks(content: unknown[]): Block[] {
                 .filter((c) => c.type === "text")
                 .map((c) => String(c.text || ""))
                 .join("\n")
-                .slice(0, 8000)
             : typeof block.content === "string"
-              ? block.content.slice(0, 8000)
+              ? block.content
               : "",
         });
         break;
@@ -127,24 +125,7 @@ export class OpenClawSource implements Source {
     return this.sessionsDirs.some((d) => existsSync(d));
   }
 
-  watchPaths(): string[] {
-    return [...this.sessionsDirs];
-  }
-
-  async estimate(cursor: string): Promise<number> {
-    const parsed = Number(cursor);
-    const since = Number.isFinite(parsed) ? parsed : 0;
-    let count = 0;
-    for (const f of walkJsonl(this.sessionsDirs)) {
-      if (statSync(f).mtimeMs >= since) count++;
-    }
-    return count;
-  }
-
-  async *ingest(cursor: string): AsyncGenerator<Message> {
-    const parsedCursor = Number(cursor);
-    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
-
+  async *read(): AsyncGenerator<Message> {
     const files: { path: string; mtime: number }[] = [];
     for (const f of walkJsonl(this.sessionsDirs)) {
       files.push({ path: f, mtime: statSync(f).mtimeMs });
@@ -152,8 +133,6 @@ export class OpenClawSource implements Source {
     files.sort((a, b) => a.mtime - b.mtime);
 
     for (const file of files) {
-      if (file.mtime < since) continue;
-
       const sessionId = file.path.split("/").pop()?.replace(".jsonl", "") || "";
 
       const rl = createInterface({
@@ -247,7 +226,6 @@ export class OpenClawSource implements Source {
             ? new Date(sessionTimestamp).getTime()
             : NaN;
         const ts = Number.isFinite(rawTs) ? rawTs : file.mtime;
-        if (ts <= since) continue;
         const date = new Date(ts).toISOString().split("T")[0];
 
         yield {
@@ -263,9 +241,5 @@ export class OpenClawSource implements Source {
         };
       }
     }
-  }
-
-  cursor(message: Message): string {
-    return String(message.timestamp);
   }
 }

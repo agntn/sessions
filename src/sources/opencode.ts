@@ -1,10 +1,10 @@
 import { home, osUser } from "../core/env.ts";
 import { createClient } from "@libsql/client";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Channel, Participant } from "../core/types.ts";
 
-// Large window: single JSON column truncated to 16 KB via substr
+// Large window keeps keyset pagination bounded without truncating native payloads.
 const WINDOW = 5000;
 
 export class OpenCodeSource implements Source {
@@ -22,48 +22,31 @@ export class OpenCodeSource implements Source {
     return existsSync(this.dbPath);
   }
 
-  watchPaths(): string[] {
-    return [dirname(this.dbPath)];
-  }
-
-  async estimate(cursor: string): Promise<number> {
-    const parsed = Number(cursor);
-    const since = Number.isFinite(parsed) ? parsed : 0;
+  async *read(): AsyncGenerator<Message> {
     const db = createClient({ url: `file:${resolve(this.dbPath)}` });
     try {
-      const r = await db.execute({
-        sql: `SELECT COUNT(*) as cnt FROM part p JOIN message m ON p.message_id = m.id WHERE p.time_created > ?`,
-        args: [since],
-      });
-      return Number((r.rows[0] as unknown as { cnt: number }).cnt);
-    } finally {
-      db.close();
-    }
-  }
-
-  async *ingest(cursor: string): AsyncGenerator<Message> {
-    const parsedCursor = Number(cursor);
-    const since = Number.isFinite(parsedCursor) ? parsedCursor : 0;
-    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
-    try {
-      let lastTc = since;
-      let lastRowid = 0;
+      let boundary: { timestamp: number; rowId: number } | undefined;
       while (true) {
+        const boundarySql = boundary
+          ? "WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))"
+          : "";
         const rowsResult = await db.execute({
           sql: `
-          SELECT
-            substr(p.data, 1, 16000) as pdata,
-            json_extract(m.data, '$.role') as role,
-            p.time_created as tc,
-            p.session_id as sid,
-            p.rowid as rid
-          FROM part p
-          JOIN message m ON p.message_id = m.id
-          WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))
-          ORDER BY p.time_created, p.rowid
-          LIMIT ?
-        `,
-          args: [lastTc, lastTc, lastRowid, WINDOW],
+    SELECT
+      p.data as pdata,
+      json_extract(m.data, '$.role') as role,
+      p.time_created as tc,
+      p.session_id as sid,
+      p.rowid as rid
+    FROM part p
+    JOIN message m ON p.message_id = m.id
+    ${boundarySql}
+    ORDER BY p.time_created, p.rowid
+    LIMIT ?
+  `,
+          args: boundary
+            ? [boundary.timestamp, boundary.timestamp, boundary.rowId, WINDOW]
+            : [WINDOW],
         });
         const rows = rowsResult.rows as unknown as {
           pdata: string;
@@ -75,8 +58,7 @@ export class OpenCodeSource implements Source {
 
         if (rows.length === 0) break;
         const last = rows[rows.length - 1];
-        lastTc = last.tc;
-        lastRowid = last.rid;
+        boundary = { timestamp: last.tc, rowId: last.rid };
 
         for (const row of rows) {
           if (row.role !== "user" && row.role !== "assistant") continue;
@@ -109,7 +91,7 @@ export class OpenCodeSource implements Source {
               role: row.role as "user" | "assistant",
               timestamp: ts,
               date,
-              blocks: [{ type: "text", text: text.slice(0, 8000) }],
+              blocks: [{ type: "text", text: text }],
               channel: this.channel,
               author,
             };
@@ -127,10 +109,10 @@ export class OpenCodeSource implements Source {
                   toolCallId: String(part.toolCallId || part.id || ""),
                   toolInput:
                     typeof part.args === "string"
-                      ? part.args.slice(0, 8000)
+                      ? part.args
                       : typeof part.input === "string"
-                        ? part.input.slice(0, 8000)
-                        : JSON.stringify(part.args || part.input || "").slice(0, 8000),
+                        ? part.input
+                        : JSON.stringify(part.args ?? part.input ?? ""),
                 },
               ],
               channel: this.channel,
@@ -149,8 +131,8 @@ export class OpenCodeSource implements Source {
                   toolCallId: String(part.toolCallId || ""),
                   text:
                     typeof part.result === "string"
-                      ? part.result.slice(0, 8000)
-                      : JSON.stringify(part.result || "").slice(0, 8000),
+                      ? part.result
+                      : JSON.stringify(part.result ?? ""),
                 },
               ],
               channel: this.channel,
@@ -162,9 +144,5 @@ export class OpenCodeSource implements Source {
     } finally {
       db.close();
     }
-  }
-
-  cursor(message: Message): string {
-    return String(message.timestamp);
   }
 }
