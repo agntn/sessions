@@ -116,8 +116,49 @@ describe("CodexSource JSONL", () => {
     });
   });
 
-  it("only uses first user_message event (seenUserEvent)", async () => {
+  it("keeps each user turn while skipping its mirrored event", async () => {
     writeJsonl("session-4.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "first user message" }],
+        },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "user_message", message: "first user message" },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:01Z",
+        payload: { type: "user_message", message: "second user message" },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:01Z",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "second user message" }],
+        },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(2);
+    expect(msgs.map((message) => message.blocks[0].text)).toEqual([
+      "first user message",
+      "second user message",
+    ]);
+  });
+
+  it("keeps consecutive event-only user messages", async () => {
+    writeJsonl("session-5.jsonl", [
       {
         type: "event_msg",
         timestamp: "2026-03-10T10:00:00Z",
@@ -132,42 +173,37 @@ describe("CodexSource JSONL", () => {
     const source = new CodexSource(tempDir);
     const msgs = await collect(source);
 
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].blocks[0].text).toBe("first user message");
+    expect(msgs).toHaveLength(2);
+    expect(msgs.map((message) => message.blocks[0].text)).toEqual([
+      "first user message",
+      "second user message",
+    ]);
   });
 
-  it("skips duplicate user response_item when event_msg already seen", async () => {
-    writeJsonl("session-5.jsonl", [
-      {
-        type: "event_msg",
-        timestamp: "2026-03-10T10:00:00Z",
-        payload: { type: "user_message", message: "event user msg" },
-      },
+  it("keeps adjacent user records with different text", async () => {
+    writeJsonl("session-6.jsonl", [
       {
         type: "response_item",
-        timestamp: "2026-03-10T10:00:01Z",
+        timestamp: "2026-03-10T10:00:00Z",
         payload: {
           type: "message",
           role: "user",
-          content: [{ type: "input_text", text: "response user msg" }],
+          content: [{ type: "input_text", text: "first user message" }],
         },
       },
       {
-        type: "response_item",
-        timestamp: "2026-03-10T10:00:02Z",
-        payload: {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: "assistant reply" }],
-        },
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:01Z",
+        payload: { type: "user_message", message: "second user message" },
       },
     ]);
     const source = new CodexSource(tempDir);
     const msgs = await collect(source);
 
-    expect(msgs).toHaveLength(2);
-    expect(msgs[0].blocks[0].text).toBe("event user msg");
-    expect(msgs[1].blocks[0].text).toBe("assistant reply");
+    expect(msgs.map((message) => message.blocks[0].text)).toEqual([
+      "first user message",
+      "second user message",
+    ]);
   });
 
   it("extracts sessionId from rollout filename pattern", async () => {

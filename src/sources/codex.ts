@@ -154,19 +154,30 @@ export class CodexSource implements Source {
       });
 
       let cwd: string | undefined;
-      let seenUserEvent = false;
+      let previousUserResponseText: string | undefined;
+      let pendingUserEvent: Message | undefined;
 
       for await (const line of rl) {
         let entry: Record<string, unknown>;
         try {
           entry = JSON.parse(line);
         } catch {
+          if (pendingUserEvent) {
+            yield pendingUserEvent;
+            pendingUserEvent = undefined;
+          }
           continue;
         }
 
+        const previousResponseText = previousUserResponseText;
+        previousUserResponseText = undefined;
         const eventType = String(entry.type || "");
 
         if (eventType === "session_meta") {
+          if (pendingUserEvent) {
+            yield pendingUserEvent;
+            pendingUserEvent = undefined;
+          }
           const p = entry.payload as Record<string, unknown> | undefined;
           if (p?.cwd) cwd = String(p.cwd);
           continue;
@@ -174,13 +185,12 @@ export class CodexSource implements Source {
 
         if (eventType === "event_msg") {
           const p = entry.payload as Record<string, unknown> | undefined;
-          if (p?.type === "user_message" && !seenUserEvent) {
-            seenUserEvent = true;
+          if (p?.type === "user_message") {
             const text = String(p.message || "");
-            if (text.length > 0) {
+            if (text.length > 0 && text !== previousResponseText) {
               const parsedTs = new Date(String(entry.timestamp)).getTime();
               const ts = Number.isFinite(parsedTs) ? parsedTs : file.mtime;
-              yield {
+              const message: Message = {
                 source: this.name,
                 sessionId,
                 role: "user",
@@ -191,27 +201,43 @@ export class CodexSource implements Source {
                 channel: this.channel,
                 author: this.user,
               };
+
+              if (pendingUserEvent) {
+                yield pendingUserEvent;
+              }
+              pendingUserEvent = message;
+              continue;
             }
+          }
+
+          if (pendingUserEvent) {
+            yield pendingUserEvent;
+            pendingUserEvent = undefined;
           }
           continue;
         }
 
-        if (eventType !== "response_item") continue;
-
-        const payload = entry.payload as Record<string, unknown> | undefined;
-        if (!payload) continue;
-
-        if (payload.type === "message" && payload.role === "user") {
-          if (seenUserEvent) continue;
+        if (eventType !== "response_item") {
+          if (pendingUserEvent) {
+            yield pendingUserEvent;
+            pendingUserEvent = undefined;
+          }
+          continue;
         }
 
-        const parsed = parseBlocks(payload);
-        if (!parsed) continue;
+        const payload = entry.payload as Record<string, unknown> | undefined;
+        const parsed = payload ? parseBlocks(payload) : null;
+        if (!parsed) {
+          if (pendingUserEvent) {
+            yield pendingUserEvent;
+            pendingUserEvent = undefined;
+          }
+          continue;
+        }
 
         const parsedEntryTs = new Date(String(entry.timestamp)).getTime();
         const ts = Number.isFinite(parsedEntryTs) ? parsedEntryTs : file.mtime;
-
-        yield {
+        const message: Message = {
           source: this.name,
           sessionId,
           role: parsed.role,
@@ -223,6 +249,32 @@ export class CodexSource implements Source {
           author:
             parsed.role === "user" ? this.user : { platform: "cli", name: "codex", isBot: true },
         };
+
+        if (parsed.role === "user") {
+          const text = parsed.blocks.map((block) => block.text || "").join("\n");
+          if (pendingUserEvent?.blocks[0]?.text === text) {
+            yield pendingUserEvent;
+            pendingUserEvent = undefined;
+            continue;
+          }
+          if (pendingUserEvent) {
+            yield pendingUserEvent;
+            pendingUserEvent = undefined;
+          }
+          previousUserResponseText = text;
+          yield message;
+          continue;
+        }
+
+        if (pendingUserEvent) {
+          yield pendingUserEvent;
+          pendingUserEvent = undefined;
+        }
+        yield message;
+      }
+
+      if (pendingUserEvent) {
+        yield pendingUserEvent;
       }
     }
   }
