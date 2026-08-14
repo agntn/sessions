@@ -258,6 +258,35 @@ describe("CodexSource JSONL", () => {
     expect(msgs[0].blocks[0].text).toBe("continue");
   });
 
+  it("deduplicates reverse-order mirrors separated by other records", async () => {
+    writeJsonl("session-9.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "continue" }],
+        },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "token_count", info: { total_token_usage: {} } },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "user_message", message: "continue" },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("continue");
+  });
+
   it("extracts sessionId from rollout filename pattern", async () => {
     writeJsonl("rollout-2026-03-10T10-00-00-mySessionId.jsonl", [
       {
