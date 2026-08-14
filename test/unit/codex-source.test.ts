@@ -206,6 +206,58 @@ describe("CodexSource JSONL", () => {
     ]);
   });
 
+  it("keeps repeated text from different turns", async () => {
+    writeJsonl("session-7.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "continue" }],
+        },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:01Z",
+        payload: { type: "user_message", message: "continue" },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(2);
+  });
+
+  it("deduplicates mirrors separated by other records", async () => {
+    writeJsonl("session-8.jsonl", [
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "user_message", message: "continue" },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "token_count", info: { total_token_usage: {} } },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "continue" }],
+        },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks[0].text).toBe("continue");
+  });
+
   it("extracts sessionId from rollout filename pattern", async () => {
     writeJsonl("rollout-2026-03-10T10-00-00-mySessionId.jsonl", [
       {
