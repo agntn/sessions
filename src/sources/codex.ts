@@ -75,6 +75,17 @@ function parseBlocks(
 
   return null;
 }
+function consumeMirror(keys: Map<string, number>, key: string): boolean {
+  const count = keys.get(key);
+  if (!count) return false;
+  if (count === 1) keys.delete(key);
+  else keys.set(key, count - 1);
+  return true;
+}
+
+function rememberMirror(keys: Map<string, number>, key: string): void {
+  keys.set(key, (keys.get(key) ?? 0) + 1);
+}
 
 function* parseJsonSession(
   path: string,
@@ -154,8 +165,15 @@ export class CodexSource implements Source {
       });
 
       let cwd: string | undefined;
-      const eventUserKeys = new Set<string>();
-      const responseUserKeys = new Set<string>();
+      const eventUserKeys = new Map<string, number>();
+      const responseUserKeys = new Map<string, number>();
+      let mirrorTimestamp: number | undefined;
+      const startMirrorTimestamp = (timestamp: number): void => {
+        if (timestamp === mirrorTimestamp) return;
+        eventUserKeys.clear();
+        responseUserKeys.clear();
+        mirrorTimestamp = timestamp;
+      };
 
       for await (const line of rl) {
         let entry: Record<string, unknown>;
@@ -180,9 +198,10 @@ export class CodexSource implements Source {
             if (text.length > 0) {
               const parsedTs = new Date(String(entry.timestamp)).getTime();
               const ts = Number.isFinite(parsedTs) ? parsedTs : file.mtime;
+              if (Number.isFinite(parsedTs)) startMirrorTimestamp(parsedTs);
               const mirrorKey = Number.isFinite(parsedTs) ? `${parsedTs}\0${text}` : undefined;
-              if (mirrorKey && responseUserKeys.has(mirrorKey)) continue;
-              if (mirrorKey) eventUserKeys.add(mirrorKey);
+              if (mirrorKey && consumeMirror(responseUserKeys, mirrorKey)) continue;
+              if (mirrorKey) rememberMirror(eventUserKeys, mirrorKey);
 
               yield {
                 source: this.name,
@@ -210,14 +229,17 @@ export class CodexSource implements Source {
 
         const parsedEntryTs = new Date(String(entry.timestamp)).getTime();
         const ts = Number.isFinite(parsedEntryTs) ? parsedEntryTs : file.mtime;
+        if (parsed.role === "user" && Number.isFinite(parsedEntryTs)) {
+          startMirrorTimestamp(parsedEntryTs);
+        }
 
         if (parsed.role === "user") {
           const text = parsed.blocks.map((block) => block.text || "").join("\n");
           const mirrorKey = Number.isFinite(parsedEntryTs)
             ? `${parsedEntryTs}\0${text}`
             : undefined;
-          if (mirrorKey && eventUserKeys.has(mirrorKey)) continue;
-          if (mirrorKey) responseUserKeys.add(mirrorKey);
+          if (mirrorKey && consumeMirror(eventUserKeys, mirrorKey)) continue;
+          if (mirrorKey) rememberMirror(responseUserKeys, mirrorKey);
         }
 
         yield {
