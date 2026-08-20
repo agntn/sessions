@@ -163,6 +163,34 @@ describe("sessions MCP server", () => {
     expect(text(response.content)).toContain("No readable gemini data at /nonexistent/dir.");
   });
 
+  it("names an override that exists but holds no sessions", async () => {
+    sessionsMock.list.mockResolvedValue([]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
+    const client = await connectTestClient();
+
+    const response = await client.callTool({
+      name: "sessions_list",
+      arguments: { source: "gemini", path: "/tmp" },
+    });
+
+    expect(response.isError).toBe(true);
+    expect(text(response.content)).toContain("No readable gemini data at /tmp.");
+  });
+
+  it("keeps an empty native archive readable as zero sessions", async () => {
+    sessionsMock.list.mockResolvedValue([]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
+    const client = await connectTestClient();
+
+    const response = await client.callTool({
+      name: "sessions_list",
+      arguments: { source: "gemini" },
+    });
+
+    expect(response.isError).toBeUndefined();
+    expect(text(response.content)).toContain("No sessions at offset 0 for gemini. It has 0.");
+  });
+
   it("rejects arguments that miss the schema", async () => {
     const client = await connectTestClient();
 

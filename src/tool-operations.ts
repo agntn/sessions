@@ -162,14 +162,21 @@ function formatMessages(
     : { text, truncated, rendered };
 }
 
-/** Names the location that held no readable native data, so a typo is visible. */
-function unavailable(source: string, params: SourceParams): string {
-  const override =
+/** The caller's location override, joined for display, or nothing when absent. */
+function overrideLabel(params: SourceParams): string | undefined {
+  return (
     params.path?.trim() ||
     params.paths
       ?.map((item) => item.trim())
       .filter(Boolean)
-      .join(", ");
+      .join(", ") ||
+    undefined
+  );
+}
+
+/** Names the location that held no readable native data, so a typo is visible. */
+function unavailable(source: string, params: SourceParams): string {
+  const override = overrideLabel(params);
   return override
     ? `No readable ${source} data at ${override}.`
     : `No readable ${source} data at its native location.`;
@@ -206,6 +213,9 @@ export async function listSessions(params: ListParams): Promise<ToolResult<ListD
   // reader says so instead of reporting a harness with no sessions.
   if (!reader.available()) throw new Error(unavailable(source, params));
   const all = await reader.list();
+  // A directory override only has to exist for available() to pass, so a path
+  // that holds no sessions is a wrong location rather than an empty harness.
+  if (!all.length && overrideLabel(params)) throw new Error(unavailable(source, params));
   const window = all.slice(offset, offset + limit).map(summarize);
   const listed = window.map(formatSummary).join("\n");
   const notice = window.length ? windowNotice("session", offset, window.length, all.length) : "";
