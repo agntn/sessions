@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "paths": {
+      "@agntn/sessions": ["./src/index.ts"]
+    },
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true
+  },
+  "include": ["packages/pi/extensions/**/*.ts", "test/unit/pi-extension.test.ts"],
+  "exclude": ["node_modules", "dist"]
+}
