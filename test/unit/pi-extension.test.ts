@@ -120,6 +120,7 @@ describe("Pi extension", () => {
     expect(sessionsMock.create).toHaveBeenCalledWith("codex", { path: "/tmp/codex" });
     expect(result.details).toEqual({
       source: "codex",
+      offset: 0,
       total: 2,
       sessions: [
         {
@@ -156,20 +157,22 @@ describe("Pi extension", () => {
     });
   });
 
-  it("tells the model that the session list is bounded", async () => {
+  it("pages older sessions instead of dead-ending at the maximum limit", async () => {
     sessionsMock.list.mockResolvedValue([session, { ...session, id: "session-2" }]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    const list = tool(loadExtension(), "sessions_list");
+    const render = async (params: Record<string, unknown>) =>
+      (await list.execute("test", params, undefined, undefined, {} as ExtensionContext)).content
+        .map((item) => (item.type === "text" ? item.text : ""))
+        .join("");
 
-    const result = await tool(loadExtension(), "sessions_list").execute(
-      "test",
-      { source: "codex", limit: 1 },
-      undefined,
-      undefined,
-      {} as ExtensionContext,
+    expect(await render({ source: "codex", limit: 1 })).toContain(
+      "[Showing sessions 1-1 of 2. Use offset=1 to continue.]",
     );
-    const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
 
-    expect(text).toContain("[Showing 1 of 2 sessions");
+    const second = await render({ source: "codex", offset: 1, limit: 1 });
+    expect(second).toContain("session-2");
+    expect(second).toContain("[Showing sessions 2-2 of 2.]");
   });
 
   it("keeps listing sessions when a harness timestamp is outside the Date range", async () => {
@@ -201,6 +204,43 @@ describe("Pi extension", () => {
       "[Showing messages 1-1 of 2. Use offset=1 to continue.]",
     );
     expect(await render({ source: "codex", sessionId: "session-1" })).not.toContain("[Showing");
+  });
+
+  it("keeps thinking labelled and pairs tool calls with their results", async () => {
+    sessionsMock.list.mockResolvedValue([
+      {
+        ...session,
+        messages: [
+          {
+            ...session.messages[0],
+            blocks: [
+              { type: "thinking" as const, text: "weighing options" },
+              {
+                type: "tool_call" as const,
+                toolName: "bash",
+                toolCallId: "call-1",
+                toolInput: "ls",
+              },
+              { type: "tool_result" as const, toolCallId: "call-1", text: "ok" },
+            ],
+          },
+        ],
+      },
+    ]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+
+    const result = await tool(loadExtension(), "sessions_read").execute(
+      "test",
+      { source: "claude", sessionId: "session-1" },
+      undefined,
+      undefined,
+      {} as ExtensionContext,
+    );
+    const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
+
+    expect(text).toContain("[thinking] weighing options");
+    expect(text).toContain("[tool_call bash call-1] ls");
+    expect(text).toContain("[tool_result call-1] ok");
   });
 
   it("preserves the message header newline when a message has no blocks", async () => {
@@ -247,7 +287,7 @@ describe("Pi extension", () => {
 
     expect(text.length).toBeLessThanOrEqual(100_000);
     expect(text).toContain("[output truncated]");
-    expect(text).toContain("[Message 1 of 1 exceeds the output budget and was cut.]");
+    expect(text).toContain("[The message at offset 0 exceeds the output budget and was cut.]");
     expect(result.details).toMatchObject({ returnedMessages: 1, outputTruncated: true });
   });
 

@@ -18,7 +18,12 @@ type SessionsModule = {
 
 type SessionSummary = Omit<Session, "messages"> & { messageCount: number };
 type SourcesDetails = { sources: Array<{ name: string; available: boolean }> };
-type ListDetails = { source: string; total: number; sessions: SessionSummary[] };
+type ListDetails = {
+  source: string;
+  offset: number;
+  total: number;
+  sessions: SessionSummary[];
+};
 type ReadDetails = {
   source: string;
   sessionId: string;
@@ -69,6 +74,9 @@ const sourceOptions = {
 const sourcesParameters = Type.Object({});
 const listParameters = Type.Object({
   ...sourceOptions,
+  offset: Type.Optional(
+    Type.Integer({ description: "Zero-based session offset. Defaults to 0.", minimum: 0 }),
+  ),
   limit: Type.Optional(
     Type.Integer({
       description: `Maximum session summaries to return. Defaults to ${DEFAULT_SESSION_LIMIT}.`,
@@ -116,13 +124,17 @@ function formatSummary(session: SessionSummary): string {
 }
 
 /** Describes the returned window because tool details never reach the model. */
-function windowNotice(offset: number, rendered: number, total: number): string {
-  if (!rendered)
-    return `[Message ${offset + 1} of ${total} exceeds the output budget and was cut.]`;
-  const end = offset + rendered;
+function windowNotice(
+  unit: "message" | "session",
+  offset: number,
+  shown: number,
+  total: number,
+): string {
+  if (!shown) return `[The ${unit} at offset ${offset} exceeds the output budget and was cut.]`;
+  const end = offset + shown;
   if (offset === 0 && end >= total) return "";
-  if (end >= total) return `[Showing messages ${offset + 1}-${end} of ${total}.]`;
-  return `[Showing messages ${offset + 1}-${end} of ${total}. Use offset=${end} to continue.]`;
+  if (end >= total) return `[Showing ${unit}s ${offset + 1}-${end} of ${total}.]`;
+  return `[Showing ${unit}s ${offset + 1}-${end} of ${total}. Use offset=${end} to continue.]`;
 }
 
 function formatMessages(
@@ -151,17 +163,21 @@ function formatMessages(
 
     for (const [blockIndex, block] of message.blocks.entries()) {
       if (blockIndex > 0 && !append("\n")) break;
+      const callId = block.toolCallId ? ` ${block.toolCallId}` : "";
       if (block.type === "tool_call") {
-        if (!append(`[tool_call ${block.toolName ?? "unknown"}]`)) break;
+        if (!append(`[tool_call ${block.toolName ?? "unknown"}${callId}]`)) break;
         if (block.toolInput && (!append(" ") || !append(block.toolInput))) break;
         continue;
       }
       if (block.type === "tool_result") {
-        if (!append(`[tool_result${block.toolCallId ? ` ${block.toolCallId}` : ""}]`)) break;
+        if (!append(`[tool_result${callId}]`)) break;
         if (block.text && (!append(" ") || !append(block.text))) break;
         continue;
       }
-      if (!append(block.text ?? `[${block.type}]`)) break;
+      // Thinking and any future block type stay labelled, otherwise a model
+      // reading the transcript takes internal reasoning for a plain answer.
+      const label = block.type === "text" ? "" : `[${block.type}] `;
+      if (!append(block.text ? `${label}${block.text}` : `[${block.type}]`)) break;
     }
     if (truncated) break;
     rendered += 1;
@@ -216,6 +232,7 @@ export default function sessionsExtension(pi: ExtensionAPI) {
     promptGuidelines: [
       "Choose one supported source; use sessions_sources if uncertain.",
       "Use path or paths only to override the harness's native default location.",
+      "Sessions come newest first; page older ones with offset.",
       "Use sessions_read with an exact returned session id to inspect messages.",
     ],
     parameters: listParameters,
@@ -227,21 +244,24 @@ export default function sessionsExtension(pi: ExtensionAPI) {
       if (!source) throw new Error("Source cannot be empty");
       const sessions = await loadSessions();
       const reader = sessions.create(source, optionsFrom(params));
+      const offset = params.offset ?? 0;
+      const limit = params.limit ?? DEFAULT_SESSION_LIMIT;
       const all = await reader.list();
-      const result = all.slice(0, params.limit ?? DEFAULT_SESSION_LIMIT).map(summarize);
+      const result = all.slice(offset, offset + limit).map(summarize);
       const listed = result.map(formatSummary).join("\n");
-      const notice =
-        all.length > result.length
-          ? `\n\n[Showing ${result.length} of ${all.length} sessions, newest first. Raise limit up to ${MAX_SESSION_LIMIT} to see more.]`
-          : "";
+      const notice = result.length
+        ? windowNotice("session", offset, result.length, all.length)
+        : "";
       return {
         content: [
           {
             type: "text",
-            text: result.length ? `${listed}${notice}` : `No sessions found for ${source}.`,
+            text: result.length
+              ? `${listed}${notice ? `\n\n${notice}` : ""}`
+              : `No sessions at offset ${offset} for ${source}. It has ${all.length}.`,
           },
         ],
-        details: { source, total: all.length, sessions: result },
+        details: { source, offset, total: all.length, sessions: result },
       };
     },
   });
@@ -287,7 +307,7 @@ export default function sessionsExtension(pi: ExtensionAPI) {
             truncated: false,
             rendered: 0,
           };
-      const notice = messages.length ? windowNotice(offset, output.rendered, total) : "";
+      const notice = messages.length ? windowNotice("message", offset, output.rendered, total) : "";
       return {
         content: [{ type: "text", text: notice ? `${output.text}\n\n${notice}` : output.text }],
         details: {
