@@ -110,6 +110,46 @@ describe("MastraSource", () => {
     ]);
   });
 
+  it("reads the call fields and the result out of a nested toolInvocation part", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          rowId: 7,
+          role: "assistant",
+          content: JSON.stringify({
+            format: 2,
+            parts: [
+              {
+                type: "tool-invocation",
+                toolInvocation: {
+                  state: "result",
+                  toolCallId: "call_1",
+                  toolName: "mastra_workspace_list_files",
+                  args: { path: "." },
+                  result: "README.md",
+                },
+              },
+            ],
+          }),
+          createdAt: "2026-03-10T12:05:00.000Z",
+          thread_id: "thread-1",
+        },
+      ],
+    });
+
+    const msgs = await collect(new MastraSource("/tmp/mastra.db"));
+
+    expect(msgs[0].blocks).toEqual([
+      {
+        type: "tool_call",
+        toolName: "mastra_workspace_list_files",
+        toolCallId: "call_1",
+        toolInput: '{"path":"."}',
+      },
+      { type: "tool_result", toolCallId: "call_1", text: "README.md" },
+    ]);
+  });
+
   it("parses format 2 tool-invocation and tool-result parts", async () => {
     executeMock.mockResolvedValueOnce({
       rows: [

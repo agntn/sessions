@@ -12,7 +12,11 @@
 - Preserve parser behavior for every supported harness with fixture tests.
 - Do not add persistence, synchronization cursors, watchers, search, analytics, channels as a standalone domain, or agent-memory ingestion.
 - Applications own indexing, storage, rendering, and export.
-- Keep the pi extension in `packages/pi/extensions/` as a bounded read-only consumer of the public API.
+- Keep the agent surfaces bounded and read-only: `src/tool-operations.ts` holds the executors, `src/mcp.ts` exports `createMcpServer()`, `src/commands/mcp.ts` runs it over stdio, and `packages/pi/extensions/` registers the pi tools.
+- No agent surface reimplements an operation. Schemas are declared per surface because pi registers tools synchronously, the executors are not.
+- An MCP client reads `content` and never `details`, so tool text has to carry whatever the next call needs.
+- Both reading tools inherit `list()`'s cost: they read the whole native archive per call, and a multi-gigabyte harness store (opencode at 6.8 GB, 1.05M parts) outlasts a client's request timeout. Document that cost; do not paper over it with caching or indexing here.
+- MCP is built on the low-level `Server`, deprecated in the SDK, because `McpServer.registerTool` takes Standard Schema only and `typebox` 1.x is not one.
 
 ## Commands
 

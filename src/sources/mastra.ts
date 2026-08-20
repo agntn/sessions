@@ -14,12 +14,24 @@ function parseContent(raw: string): Block[] {
         if (p.type === "text" && p.text) {
           out.push({ type: "text", text: String(p.text) });
         } else if (p.type === "tool-invocation" || p.type === "tool-call") {
+          // Mastra stores AI SDK parts: the call fields live under
+          // `toolInvocation`, and a finished call carries its result there too
+          // instead of emitting a separate `tool-result` part.
+          const call = p.toolInvocation ?? p;
+          const toolCallId = String(call.toolCallId || call.id || "");
           out.push({
             type: "tool_call",
-            toolName: String(p.toolName || p.name || ""),
-            toolCallId: String(p.toolCallId || p.id || ""),
-            toolInput: typeof p.args === "string" ? p.args : JSON.stringify(p.args),
+            toolName: String(call.toolName || call.name || ""),
+            toolCallId,
+            toolInput: typeof call.args === "string" ? call.args : JSON.stringify(call.args),
           });
+          if (call.state === "result" && call.result !== undefined) {
+            out.push({
+              type: "tool_result",
+              toolCallId,
+              text: typeof call.result === "string" ? call.result : JSON.stringify(call.result),
+            });
+          }
         } else if (p.type === "tool-result") {
           out.push({
             type: "tool_result",

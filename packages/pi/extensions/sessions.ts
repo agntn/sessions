@@ -3,63 +3,32 @@ import { fileURLToPath } from "node:url";
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import type {
-  allSources as allSourcesFunction,
-  create as createFunction,
-  Message,
-  Session,
-  SourceOptions,
-} from "@agntn/sessions";
-
-type SessionsModule = {
-  allSources: typeof allSourcesFunction;
-  create: typeof createFunction;
-};
-
-type SessionSummary = Omit<Session, "messages"> & { messageCount: number };
-type SourcesDetails = { sources: Array<{ name: string; available: boolean }> };
-type ListDetails = {
-  source: string;
-  offset: number;
-  total: number;
-  sessions: SessionSummary[];
-};
-type ReadDetails = {
-  source: string;
-  sessionId: string;
-  offset: number;
-  limit: number;
-  totalMessages: number;
-  returnedMessages: number;
-  outputTruncated: boolean;
-};
-
-let sessionsModulePromise: Promise<SessionsModule> | undefined;
-
-/**
- * Loads the library from repository source when that entry exists and from the
- * published package export otherwise. Source first keeps a checkout that still
- * holds an older `dist/` from silently running stale library code, and the
- * existence check keeps a transitive load failure from being mistaken for a
- * missing entry module.
- */
-function loadSessions(): Promise<SessionsModule> {
-  sessionsModulePromise ??= existsSync(
-    fileURLToPath(new URL("../../../src/index.ts", import.meta.url)),
-  )
-    ? import("../../../src/index.ts")
-    : import("@agntn/sessions");
-  return sessionsModulePromise;
-}
+import type * as SessionsTools from "../../../src/tool-operations.ts";
 
 const DEFAULT_SESSION_LIMIT = 20;
 const MAX_SESSION_LIMIT = 100;
 const DEFAULT_MESSAGE_LIMIT = 100;
 const MAX_MESSAGE_LIMIT = 500;
-const MAX_OUTPUT_CHARS = 100_000;
-/** Upper bound on the window notice so message text plus notice stays within the budget. */
-const NOTICE_RESERVE = 200;
-const TRUNCATION_SUFFIX = "\n\n[output truncated]";
+
+const distributionModuleUrl = new URL("../../../dist/tool-operations.mjs", import.meta.url);
+const sourceModulePath = fileURLToPath(new URL("../../../src/tool-operations.ts", import.meta.url));
+let toolOperationsPromise: Promise<typeof SessionsTools> | undefined;
+
+/**
+ * Loads the tool executors from repository source when that file exists and from
+ * the built bundle otherwise. The executors are shared with the MCP server, so
+ * every surface answers identically. Source comes first because a checkout can
+ * still hold a stale `dist/`, and the existence check keeps a transitive load
+ * failure from being mistaken for a missing entry module.
+ */
+function loadToolOperations(): Promise<typeof SessionsTools> {
+  toolOperationsPromise ??= (
+    existsSync(sourceModulePath)
+      ? import("../../../src/tool-operations.ts")
+      : import(distributionModuleUrl.href)
+  ) as Promise<typeof SessionsTools>;
+  return toolOperationsPromise;
+}
 
 const sourceOptions = {
   source: Type.String({ description: "Harness source name, for example codex or claude." }),
@@ -103,98 +72,6 @@ const readParameters = Type.Object({
 type ListParams = Static<typeof listParameters>;
 type ReadParams = Static<typeof readParameters>;
 
-function optionsFrom(params: { path?: string; paths?: string[] }): SourceOptions | undefined {
-  const path = params.path?.trim();
-  const paths = params.paths?.map((item) => item.trim()).filter(Boolean);
-  if (!path && !paths?.length) return undefined;
-  return { path: path || undefined, paths: paths?.length ? paths : undefined };
-}
-
-function summarize(session: Session): SessionSummary {
-  const { messages, ...metadata } = session;
-  return { ...metadata, messageCount: messages.length };
-}
-
-/**
- * A harness timestamp is only a number, so a corrupt archive can carry one
- * outside the Date range and make toISOString throw for a whole listing.
- */
-function isoStamp(value: number, fallback: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
-}
-
-function formatSummary(session: SessionSummary): string {
-  return `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}`;
-}
-
-/** Describes the returned window because tool details never reach the model. */
-function windowNotice(
-  unit: "message" | "session",
-  offset: number,
-  shown: number,
-  total: number,
-): string {
-  if (!shown) return `[The ${unit} at offset ${offset} exceeds the output budget and was cut.]`;
-  const end = offset + shown;
-  if (offset === 0 && end >= total) return "";
-  if (end >= total) return `[Showing ${unit}s ${offset + 1}-${end} of ${total}.]`;
-  return `[Showing ${unit}s ${offset + 1}-${end} of ${total}. Use offset=${end} to continue.]`;
-}
-
-function formatMessages(
-  messages: readonly Message[],
-  limit: number,
-): { text: string; truncated: boolean; rendered: number } {
-  const budget = limit - TRUNCATION_SUFFIX.length;
-  let text = "";
-  let truncated = false;
-  let rendered = 0;
-
-  const append = (value: string): boolean => {
-    const remaining = budget - text.length;
-    if (value.length <= remaining) {
-      text += value;
-      return true;
-    }
-    text += value.slice(0, Math.max(remaining, 0));
-    truncated = true;
-    return false;
-  };
-
-  for (const [messageIndex, message] of messages.entries()) {
-    if (messageIndex > 0 && !append("\n\n")) break;
-    // Every adapter stores `date` as the day alone, so the header takes the
-    // exact time from the numeric timestamp and keeps `date` as the fallback.
-    if (!append(`[${isoStamp(message.timestamp, message.date)}] ${message.role}\n`)) break;
-
-    for (const [blockIndex, block] of message.blocks.entries()) {
-      if (blockIndex > 0 && !append("\n")) break;
-      const callId = block.toolCallId ? ` ${block.toolCallId}` : "";
-      if (block.type === "tool_call") {
-        if (!append(`[tool_call ${block.toolName ?? "unknown"}${callId}]`)) break;
-        if (block.toolInput && (!append(" ") || !append(block.toolInput))) break;
-        continue;
-      }
-      if (block.type === "tool_result") {
-        if (!append(`[tool_result${callId}]`)) break;
-        if (block.text && (!append(" ") || !append(block.text))) break;
-        continue;
-      }
-      // Thinking and any future block type stay labelled, otherwise a model
-      // reading the transcript takes internal reasoning for a plain answer.
-      const label = block.type === "text" ? "" : `[${block.type}] `;
-      if (!append(block.text ? `${label}${block.text}` : `[${block.type}]`)) break;
-    }
-    if (truncated) break;
-    rendered += 1;
-  }
-
-  return truncated
-    ? { text: `${text}${TRUNCATION_SUFFIX}`, truncated, rendered }
-    : { text, truncated, rendered };
-}
-
 export default function sessionsExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "sessions_sources",
@@ -210,23 +87,9 @@ export default function sessionsExtension(pi: ExtensionAPI) {
     renderCall(_args, theme) {
       return new Text(theme.fg("toolTitle", theme.bold("sessions_sources")), 0, 0);
     },
-    async execute(): Promise<AgentToolResult<SourcesDetails>> {
-      const sessions = await loadSessions();
-      const statuses = sessions.allSources().map((source) => ({
-        name: source.name,
-        available: source.available(),
-      }));
-      return {
-        content: [
-          {
-            type: "text",
-            text: statuses
-              .map(({ name, available }) => `${name}\t${available ? "available" : "unavailable"}`)
-              .join("\n"),
-          },
-        ],
-        details: { sources: statuses },
-      };
+    async execute(): Promise<AgentToolResult<SessionsTools.SourcesDetails>> {
+      const { listSessionSources } = await loadToolOperations();
+      return listSessionSources();
     },
   });
 
@@ -246,30 +109,12 @@ export default function sessionsExtension(pi: ExtensionAPI) {
     renderCall(args, theme) {
       return new Text(theme.fg("toolTitle", `sessions_list ${args.source}`), 0, 0);
     },
-    async execute(_toolCallId, params: ListParams): Promise<AgentToolResult<ListDetails>> {
-      const source = params.source.trim();
-      if (!source) throw new Error("Source cannot be empty");
-      const sessions = await loadSessions();
-      const reader = sessions.create(source, optionsFrom(params));
-      const offset = params.offset ?? 0;
-      const limit = params.limit ?? DEFAULT_SESSION_LIMIT;
-      const all = await reader.list();
-      const result = all.slice(offset, offset + limit).map(summarize);
-      const listed = result.map(formatSummary).join("\n");
-      const notice = result.length
-        ? windowNotice("session", offset, result.length, all.length)
-        : "";
-      return {
-        content: [
-          {
-            type: "text",
-            text: result.length
-              ? `${listed}${notice ? `\n\n${notice}` : ""}`
-              : `No sessions at offset ${offset} for ${source}. It has ${all.length}.`,
-          },
-        ],
-        details: { source, offset, total: all.length, sessions: result },
-      };
+    async execute(
+      _toolCallId,
+      params: ListParams,
+    ): Promise<AgentToolResult<SessionsTools.ListDetails>> {
+      const { listSessions } = await loadToolOperations();
+      return listSessions(params);
     },
   });
 
@@ -292,41 +137,12 @@ export default function sessionsExtension(pi: ExtensionAPI) {
         0,
       );
     },
-    async execute(_toolCallId, params: ReadParams): Promise<AgentToolResult<ReadDetails>> {
-      const source = params.source.trim();
-      const sessionId = params.sessionId.trim();
-      if (!source) throw new Error("Source cannot be empty");
-      if (!sessionId) throw new Error("Session id cannot be empty");
-
-      const sessions = await loadSessions();
-      const reader = sessions.create(source, optionsFrom(params));
-      const session = (await reader.list()).find((candidate) => candidate.id === sessionId);
-      if (!session) throw new Error(`Session not found: ${source}:${sessionId}`);
-
-      const offset = params.offset ?? 0;
-      const limit = params.limit ?? DEFAULT_MESSAGE_LIMIT;
-      const total = session.messages.length;
-      const messages = session.messages.slice(offset, offset + limit);
-      const output = messages.length
-        ? formatMessages(messages, MAX_OUTPUT_CHARS - NOTICE_RESERVE)
-        : {
-            text: `No messages in range ${offset}:${offset + limit}. Session has ${total} messages.`,
-            truncated: false,
-            rendered: 0,
-          };
-      const notice = messages.length ? windowNotice("message", offset, output.rendered, total) : "";
-      return {
-        content: [{ type: "text", text: notice ? `${output.text}\n\n${notice}` : output.text }],
-        details: {
-          source,
-          sessionId,
-          offset,
-          limit,
-          totalMessages: total,
-          returnedMessages: messages.length,
-          outputTruncated: output.truncated,
-        },
-      };
+    async execute(
+      _toolCallId,
+      params: ReadParams,
+    ): Promise<AgentToolResult<SessionsTools.ReadDetails>> {
+      const { readSession } = await loadToolOperations();
+      return readSession(params);
     },
   });
 }
