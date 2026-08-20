@@ -60,7 +60,7 @@ const session = {
       sessionId: "session-1",
       role: "user" as const,
       timestamp: 1_000,
-      date: "1970-01-01T00:00:01.000Z",
+      date: "1970-01-01",
       blocks: [{ type: "text" as const, text: "first" }],
     },
     {
@@ -68,7 +68,7 @@ const session = {
       sessionId: "session-1",
       role: "assistant" as const,
       timestamp: 2_000,
-      date: "1970-01-01T00:00:02.000Z",
+      date: "1970-01-01",
       blocks: [{ type: "text" as const, text: "second" }],
     },
   ],
@@ -204,6 +204,24 @@ describe("Pi extension", () => {
       "[Showing messages 1-1 of 2. Use offset=1 to continue.]",
     );
     expect(await render({ source: "codex", sessionId: "session-1" })).not.toContain("[Showing");
+  });
+
+  it("takes the header time from the timestamp and falls back to the day", async () => {
+    const broken = { ...session.messages[1], timestamp: 9_000_000_000_000_000 };
+    sessionsMock.list.mockResolvedValue([{ ...session, messages: [session.messages[0], broken] }]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+
+    const result = await tool(loadExtension(), "sessions_read").execute(
+      "test",
+      { source: "codex", sessionId: "session-1" },
+      undefined,
+      undefined,
+      {} as ExtensionContext,
+    );
+    const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
+
+    expect(text).toContain("[1970-01-01T00:00:01.000Z] user");
+    expect(text).toContain("[1970-01-01] assistant");
   });
 
   it("keeps thinking labelled and pairs tool calls with their results", async () => {

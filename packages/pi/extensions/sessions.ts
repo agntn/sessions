@@ -115,12 +115,17 @@ function summarize(session: Session): SessionSummary {
   return { ...metadata, messageCount: messages.length };
 }
 
+/**
+ * A harness timestamp is only a number, so a corrupt archive can carry one
+ * outside the Date range and make toISOString throw for a whole listing.
+ */
+function isoStamp(value: number, fallback: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
+}
+
 function formatSummary(session: SessionSummary): string {
-  // A harness timestamp is only a number, so a corrupt archive can carry one
-  // outside the Date range and make toISOString throw for the whole listing.
-  const updated = new Date(session.updatedAt);
-  const stamp = Number.isNaN(updated.getTime()) ? "unknown" : updated.toISOString();
-  return `${session.id}\t${session.messageCount} messages\t${stamp}`;
+  return `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}`;
 }
 
 /** Describes the returned window because tool details never reach the model. */
@@ -159,7 +164,9 @@ function formatMessages(
 
   for (const [messageIndex, message] of messages.entries()) {
     if (messageIndex > 0 && !append("\n\n")) break;
-    if (!append(`[${message.date}] ${message.role}\n`)) break;
+    // Every adapter stores `date` as the day alone, so the header takes the
+    // exact time from the numeric timestamp and keeps `date` as the fallback.
+    if (!append(`[${isoStamp(message.timestamp, message.date)}] ${message.role}\n`)) break;
 
     for (const [blockIndex, block] of message.blocks.entries()) {
       if (blockIndex > 0 && !append("\n")) break;
