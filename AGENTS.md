@@ -12,6 +12,7 @@
 - Preserve parser behavior for every supported harness with fixture tests.
 - Do not add persistence, synchronization cursors, watchers, search, analytics, channels as a standalone domain, or agent-memory ingestion.
 - Applications own indexing, storage, rendering, and export.
+- Keep the pi extension in `packages/pi/extensions/` as a bounded read-only consumer of the public API.
 
 ## Commands
 

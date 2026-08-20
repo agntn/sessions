@@ -55,6 +55,20 @@ Each adapter accepts the native session format as its source of truth. Messages 
 
 `list()` materializes the complete native archive and preserves full message payloads in memory. For very large archives or tool outputs, consumers should account for that memory cost before indexing, rendering, exporting, or persisting the returned sessions.
 
+## Pi extension
+
+The package ships a [pi](https://pi.dev) extension that registers three read-only tools:
+
+- `sessions_sources` lists supported harnesses and local availability.
+- `sessions_list` returns bounded session metadata for one harness.
+- `sessions_read` returns a bounded message window for an exact session ID.
+
+```bash
+pi install npm:@agntn/sessions
+```
+
+Both reading tools accept optional native `path` or `paths` overrides. They do not persist, index, or search session data, and each call re-reads the harness archive, so a large archive costs the same read on every call.
+
 ## License
 
 MIT
