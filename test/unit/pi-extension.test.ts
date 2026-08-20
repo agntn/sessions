@@ -107,7 +107,7 @@ describe("Pi extension", () => {
 
   it("lists bounded session metadata without message bodies", async () => {
     sessionsMock.list.mockResolvedValue([session, { ...session, id: "session-2" }]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_list").execute(
       "test",
@@ -136,7 +136,7 @@ describe("Pi extension", () => {
 
   it("reads an exact bounded message window", async () => {
     sessionsMock.list.mockResolvedValue([session]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_read").execute(
       "test",
@@ -159,7 +159,7 @@ describe("Pi extension", () => {
 
   it("pages older sessions instead of dead-ending at the maximum limit", async () => {
     sessionsMock.list.mockResolvedValue([session, { ...session, id: "session-2" }]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
     const list = tool(loadExtension(), "sessions_list");
     const render = async (params: Record<string, unknown>) =>
       (await list.execute("test", params, undefined, undefined, {} as ExtensionContext)).content
@@ -177,7 +177,7 @@ describe("Pi extension", () => {
 
   it("keeps listing sessions when a harness timestamp is outside the Date range", async () => {
     sessionsMock.list.mockResolvedValue([{ ...session, updatedAt: 9_000_000_000_000_000 }]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_list").execute(
       "test",
@@ -193,7 +193,7 @@ describe("Pi extension", () => {
 
   it("tells the model where the message window sits and how to continue", async () => {
     sessionsMock.list.mockResolvedValue([session]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
     const read = tool(loadExtension(), "sessions_read");
     const render = async (params: Record<string, unknown>) =>
       (await read.execute("test", params, undefined, undefined, {} as ExtensionContext)).content
@@ -209,7 +209,7 @@ describe("Pi extension", () => {
   it("takes the header time from the timestamp and falls back to the day", async () => {
     const broken = { ...session.messages[1], timestamp: 9_000_000_000_000_000 };
     sessionsMock.list.mockResolvedValue([{ ...session, messages: [session.messages[0], broken] }]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_read").execute(
       "test",
@@ -245,7 +245,7 @@ describe("Pi extension", () => {
         ],
       },
     ]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_read").execute(
       "test",
@@ -265,7 +265,7 @@ describe("Pi extension", () => {
     sessionsMock.list.mockResolvedValue([
       { ...session, messages: [{ ...session.messages[0], blocks: [] }] },
     ]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_read").execute(
       "test",
@@ -292,7 +292,7 @@ describe("Pi extension", () => {
         ],
       },
     ]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_read").execute(
       "test",
@@ -313,7 +313,7 @@ describe("Pi extension", () => {
     const hugeText = "x".repeat(60_000);
     const huge = { ...session.messages[0], blocks: [{ type: "text" as const, text: hugeText }] };
     sessionsMock.list.mockResolvedValue([{ ...session, messages: [huge, huge, huge] }]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_read").execute(
       "test",
@@ -330,7 +330,7 @@ describe("Pi extension", () => {
 
   it("rejects an unknown exact session id", async () => {
     sessionsMock.list.mockResolvedValue([]);
-    sessionsMock.create.mockReturnValue({ list: sessionsMock.list });
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     await expect(
       tool(loadExtension(), "sessions_read").execute(
