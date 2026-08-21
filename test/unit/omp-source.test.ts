@@ -128,10 +128,41 @@ describe("OmpSource", () => {
 
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
+      sessionId: "title-first",
       role: "assistant",
       timestamp: mtime.getTime(),
       blocks: [{ type: "text", text: "answer" }],
     });
+  });
+
+  it("skips null content items without aborting the rest of the archive", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-omp-"));
+    writeSession("null-block.jsonl", [
+      { type: "session", version: 3, id: "sess-null", timestamp: "2026-01-01T00:00:00.000Z" },
+      {
+        type: "message",
+        id: "m1",
+        timestamp: "2026-01-01T00:00:01.000Z",
+        message: { role: "user", content: [{ type: "text", text: "before" }] },
+      },
+      {
+        type: "message",
+        id: "m2",
+        timestamp: "2026-01-01T00:00:02.000Z",
+        message: { role: "assistant", content: [null, { type: "text", text: "kept" }] },
+      },
+      {
+        type: "message",
+        id: "m3",
+        timestamp: "2026-01-01T00:00:03.000Z",
+        message: { role: "user", content: [{ type: "text", text: "after" }] },
+      },
+    ]);
+
+    const messages: Message[] = [];
+    for await (const message of new OmpSource(directory).read()) messages.push(message);
+
+    expect(messages.map((m) => m.blocks[0]?.text)).toEqual(["before", "kept", "after"]);
   });
 
   it("reads nested subagent transcripts under their own session ids", async () => {

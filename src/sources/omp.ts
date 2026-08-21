@@ -8,6 +8,7 @@ function parseBlocks(content: unknown): Block[] {
   if (!Array.isArray(content)) return [];
   const out: Block[] = [];
   for (const b of content) {
+    if (typeof b !== "object" || b === null) continue;
     const block = b as Record<string, unknown>;
     switch (block.type) {
       case "text":
