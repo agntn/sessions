@@ -7,9 +7,9 @@ import { ClaudeSource } from "./claude.ts";
 import { CodexSource } from "./codex.ts";
 import { GeminiSource } from "./gemini.ts";
 import { MastraSource } from "./mastra.ts";
+import { OmpSource } from "./omp.ts";
 import { OpenClawSource } from "./openclaw.ts";
 import { OpenCodeSource } from "./opencode.ts";
-
 /** Optional native data location for a harness reader. */
 export interface SourceOptions {
   readonly path?: string;
@@ -24,6 +24,7 @@ const adapters: Record<string, AdapterFactory> = {
   codex: (options) => new CodexSource(options?.path),
   gemini: (options) => new GeminiSource(options?.path),
   mastra: (options) => new MastraSource(options?.path),
+  omp: (options) => new OmpSource(options?.path),
   openclaw: (options) =>
     new OpenClawSource(options?.paths ?? (options?.path ? [options.path] : undefined)),
   opencode: (options) => new OpenCodeSource(options?.path),

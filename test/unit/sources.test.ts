@@ -18,6 +18,7 @@ describe("public harness registry", () => {
       "codex",
       "gemini",
       "mastra",
+      "omp",
       "openclaw",
       "opencode",
     ]);
