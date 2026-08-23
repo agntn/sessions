@@ -97,12 +97,13 @@ export default function sessionsExtension(pi: ExtensionAPI) {
     name: "sessions_list",
     label: "List Sessions",
     description:
-      "Discover normalized native AI coding sessions for one harness. Returns bounded metadata only, newest first.",
+      "Discover normalized native AI coding sessions for one harness. Each row carries bounded metadata and a snippet of the session's first text, preferring what the user typed. Newest first.",
     promptSnippet: "List recent normalized coding sessions from a native harness source.",
     promptGuidelines: [
       "Choose one supported source; use sessions_sources if uncertain.",
       "Use path or paths only to override the harness's native default location.",
       "Sessions come newest first; page older ones with offset.",
+      "Triage on the snippet column; sessions_read costs a full archive read.",
       "Use sessions_read with an exact returned session id to inspect messages.",
     ],
     parameters: listParameters,
