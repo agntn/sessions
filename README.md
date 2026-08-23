@@ -60,7 +60,7 @@ Each adapter accepts the native session format as its source of truth. Messages 
 The package exposes the same three read-only tools over MCP and through its [pi](https://pi.dev) extension:
 
 - `sessions_sources` lists supported harnesses and local availability.
-- `sessions_list` returns bounded session metadata for one harness, newest first.
+- `sessions_list` returns bounded session metadata for one harness, newest first: id, message count, last activity, and a snippet of the session's first text (user turns take priority).
 - `sessions_read` returns a bounded message window for an exact session ID.
 
 Both reading tools accept optional native `path` or `paths` overrides. They do not persist, index, or search session data, and each call re-reads the harness archive, so a large archive costs the same read on every call.

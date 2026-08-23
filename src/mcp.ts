@@ -58,7 +58,7 @@ const tools: ToolDefinition[] = [
     name: "sessions_list",
     title: "List Sessions",
     description:
-      "Discover normalized sessions for one harness, newest first. Returns bounded metadata only: session id, message count, and last activity. Page older sessions with offset.",
+      "Discover normalized sessions for one harness, newest first. Each row carries the session id, message count, last activity, and a snippet of the session's first text, preferring what the user typed. Triage on the snippet before paying for sessions_read. Page older sessions with offset.",
     inputSchema: Type.Object({
       ...sourceArguments,
       offset: Type.Optional(

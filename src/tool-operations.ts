@@ -19,7 +19,10 @@ export interface ToolResult<TDetails> {
 }
 
 /** Session metadata without the message bodies. */
-export type SessionSummary = Omit<Session, "messages"> & { messageCount: number };
+export type SessionSummary = Omit<Session, "messages"> & {
+  messageCount: number;
+  snippet?: string;
+};
 
 /** Supported harnesses and whether their native data is readable locally. */
 export interface SourcesDetails {
@@ -77,9 +80,60 @@ function optionsFrom(params: SourceParams): SourceOptions | undefined {
   return { path: path || undefined, paths: paths?.length ? paths : undefined };
 }
 
+/**
+ * Injected context that opens sessions instead of the person: codex prepends
+ * AGENTS.md instructions, user instructions, and environment context as user
+ * messages; claude prepends system reminders and local-command caveats. Each
+ * shape reads the same for every session, so a snippet built from one says
+ * nothing about the conversation.
+ */
+const INJECTED_PREFIXES = [
+  "# AGENTS.md instructions",
+  "<environment_context>",
+  "<user_instructions>",
+  "<system-reminder>",
+  "<local-command-stdout>",
+  "Caveat: The messages below",
+];
+
+/** Maximum characters of session text shown in one listing row. */
+const SNIPPET_CHARS = 80;
+
+/**
+ * Collapses text to one printable listing line. Control characters count as
+ * whitespace because pasted terminal output carries raw ANSI escapes, and one
+ * escape would let a row restyle the whole listing. Injected blocks run to
+ * megabytes, so the cut comes first.
+ */
+function singleLine(text: string): string {
+  return text
+    .slice(0, 2048)
+    .replace(/[\s\x00-\x1F\x7F-\x9F]+/g, " ")
+    .trim();
+}
+
+/**
+ * The first line the person typed, or the first text at all when a harness
+ * kept no user text, so a listing row says what a session is about without
+ * paying for a full read.
+ */
+function snippetOf(messages: readonly Message[]): string | undefined {
+  let fallback: string | undefined;
+  for (const message of messages) {
+    for (const block of message.blocks) {
+      if (block.type !== "text" || !block.text) continue;
+      const line = singleLine(block.text);
+      if (!line || INJECTED_PREFIXES.some((prefix) => line.startsWith(prefix))) continue;
+      if (message.role === "user") return line.slice(0, SNIPPET_CHARS);
+      fallback ??= line.slice(0, SNIPPET_CHARS);
+    }
+  }
+  return fallback;
+}
+
 function summarize(session: Session): SessionSummary {
   const { messages, ...metadata } = session;
-  return { ...metadata, messageCount: messages.length };
+  return { ...metadata, messageCount: messages.length, snippet: snippetOf(messages) };
 }
 
 /**
@@ -92,7 +146,8 @@ function isoStamp(value: number, fallback: string): string {
 }
 
 function formatSummary(session: SessionSummary): string {
-  return `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}`;
+  const row = `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}`;
+  return session.snippet ? `${row}\t${session.snippet}` : row;
 }
 
 /** Describes the returned window because tool details never reach the model. */
