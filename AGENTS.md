@@ -10,6 +10,7 @@
 - Public readers expose `name`, `available()`, and `list()`.
 - Normalize native conversations to `Session`, `Message`, and `Block`.
 - Preserve parser behavior for every supported harness with fixture tests.
+- Open libSQL databases through `openDatabase()`. A static `@libsql/client` import lands in every process that only lists sources.
 - Do not add persistence, synchronization cursors, watchers, search, analytics, channels as a standalone domain, or agent-memory ingestion.
 - Applications own indexing, storage, rendering, and export.
 - Keep the agent surfaces bounded and read-only: `src/tool-operations.ts` holds the executors, `src/mcp.ts` exports `createMcpServer()`, `src/commands/mcp.ts` runs it over stdio, and `packages/pi/extensions/` registers the pi tools.

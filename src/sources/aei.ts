@@ -1,6 +1,6 @@
 import { home, osUser } from "../core/env.ts";
-import { createClient } from "@libsql/client";
-import { join, resolve } from "node:path";
+import { openDatabase } from "../core/db.ts";
+import { join } from "node:path";
 import { existsSync } from "node:fs";
 import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
 
@@ -38,7 +38,7 @@ export class AeiSource implements Source {
   }
 
   async *read(): AsyncGenerator<Message> {
-    const db = createClient({ url: `file:${resolve(this.dbPath)}` });
+    const db = await openDatabase(this.dbPath);
 
     try {
       // Discover available columns to handle schema evolution
