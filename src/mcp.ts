@@ -135,20 +135,18 @@ export function createMcpServer(): Server {
   const server = new Server({ name: "sessions", version }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: tools.map(
-      (tool): Tool => ({
-        name: tool.name,
-        title: tool.title,
-        description: tool.description,
-        inputSchema: tool.inputSchema as Tool["inputSchema"],
-        annotations: {
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false,
-        },
-      }),
-    ),
+    tools: tools.map((tool): Tool => ({
+      name: tool.name,
+      title: tool.title,
+      description: tool.description,
+      inputSchema: tool.inputSchema as Tool["inputSchema"],
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    })),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {

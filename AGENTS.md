@@ -18,6 +18,7 @@
 - An MCP client reads `content` and never `details`, so tool text has to carry whatever the next call needs.
 - Both reading tools inherit `list()`'s cost: they read the whole native archive per call, and a multi-gigabyte harness store (opencode at 6.8 GB, 1.05M parts) outlasts a client's request timeout. Document that cost; do not paper over it with caching or indexing here.
 - MCP is built on the low-level `Server`, deprecated in the SDK, because `McpServer.registerTool` takes Standard Schema only and `typebox` 1.x is not one.
+- Linting and formatting consume the shared `@agntn/ox` policy; repository-local config owns only ignore patterns.
 
 ## Commands
 
