@@ -54,7 +54,10 @@ function messagePayload(payload: Readonly<Record<string, unknown>>): ParsedPaylo
   return { role: nativeRole === "assistant" ? "assistant" : "user", blocks };
 }
 
-function functionCallPayload(payload: Readonly<Record<string, unknown>>): ParsedPayload {
+function toolCallPayload(
+  payload: Readonly<Record<string, unknown>>,
+  input: unknown,
+): ParsedPayload {
   return {
     role: "assistant",
     blocks: [
@@ -62,16 +65,23 @@ function functionCallPayload(payload: Readonly<Record<string, unknown>>): Parsed
         type: "tool_call",
         toolName: scalarText(payload.name) ?? "",
         toolCallId: scalarText(payload.call_id) ?? "",
-        toolInput: scalarText(payload.arguments) ?? "",
+        toolInput: scalarText(input) ?? "",
       },
     ],
   };
 }
 
-function functionOutputPayload(
-  payload: Readonly<Record<string, unknown>>,
-): ParsedPayload | undefined {
-  const output = scalarText(payload.output) ?? "";
+function toolOutputText(output: unknown): string {
+  const scalar = scalarText(output);
+  if (scalar !== undefined) return scalar;
+  return textBlocks(output)
+    .map((block) => block.text ?? "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function toolOutputPayload(payload: Readonly<Record<string, unknown>>): ParsedPayload | undefined {
+  const output = toolOutputText(payload.output);
   if (!output) return undefined;
   return {
     role: "tool",
@@ -90,9 +100,12 @@ function parsePayload(payload: Readonly<Record<string, unknown>>): ParsedPayload
     case "message":
       return messagePayload(payload);
     case "function_call":
-      return functionCallPayload(payload);
+      return toolCallPayload(payload, payload.arguments);
+    case "custom_tool_call":
+      return toolCallPayload(payload, payload.input);
     case "function_call_output":
-      return functionOutputPayload(payload);
+    case "custom_tool_call_output":
+      return toolOutputPayload(payload);
     default:
       return undefined;
   }
