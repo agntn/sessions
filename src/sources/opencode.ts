@@ -1,11 +1,87 @@
-import { home, osUser } from "../core/env.ts";
-import { openDatabase } from "../core/db.ts";
-import { join } from "node:path";
 import { existsSync } from "node:fs";
-import type { Source, Message, Channel, Participant } from "../core/types.ts";
+import { join } from "node:path";
+import { openDatabase } from "../core/db.ts";
+import { home, osUser } from "../core/env.ts";
+import type { Block, Channel, Message, Participant, Source } from "../core/types.ts";
+import { parseJsonRecord, scalarText } from "./parsing.ts";
 
 // Large window keeps keyset pagination bounded without truncating native payloads.
 const WINDOW = 5000;
+
+interface Boundary {
+  readonly timestamp: number;
+  readonly rowId: number;
+}
+
+interface PartRow {
+  readonly pdata: string;
+  readonly role: string;
+  readonly tc: number;
+  readonly sid: string;
+  readonly rid: number;
+}
+
+interface ParsedPart {
+  readonly role?: Message["role"];
+  readonly blocks: Block[];
+  readonly botAuthor: boolean;
+}
+
+function textPart(part: Readonly<Record<string, unknown>>): ParsedPart | undefined {
+  const text = scalarText(part.text) ?? "";
+  return text ? { blocks: [{ type: "text", text }], botAuthor: false } : undefined;
+}
+
+function toolInput(part: Readonly<Record<string, unknown>>): string {
+  if (typeof part.args === "string") return part.args;
+  if (typeof part.input === "string") return part.input;
+  return JSON.stringify(part.args ?? part.input ?? "") ?? "";
+}
+
+function toolCallPart(part: Readonly<Record<string, unknown>>): ParsedPart {
+  return {
+    blocks: [
+      {
+        type: "tool_call",
+        toolName: scalarText(part.toolName) ?? scalarText(part.name) ?? "",
+        toolCallId: scalarText(part.toolCallId) ?? scalarText(part.id) ?? "",
+        toolInput: toolInput(part),
+      },
+    ],
+    botAuthor: true,
+  };
+}
+
+function toolResultPart(part: Readonly<Record<string, unknown>>): ParsedPart {
+  return {
+    role: "tool",
+    blocks: [
+      {
+        type: "tool_result",
+        toolCallId: scalarText(part.toolCallId) ?? "",
+        text:
+          typeof part.result === "string" ? part.result : (JSON.stringify(part.result ?? "") ?? ""),
+      },
+    ],
+    botAuthor: true,
+  };
+}
+
+function parsePart(raw: string): ParsedPart | undefined {
+  const part = parseJsonRecord(raw);
+  if (!part) return undefined;
+  switch (part.type) {
+    case "text":
+      return textPart(part);
+    case "tool-invocation":
+    case "tool-call":
+      return toolCallPart(part);
+    case "tool-result":
+      return toolResultPart(part);
+    default:
+      return undefined;
+  }
+}
 
 export class OpenCodeSource implements Source {
   name = "opencode";
@@ -22,10 +98,36 @@ export class OpenCodeSource implements Source {
     return existsSync(this.dbPath);
   }
 
+  private messageFromRow(row: PartRow): Message | undefined {
+    if (row.role !== "user" && row.role !== "assistant") return undefined;
+    const timestamp = Number(row.tc);
+    if (!Number.isFinite(timestamp)) return undefined;
+    const dateValue = new Date(timestamp);
+    if (Number.isNaN(dateValue.getTime())) return undefined;
+    const part = parsePart(row.pdata);
+    if (!part) return undefined;
+
+    const role = part.role ?? row.role;
+    const author =
+      !part.botAuthor && role === "user"
+        ? this.user
+        : { platform: "cli", name: "opencode", isBot: true };
+    return {
+      source: this.name,
+      sessionId: row.sid,
+      role,
+      timestamp,
+      date: dateValue.toISOString().split("T")[0],
+      blocks: part.blocks,
+      channel: this.channel,
+      author,
+    };
+  }
+
   async *read(): AsyncGenerator<Message> {
     const db = await openDatabase(this.dbPath);
     try {
-      let boundary: { timestamp: number; rowId: number } | undefined;
+      let boundary: Boundary | undefined;
       while (true) {
         const boundarySql = boundary
           ? "WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))"
@@ -48,97 +150,16 @@ export class OpenCodeSource implements Source {
             ? [boundary.timestamp, boundary.timestamp, boundary.rowId, WINDOW]
             : [WINDOW],
         });
-        const rows = rowsResult.rows as unknown as {
-          pdata: string;
-          role: string;
-          tc: number;
-          sid: string;
-          rid: number;
-        }[];
-
+        const rows = rowsResult.rows as unknown as PartRow[];
         if (rows.length === 0) break;
-        const last = rows[rows.length - 1];
+
+        const last = rows.at(-1);
+        if (!last) break;
         boundary = { timestamp: last.tc, rowId: last.rid };
 
         for (const row of rows) {
-          if (row.role !== "user" && row.role !== "assistant") continue;
-
-          const ts = Number(row.tc);
-          if (!Number.isFinite(ts)) continue;
-          const dateValue = new Date(ts);
-          if (Number.isNaN(dateValue.getTime())) continue;
-          const date = dateValue.toISOString().split("T")[0];
-
-          let part: Record<string, unknown>;
-          try {
-            part = JSON.parse(row.pdata);
-          } catch {
-            continue;
-          }
-
-          const ptype = String(part.type || "");
-          if (ptype === "text") {
-            const text = String(part.text || "");
-            if (text.length === 0) continue;
-
-            const author =
-              row.role === "user"
-                ? this.user
-                : ({ platform: "cli", name: "opencode", isBot: true } as Participant);
-            yield {
-              source: this.name,
-              sessionId: row.sid,
-              role: row.role as "user" | "assistant",
-              timestamp: ts,
-              date,
-              blocks: [{ type: "text", text: text }],
-              channel: this.channel,
-              author,
-            };
-          } else if (ptype === "tool-invocation" || ptype === "tool-call") {
-            yield {
-              source: this.name,
-              sessionId: row.sid,
-              role: row.role as "user" | "assistant",
-              timestamp: ts,
-              date,
-              blocks: [
-                {
-                  type: "tool_call",
-                  toolName: String(part.toolName || part.name || ""),
-                  toolCallId: String(part.toolCallId || part.id || ""),
-                  toolInput:
-                    typeof part.args === "string"
-                      ? part.args
-                      : typeof part.input === "string"
-                        ? part.input
-                        : JSON.stringify(part.args ?? part.input ?? ""),
-                },
-              ],
-              channel: this.channel,
-              author: { platform: "cli", name: "opencode", isBot: true },
-            };
-          } else if (ptype === "tool-result") {
-            yield {
-              source: this.name,
-              sessionId: row.sid,
-              role: "tool",
-              timestamp: ts,
-              date,
-              blocks: [
-                {
-                  type: "tool_result",
-                  toolCallId: String(part.toolCallId || ""),
-                  text:
-                    typeof part.result === "string"
-                      ? part.result
-                      : JSON.stringify(part.result ?? ""),
-                },
-              ],
-              channel: this.channel,
-              author: { platform: "cli", name: "opencode", isBot: true },
-            };
-          }
+          const message = this.messageFromRow(row);
+          if (message) yield message;
         }
       }
     } finally {

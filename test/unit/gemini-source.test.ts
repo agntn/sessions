@@ -8,13 +8,17 @@ import type { Message } from "../../src/core/types.ts";
 
 let tempDir: string;
 
-function writeChat(project: string, filename: string, data: Record<string, unknown>): void {
+function writeChat(
+  project: string,
+  filename: string,
+  data: Readonly<Record<string, unknown>>,
+): void {
   const dir = join(tempDir, project, "chats");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, filename), JSON.stringify(data));
 }
 
-async function collect(source: GeminiSource): Promise<Message[]> {
+async function collect(source: Readonly<GeminiSource>): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;

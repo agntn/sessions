@@ -7,15 +7,15 @@ import type { Message } from "../../src/core/types.ts";
 
 let tempDir: string;
 
-function writeJsonl(filename: string, lines: Record<string, unknown>[]): void {
+function writeJsonl(filename: string, lines: readonly Readonly<Record<string, unknown>>[]): void {
   writeFileSync(join(tempDir, filename), lines.map((l) => JSON.stringify(l)).join("\n"));
 }
 
-function writeJson(filename: string, data: Record<string, unknown>): void {
+function writeJson(filename: string, data: Readonly<Record<string, unknown>>): void {
   writeFileSync(join(tempDir, filename), JSON.stringify(data));
 }
 
-async function collect(source: CodexSource): Promise<Message[]> {
+async function collect(source: Readonly<CodexSource>): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;

@@ -1,6 +1,10 @@
 import { homedir, userInfo } from "node:os";
 
-/** Safe home directory accessor. Never throws. */
+/**
+ * Returns a safe home directory and never throws.
+ *
+ * @returns {string} The configured home directory or a temporary fallback.
+ */
 export function home(): string {
   if (process.env.HOME) return process.env.HOME;
   try {
@@ -10,7 +14,11 @@ export function home(): string {
   }
 }
 
-/** Current OS username. Falls back to 'unknown'. */
+/**
+ * Returns the current OS username.
+ *
+ * @returns {string} The username or `unknown` when the OS lookup fails.
+ */
 export function osUser(): string {
   try {
     return userInfo().username;

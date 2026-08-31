@@ -1,16 +1,33 @@
-import { home, osUser } from "../core/env.ts";
+import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync, statSync, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
+import { home, osUser } from "../core/env.ts";
+import type { Block, Message, Source } from "../core/types.ts";
+import { isRecord, parseJson, parseJsonRecord, scalarText } from "./parsing.ts";
 
-function* walkSessions(dir: string): Generator<{ path: string; format: "jsonl" | "json" }> {
+interface SessionFile {
+  readonly path: string;
+  readonly mtime: number;
+  readonly format: "jsonl" | "json";
+}
+
+interface ParsedPayload {
+  readonly role: "user" | "assistant" | "tool";
+  readonly blocks: Block[];
+}
+
+interface ParsedTimestamp {
+  readonly timestamp: number;
+  readonly native?: number;
+}
+
+function* walkSessions(dir: string): Generator<Pick<SessionFile, "path" | "format">> {
   if (!existsSync(dir)) return;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) yield* walkSessions(full);
-    else if (entry.name.endsWith(".jsonl")) yield { path: full, format: "jsonl" };
-    else if (entry.name.endsWith(".json")) yield { path: full, format: "json" };
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) yield* walkSessions(path);
+    else if (entry.name.endsWith(".jsonl")) yield { path, format: "jsonl" };
+    else if (entry.name.endsWith(".json")) yield { path, format: "json" };
   }
 }
 
@@ -19,242 +36,303 @@ function extractSessionId(filename: string): string {
   return match?.[1] ?? filename.replace(/\.jsonl?$/, "");
 }
 
-function parseBlocks(
-  payload: Record<string, unknown>,
-): { role: Message["role"]; blocks: Block[] } | null {
-  const type = String(payload.type || "");
+function textBlocks(content: unknown): Block[] {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((value) => {
+    if (!isRecord(value)) return [];
+    if (value.type !== "input_text" && value.type !== "output_text") return [];
+    const text = scalarText(value.text);
+    return text ? [{ type: "text" as const, text }] : [];
+  });
+}
 
-  if (type === "message") {
-    const role = String(payload.role || "");
-    if (role === "developer") return null;
+function messagePayload(payload: Readonly<Record<string, unknown>>): ParsedPayload | undefined {
+  const nativeRole = scalarText(payload.role) ?? "";
+  if (nativeRole === "developer") return undefined;
+  const blocks = textBlocks(payload.content);
+  if (blocks.length === 0) return undefined;
+  return { role: nativeRole === "assistant" ? "assistant" : "user", blocks };
+}
 
-    const messageRole = role === "assistant" ? ("assistant" as const) : ("user" as const);
-    const content = payload.content as Array<Record<string, unknown>> | null;
-    if (!content?.length) return null;
+function functionCallPayload(payload: Readonly<Record<string, unknown>>): ParsedPayload {
+  return {
+    role: "assistant",
+    blocks: [
+      {
+        type: "tool_call",
+        toolName: scalarText(payload.name) ?? "",
+        toolCallId: scalarText(payload.call_id) ?? "",
+        toolInput: scalarText(payload.arguments) ?? "",
+      },
+    ],
+  };
+}
 
-    const blocks: Block[] = [];
-    for (const c of content) {
-      const cType = String(c.type || "");
-      if ((cType === "input_text" || cType === "output_text") && c.text) {
-        const text = String(c.text);
-        if (text.length > 0) blocks.push({ type: "text", text });
-      }
+function functionOutputPayload(
+  payload: Readonly<Record<string, unknown>>,
+): ParsedPayload | undefined {
+  const output = scalarText(payload.output) ?? "";
+  if (!output) return undefined;
+  return {
+    role: "tool",
+    blocks: [
+      {
+        type: "tool_result",
+        toolCallId: scalarText(payload.call_id) ?? "",
+        text: output,
+      },
+    ],
+  };
+}
+
+function parsePayload(payload: Readonly<Record<string, unknown>>): ParsedPayload | undefined {
+  switch (payload.type) {
+    case "message":
+      return messagePayload(payload);
+    case "function_call":
+      return functionCallPayload(payload);
+    case "function_call_output":
+      return functionOutputPayload(payload);
+    default:
+      return undefined;
+  }
+}
+
+function parsedTimestamp(
+  entry: Readonly<Record<string, unknown>>,
+  fallback: number,
+): ParsedTimestamp {
+  const text = scalarText(entry.timestamp);
+  const native = text ? new Date(text).getTime() : Number.NaN;
+  return Number.isFinite(native) ? { timestamp: native, native } : { timestamp: fallback };
+}
+
+function sessionIdFromPath(path: string): string {
+  return extractSessionId(path.split("/").pop() || "");
+}
+
+class MirrorTracker {
+  private eventKeys = new Map<string, number>();
+  private responseKeys = new Map<string, number>();
+  private timestamp: number | undefined;
+
+  private start(timestamp: number): void {
+    if (timestamp === this.timestamp) return;
+    this.eventKeys.clear();
+    this.responseKeys.clear();
+    this.timestamp = timestamp;
+  }
+
+  private consumeEvent(key: string): boolean {
+    const count = this.eventKeys.get(key);
+    if (!count) return false;
+    if (count === 1) this.eventKeys.delete(key);
+    else this.eventKeys.set(key, count - 1);
+    return true;
+  }
+
+  private consumeResponse(key: string): boolean {
+    const count = this.responseKeys.get(key);
+    if (!count) return false;
+    if (count === 1) this.responseKeys.delete(key);
+    else this.responseKeys.set(key, count - 1);
+    return true;
+  }
+
+  private rememberEvent(key: string): void {
+    this.eventKeys.set(key, (this.eventKeys.get(key) ?? 0) + 1);
+  }
+
+  private rememberResponse(key: string): void {
+    this.responseKeys.set(key, (this.responseKeys.get(key) ?? 0) + 1);
+  }
+
+  event(nativeTimestamp: number | undefined, text: string): boolean {
+    if (nativeTimestamp === undefined) return false;
+    this.start(nativeTimestamp);
+    const key = `${nativeTimestamp}\0${text}`;
+    if (this.consumeResponse(key)) return true;
+    this.rememberEvent(key);
+    return false;
+  }
+
+  response(nativeTimestamp: number | undefined, text: string): boolean {
+    if (nativeTimestamp === undefined) return false;
+    this.start(nativeTimestamp);
+    const key = `${nativeTimestamp}\0${text}`;
+    if (this.consumeEvent(key)) return true;
+    this.rememberResponse(key);
+    return false;
+  }
+}
+
+class JsonlNormalizer {
+  private cwd: string | undefined;
+  private mirrors = new MirrorTracker();
+  private source: string;
+  private sessionId: string;
+  private mtime: number;
+  private userName: string;
+
+  constructor(source: string, sessionId: string, mtime: number, userName: string) {
+    this.source = source;
+    this.sessionId = sessionId;
+    this.mtime = mtime;
+    this.userName = userName;
+  }
+
+  private eventMessage(
+    entry: Readonly<Record<string, unknown>>,
+    payload: Readonly<Record<string, unknown>>,
+  ): Message | undefined {
+    if (payload.type !== "user_message") return undefined;
+    const text = scalarText(payload.message) ?? "";
+    if (!text) return undefined;
+    const timestamp = parsedTimestamp(entry, this.mtime);
+    if (this.mirrors.event(timestamp.native, text)) return undefined;
+    return {
+      source: this.source,
+      sessionId: this.sessionId,
+      role: "user",
+      timestamp: timestamp.timestamp,
+      date: new Date(timestamp.timestamp).toISOString().split("T")[0],
+      blocks: [{ type: "text", text }],
+      context: this.cwd ? { cwd: this.cwd } : undefined,
+      channel: { platform: "cli", name: "codex" },
+      author: { platform: "cli", name: this.userName },
+    };
+  }
+
+  private responseMessage(
+    entry: Readonly<Record<string, unknown>>,
+    payload: Readonly<Record<string, unknown>>,
+  ): Message | undefined {
+    const parsed = parsePayload(payload);
+    if (!parsed) return undefined;
+    const timestamp = parsedTimestamp(entry, this.mtime);
+    if (parsed.role === "user") {
+      const text = parsed.blocks.map((block) => block.text || "").join("\n");
+      if (this.mirrors.response(timestamp.native, text)) return undefined;
     }
-
-    return blocks.length ? { role: messageRole, blocks } : null;
-  }
-
-  if (type === "function_call") {
     return {
-      role: "assistant",
-      blocks: [
-        {
-          type: "tool_call",
-          toolName: String(payload.name || ""),
-          toolCallId: String(payload.call_id || ""),
-          toolInput: String(payload.arguments || ""),
-        },
-      ],
-    };
-  }
-
-  if (type === "function_call_output") {
-    const output = String(payload.output || "");
-    if (!output) return null;
-    return {
-      role: "tool",
-      blocks: [
-        {
-          type: "tool_result",
-          toolCallId: String(payload.call_id || ""),
-          text: output,
-        },
-      ],
-    };
-  }
-
-  return null;
-}
-function consumeMirror(keys: Map<string, number>, key: string): boolean {
-  const count = keys.get(key);
-  if (!count) return false;
-  if (count === 1) keys.delete(key);
-  else keys.set(key, count - 1);
-  return true;
-}
-
-function rememberMirror(keys: Map<string, number>, key: string): void {
-  keys.set(key, (keys.get(key) ?? 0) + 1);
-}
-
-function* parseJsonSession(
-  path: string,
-  mtime: number,
-  sourceName: string,
-  channel: Channel,
-  user: Participant,
-): Generator<Message> {
-  let data: Record<string, unknown>;
-  try {
-    data = JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
-    return;
-  }
-
-  const session = data.session as Record<string, unknown> | undefined;
-  const items = data.items as Array<Record<string, unknown>> | undefined;
-  if (!items?.length) return;
-
-  const sessionId = String(session?.id || extractSessionId(path.split("/").pop() || ""));
-  const parsedSessionTs = session?.timestamp ? new Date(String(session.timestamp)).getTime() : NaN;
-  const sessionTs = Number.isFinite(parsedSessionTs) ? parsedSessionTs : mtime;
-
-  for (const [index, item] of items.entries()) {
-    const parsed = parseBlocks(item);
-    if (!parsed) continue;
-
-    const ts = sessionTs + index;
-
-    yield {
-      source: sourceName,
-      sessionId,
+      source: this.source,
+      sessionId: this.sessionId,
       role: parsed.role,
-      timestamp: ts,
-      date: new Date(ts).toISOString().split("T")[0],
+      timestamp: timestamp.timestamp,
+      date: new Date(timestamp.timestamp).toISOString().split("T")[0],
       blocks: parsed.blocks,
-      channel,
-      author: parsed.role === "user" ? user : { platform: "cli", name: "codex", isBot: true },
+      context: this.cwd ? { cwd: this.cwd } : undefined,
+      channel: { platform: "cli", name: "codex" },
+      author:
+        parsed.role === "user"
+          ? { platform: "cli", name: this.userName }
+          : { platform: "cli", name: "codex", isBot: true },
     };
   }
+
+  normalize(entry: Readonly<Record<string, unknown>>): Message | undefined {
+    if (entry.type === "session_meta") {
+      if (isRecord(entry.payload)) this.cwd = scalarText(entry.payload.cwd) || this.cwd;
+      return undefined;
+    }
+    if (!isRecord(entry.payload)) return undefined;
+    if (entry.type === "event_msg") return this.eventMessage(entry, entry.payload);
+    if (entry.type === "response_item") return this.responseMessage(entry, entry.payload);
+    return undefined;
+  }
+}
+
+interface JsonSessionInfo {
+  readonly id: string;
+  readonly timestamp: number;
+}
+
+function readJsonObject(path: string): Readonly<Record<string, unknown>> | undefined {
+  try {
+    const data = parseJson(readFileSync(path, "utf-8"));
+    return isRecord(data) ? data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function jsonSessionInfo(
+  data: Readonly<Record<string, unknown>>,
+  file: SessionFile,
+): JsonSessionInfo {
+  const session = isRecord(data.session) ? data.session : undefined;
+  const id = scalarText(session?.id) || sessionIdFromPath(file.path);
+  const timestampText = scalarText(session?.timestamp);
+  const nativeTimestamp = timestampText ? new Date(timestampText).getTime() : Number.NaN;
+  const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : file.mtime;
+  return { id, timestamp };
 }
 
 export class CodexSource implements Source {
   name = "codex";
   private sessionsDir: string;
-  private channel: Channel = { platform: "cli", name: "codex" };
-  private user: Participant;
+  private userName: string;
 
   constructor(sessionsDir?: string) {
     this.sessionsDir = sessionsDir ?? join(home(), ".codex/sessions");
-    this.user = { platform: "cli", name: osUser() };
+    this.userName = osUser();
   }
 
   available(): boolean {
     return existsSync(this.sessionsDir);
   }
 
-  async *read(): AsyncGenerator<Message> {
-    const files: { path: string; mtime: number; format: "jsonl" | "json" }[] = [];
-    for (const f of walkSessions(this.sessionsDir)) {
-      const mt = statSync(f.path).mtimeMs;
-      files.push({ path: f.path, mtime: mt, format: f.format });
-    }
-    files.sort((a, b) => a.mtime - b.mtime);
+  private *readJsonSession(file: SessionFile): Generator<Message> {
+    const data = readJsonObject(file.path);
+    if (!data || !Array.isArray(data.items)) return;
+    const session = jsonSessionInfo(data, file);
 
-    for (const file of files) {
-      if (file.format === "json") {
-        yield* parseJsonSession(file.path, file.mtime, this.name, this.channel, this.user);
-        continue;
-      }
-
-      const sessionId = extractSessionId(file.path.split("/").pop() || "");
-
-      const rl = createInterface({
-        input: createReadStream(file.path),
-        crlfDelay: Infinity,
-      });
-
-      let cwd: string | undefined;
-      const eventUserKeys = new Map<string, number>();
-      const responseUserKeys = new Map<string, number>();
-      let mirrorTimestamp: number | undefined;
-      const startMirrorTimestamp = (timestamp: number): void => {
-        if (timestamp === mirrorTimestamp) return;
-        eventUserKeys.clear();
-        responseUserKeys.clear();
-        mirrorTimestamp = timestamp;
+    for (const [index, item] of data.items.entries()) {
+      if (!isRecord(item)) continue;
+      const parsed = parsePayload(item);
+      if (!parsed) continue;
+      const timestamp = session.timestamp + index;
+      yield {
+        source: this.name,
+        sessionId: session.id,
+        role: parsed.role,
+        timestamp,
+        date: new Date(timestamp).toISOString().split("T")[0],
+        blocks: parsed.blocks,
+        channel: { platform: "cli", name: "codex" },
+        author:
+          parsed.role === "user"
+            ? { platform: "cli", name: this.userName }
+            : { platform: "cli", name: "codex", isBot: true },
       };
+    }
+  }
 
-      for await (const line of rl) {
-        let entry: Record<string, unknown>;
-        try {
-          entry = JSON.parse(line);
-        } catch {
-          continue;
-        }
+  private async *readJsonlSession(file: SessionFile): AsyncGenerator<Message> {
+    const normalizer = new JsonlNormalizer(
+      this.name,
+      sessionIdFromPath(file.path),
+      file.mtime,
+      this.userName,
+    );
+    const lines = createInterface({ input: createReadStream(file.path), crlfDelay: Infinity });
+    for await (const line of lines) {
+      const entry = parseJsonRecord(line);
+      if (!entry) continue;
+      const message = normalizer.normalize(entry);
+      if (message) yield message;
+    }
+  }
 
-        const eventType = String(entry.type || "");
-
-        if (eventType === "session_meta") {
-          const p = entry.payload as Record<string, unknown> | undefined;
-          if (p?.cwd) cwd = String(p.cwd);
-          continue;
-        }
-
-        if (eventType === "event_msg") {
-          const p = entry.payload as Record<string, unknown> | undefined;
-          if (p?.type === "user_message") {
-            const text = String(p.message || "");
-            if (text.length > 0) {
-              const parsedTs = new Date(String(entry.timestamp)).getTime();
-              const ts = Number.isFinite(parsedTs) ? parsedTs : file.mtime;
-              if (Number.isFinite(parsedTs)) startMirrorTimestamp(parsedTs);
-              const mirrorKey = Number.isFinite(parsedTs) ? `${parsedTs}\0${text}` : undefined;
-              if (mirrorKey && consumeMirror(responseUserKeys, mirrorKey)) continue;
-              if (mirrorKey) rememberMirror(eventUserKeys, mirrorKey);
-
-              yield {
-                source: this.name,
-                sessionId,
-                role: "user",
-                timestamp: ts,
-                date: new Date(ts).toISOString().split("T")[0],
-                blocks: [{ type: "text", text }],
-                context: cwd ? { cwd } : undefined,
-                channel: this.channel,
-                author: this.user,
-              };
-            }
-          }
-          continue;
-        }
-
-        if (eventType !== "response_item") continue;
-
-        const payload = entry.payload as Record<string, unknown> | undefined;
-        if (!payload) continue;
-
-        const parsed = parseBlocks(payload);
-        if (!parsed) continue;
-
-        const parsedEntryTs = new Date(String(entry.timestamp)).getTime();
-        const ts = Number.isFinite(parsedEntryTs) ? parsedEntryTs : file.mtime;
-        if (parsed.role === "user" && Number.isFinite(parsedEntryTs)) {
-          startMirrorTimestamp(parsedEntryTs);
-        }
-
-        if (parsed.role === "user") {
-          const text = parsed.blocks.map((block) => block.text || "").join("\n");
-          const mirrorKey = Number.isFinite(parsedEntryTs)
-            ? `${parsedEntryTs}\0${text}`
-            : undefined;
-          if (mirrorKey && consumeMirror(eventUserKeys, mirrorKey)) continue;
-          if (mirrorKey) rememberMirror(responseUserKeys, mirrorKey);
-        }
-
-        yield {
-          source: this.name,
-          sessionId,
-          role: parsed.role,
-          timestamp: ts,
-          date: new Date(ts).toISOString().split("T")[0],
-          blocks: parsed.blocks,
-          context: cwd ? { cwd } : undefined,
-          channel: this.channel,
-          author:
-            parsed.role === "user" ? this.user : { platform: "cli", name: "codex", isBot: true },
-        };
-      }
+  async *read(): AsyncGenerator<Message> {
+    const files: SessionFile[] = [];
+    for (const file of walkSessions(this.sessionsDir)) {
+      files.push({ ...file, mtime: statSync(file.path).mtimeMs });
+    }
+    files.sort((left, right) => left.mtime - right.mtime);
+    for (const file of files) {
+      if (file.format === "json") yield* this.readJsonSession(file);
+      else yield* this.readJsonlSession(file);
     }
   }
 }

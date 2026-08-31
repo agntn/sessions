@@ -22,11 +22,13 @@ import {
 import { version } from "./version.ts";
 
 interface ToolDefinition {
-  name: string;
-  title: string;
-  description: string;
-  inputSchema: TSchema;
-  execute(args: Record<string, unknown>): ToolResult<unknown> | Promise<ToolResult<unknown>>;
+  readonly name: string;
+  readonly title: string;
+  readonly description: string;
+  readonly inputSchema: TSchema;
+  readonly execute: (
+    args: Readonly<Record<string, unknown>>,
+  ) => ToolResult<unknown> | Promise<ToolResult<unknown>>;
 }
 
 const sourceArguments = {
@@ -100,7 +102,13 @@ const tools: ToolDefinition[] = [
   },
 ];
 
-/** Formats the first TypeBox validation failure for an MCP client. */
+/**
+ * Formats the first TypeBox validation failure for an MCP client.
+ *
+ * @param schema - Schema that rejected the value.
+ * @param value - Rejected input.
+ * @returns {string} A readable description of the first failure.
+ */
 function validationError(schema: TSchema, value: unknown): string {
   const first = Value.Errors(schema, value)[0];
   if (!first) return "Invalid arguments";
@@ -112,6 +120,9 @@ function validationError(schema: TSchema, value: unknown): string {
  *
  * `details` is dropped and `structuredContent` is never set: clients that see
  * structured output prefer it over `content` and would hide the readable answer.
+ *
+ * @param result - Shared executor result.
+ * @returns {CallToolResult} MCP-compatible text content.
  */
 function toCallToolResult(result: ToolResult<unknown>): CallToolResult {
   return { content: result.content };
@@ -129,26 +140,26 @@ function errorResult(text: string): CallToolResult {
  * does not implement Standard Schema, and this package's tool schemas are TypeBox,
  * shared in shape with the Pi extension. The high-level API would force a second
  * definition of every parameter.
+ *
+ * @returns {Server} The configured, unconnected MCP server.
  */
 export function createMcpServer(): Server {
   const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
   const server = new Server({ name: "sessions", version }, { capabilities: { tools: {} } });
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: tools.map(
-      (tool): Tool => ({
-        name: tool.name,
-        title: tool.title,
-        description: tool.description,
-        inputSchema: tool.inputSchema as Tool["inputSchema"],
-        annotations: {
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: true,
-          openWorldHint: false,
-        },
-      }),
-    ),
+    tools: tools.map((tool): Tool => ({
+      name: tool.name,
+      title: tool.title,
+      description: tool.description,
+      inputSchema: tool.inputSchema as Tool["inputSchema"],
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+    })),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {

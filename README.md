@@ -15,10 +15,13 @@ It deliberately does not provide a database, synchronization cursors, file watch
 - Codex
 - Gemini CLI
 - Mastra
+- OMP
 - OpenClaw
 - OpenCode
 
 ## Install
+
+Requires Node.js 24 or later.
 
 ```bash
 pnpm add @agntn/sessions

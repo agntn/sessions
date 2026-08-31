@@ -2,9 +2,7 @@ import type {
   AgentToolResult,
   ExtensionAPI,
   ExtensionContext,
-  ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { TSchema } from "typebox";
 import { describe, expect, it, vi } from "vitest";
 import sessionsExtension from "../../packages/pi/extensions/sessions";
 import type * as SessionsTools from "../../src/tool-operations.ts";
@@ -20,32 +18,42 @@ vi.mock("../../src/index.ts", () => ({
   create: sessionsMock.create,
 }));
 
-type CapturedRuntime = { tools: Map<string, ToolDefinition> };
+interface CapturedRuntime {
+  readonly toolNames: () => string[];
+  readonly getTool: (name: string) => unknown;
+}
+
+interface NamedTool {
+  readonly name: string;
+}
+
 type ExecutableTool = {
   execute: (
     toolCallId: string,
-    params: Record<string, unknown>,
-    signal: AbortSignal | undefined,
+    params: Readonly<Record<string, unknown>>,
+    signal: unknown,
     onUpdate: undefined,
-    ctx: ExtensionContext,
+    ctx: unknown,
   ) => Promise<AgentToolResult<unknown>>;
 };
 
 function loadExtension(): CapturedRuntime {
-  const runtime: CapturedRuntime = { tools: new Map() };
+  const tools = new Map<string, unknown>();
+  const runtime: CapturedRuntime = {
+    toolNames: () => [...tools.keys()],
+    getTool: (name) => tools.get(name),
+  };
   const pi = {
-    registerTool<TParams extends TSchema, TDetails, TState>(
-      definition: ToolDefinition<TParams, TDetails, TState>,
-    ) {
-      runtime.tools.set(definition.name, definition as unknown as ToolDefinition);
+    registerTool(definition: NamedTool) {
+      tools.set(definition.name, definition);
     },
-  } satisfies Partial<ExtensionAPI>;
+  };
   sessionsExtension(pi as ExtensionAPI);
   return runtime;
 }
 
-function tool(runtime: CapturedRuntime, name: string): ExecutableTool {
-  const definition = runtime.tools.get(name);
+function tool(runtime: Readonly<CapturedRuntime>, name: string): ExecutableTool {
+  const definition = runtime.getTool(name);
   expect(definition).toBeDefined();
   return definition as ExecutableTool;
 }
@@ -77,7 +85,7 @@ const session = {
 
 describe("Pi extension", () => {
   it("registers the bounded discovery and reading tools", () => {
-    expect([...loadExtension().tools.keys()].sort()).toEqual([
+    expect(loadExtension().toolNames().sort()).toEqual([
       "sessions_list",
       "sessions_read",
       "sessions_sources",
@@ -199,7 +207,7 @@ describe("Pi extension", () => {
           {
             ...session.messages[0],
             blocks: [
-              { type: "text" as const, text: `  spread\tover\nlines \u001b[1m${"x".repeat(200)}` },
+              { type: "text" as const, text: `  spread\tover\nlines \u001B[1m${"x".repeat(200)}` },
             ],
           },
         ],
@@ -273,7 +281,7 @@ describe("Pi extension", () => {
     sessionsMock.list.mockResolvedValue([session, { ...session, id: "session-2" }]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
     const list = tool(loadExtension(), "sessions_list");
-    const render = async (params: Record<string, unknown>) =>
+    const render = async (params: Readonly<Record<string, unknown>>) =>
       (await list.execute("test", params, undefined, undefined, {} as ExtensionContext)).content
         .map((item) => (item.type === "text" ? item.text : ""))
         .join("");
@@ -307,7 +315,7 @@ describe("Pi extension", () => {
     sessionsMock.list.mockResolvedValue([session]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
     const read = tool(loadExtension(), "sessions_read");
-    const render = async (params: Record<string, unknown>) =>
+    const render = async (params: Readonly<Record<string, unknown>>) =>
       (await read.execute("test", params, undefined, undefined, {} as ExtensionContext)).content
         .map((item) => (item.type === "text" ? item.text : ""))
         .join("");

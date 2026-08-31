@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { Type, type Static } from "typebox";
+import { Type } from "typebox";
 import type * as SessionsTools from "../../../src/tool-operations.ts";
 
 const DEFAULT_SESSION_LIMIT = 20;
@@ -20,6 +20,8 @@ let toolOperationsPromise: Promise<typeof SessionsTools> | undefined;
  * every surface answers identically. Source comes first because a checkout can
  * still hold a stale `dist/`, and the existence check keeps a transitive load
  * failure from being mistaken for a missing entry module.
+ *
+ * @returns {Promise<typeof SessionsTools>} The shared executor module.
  */
 function loadToolOperations(): Promise<typeof SessionsTools> {
   toolOperationsPromise ??= (
@@ -69,8 +71,17 @@ const readParameters = Type.Object({
   ),
 });
 
-type ListParams = Static<typeof listParameters>;
-type ReadParams = Static<typeof readParameters>;
+interface ListParams {
+  readonly source: string;
+  readonly path?: string;
+  readonly paths?: readonly string[];
+  readonly offset?: number;
+  readonly limit?: number;
+}
+
+interface ReadParams extends ListParams {
+  readonly sessionId: string;
+}
 
 export default function sessionsExtension(pi: ExtensionAPI) {
   pi.registerTool({

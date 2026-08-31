@@ -1,49 +1,83 @@
-import { home, osUser } from "../core/env.ts";
-import { openDatabase } from "../core/db.ts";
-import { join } from "node:path";
 import { existsSync } from "node:fs";
-import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
+import { join } from "node:path";
+import { openDatabase } from "../core/db.ts";
+import { home, osUser } from "../core/env.ts";
+import type { Block, Channel, Message, Participant, Source } from "../core/types.ts";
+import { isRecord, parseJson, scalarText } from "./parsing.ts";
+
+function serialized(value: unknown): string {
+  return JSON.stringify(value) ?? "";
+}
+
+function firstScalar(values: readonly unknown[]): string {
+  for (const value of values) {
+    const text = scalarText(value);
+    if (text !== undefined) return text;
+  }
+  return "";
+}
+
+function parseToolInvocation(part: Readonly<Record<string, unknown>>): Block[] {
+  const call = isRecord(part.toolInvocation) ? part.toolInvocation : part;
+  const toolCallId = firstScalar([call.toolCallId, call.id]);
+  const blocks: Block[] = [
+    {
+      type: "tool_call",
+      toolName: firstScalar([call.toolName, call.name]),
+      toolCallId,
+      toolInput: typeof call.args === "string" ? call.args : serialized(call.args),
+    },
+  ];
+  if (call.state === "result" && call.result !== undefined) {
+    blocks.push({
+      type: "tool_result",
+      toolCallId,
+      text: typeof call.result === "string" ? call.result : serialized(call.result),
+    });
+  }
+  return blocks;
+}
+
+function parseTextPart(part: Readonly<Record<string, unknown>>): Block[] {
+  return typeof part.text === "string" && part.text ? [{ type: "text", text: part.text }] : [];
+}
+
+function parseToolResult(part: Readonly<Record<string, unknown>>): Block[] {
+  return [
+    {
+      type: "tool_result",
+      toolCallId: scalarText(part.toolCallId) ?? "",
+      text: typeof part.result === "string" ? part.result : serialized(part.result),
+    },
+  ];
+}
+
+function parsePart(part: unknown): Block[] {
+  if (!isRecord(part)) return [];
+  switch (part.type) {
+    case "text":
+      return parseTextPart(part);
+    case "tool-invocation":
+    case "tool-call":
+      return parseToolInvocation(part);
+    case "tool-result":
+      return parseToolResult(part);
+    default:
+      return [];
+  }
+}
+
+function parseFormatTwo(parts: readonly unknown[]): Block[] {
+  return parts.flatMap(parsePart);
+}
 
 function parseContent(raw: string): Block[] {
-  const fallback = raw.length > 0 ? [{ type: "text", text: raw }] : [];
+  const fallback: Block[] = raw.length > 0 ? [{ type: "text", text: raw }] : [];
   try {
-    const parsed = JSON.parse(raw);
-    if (parsed?.format === 2 && Array.isArray(parsed.parts)) {
-      const out: Block[] = [];
-      for (const p of parsed.parts) {
-        if (p.type === "text" && p.text) {
-          out.push({ type: "text", text: String(p.text) });
-        } else if (p.type === "tool-invocation" || p.type === "tool-call") {
-          // Mastra stores AI SDK parts: the call fields live under
-          // `toolInvocation`, and a finished call carries its result there too
-          // instead of emitting a separate `tool-result` part.
-          const call = p.toolInvocation ?? p;
-          const toolCallId = String(call.toolCallId || call.id || "");
-          out.push({
-            type: "tool_call",
-            toolName: String(call.toolName || call.name || ""),
-            toolCallId,
-            toolInput: typeof call.args === "string" ? call.args : JSON.stringify(call.args),
-          });
-          if (call.state === "result" && call.result !== undefined) {
-            out.push({
-              type: "tool_result",
-              toolCallId,
-              text: typeof call.result === "string" ? call.result : JSON.stringify(call.result),
-            });
-          }
-        } else if (p.type === "tool-result") {
-          out.push({
-            type: "tool_result",
-            toolCallId: String(p.toolCallId || ""),
-            text: typeof p.result === "string" ? p.result : JSON.stringify(p.result),
-          });
-        }
-      }
-      return out;
-    }
-    if (typeof parsed?.content === "string") {
-      return [{ type: "text", text: parsed.content }];
+    const parsed = parseJson(raw);
+    if (isRecord(parsed)) {
+      if (parsed.format === 2 && Array.isArray(parsed.parts)) return parseFormatTwo(parsed.parts);
+      if (typeof parsed.content === "string") return [{ type: "text", text: parsed.content }];
     }
     if (typeof parsed === "string") {
       return parsed.length > 0 ? [{ type: "text", text: parsed }] : [];
@@ -68,6 +102,7 @@ export class MastraSource implements Source {
   available(): boolean {
     return existsSync(this.dbPath);
   }
+
   async *read(): AsyncGenerator<Message> {
     const db = await openDatabase(this.dbPath);
     try {

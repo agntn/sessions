@@ -7,11 +7,11 @@ import type { Message } from "../../src/core/types.ts";
 
 let tempDir: string;
 
-function writeJsonl(filename: string, lines: Record<string, unknown>[]): void {
+function writeJsonl(filename: string, lines: readonly Readonly<Record<string, unknown>>[]): void {
   writeFileSync(join(tempDir, filename), lines.map((l) => JSON.stringify(l)).join("\n"));
 }
 
-async function collect(source: OpenClawSource): Promise<Message[]> {
+async function collect(source: Readonly<OpenClawSource>): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;
