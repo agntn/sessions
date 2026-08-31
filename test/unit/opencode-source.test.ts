@@ -20,7 +20,7 @@ vi.mock("../../src/core/env.ts", async (importOriginal) => {
 
 import { OpenCodeSource } from "../../src/sources/opencode.ts";
 
-async function collect(source: OpenCodeSource): Promise<Message[]> {
+async function collect(source: Readonly<OpenCodeSource>): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const message of source.read()) messages.push(message);
   return messages;
@@ -358,7 +358,8 @@ describe("OpenCodeSource", () => {
 
     expect(messages).toHaveLength(2);
     expect(executeMock).toHaveBeenCalledTimes(3);
-    expect(executeMock.mock.calls[1][0].args).toEqual([1000, 1000, 10, 5000]);
+    const calls: readonly (readonly unknown[])[] = executeMock.mock.calls;
+    expect(calls[1]?.[0]).toEqual(expect.objectContaining({ args: [1000, 1000, 10, 5000] }));
   });
 
   it("preserves complete tool_call input", async () => {
@@ -410,6 +411,32 @@ describe("OpenCodeSource", () => {
 
     expect(msgs).toHaveLength(1);
     expect(msgs[0].blocks[0].text!.length).toBe(10000);
+  });
+
+  it("prefers string input when args uses a non-string representation", async () => {
+    executeMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            pdata: JSON.stringify({
+              type: "tool-call",
+              name: "run",
+              id: "tc1",
+              args: { command: "stale" },
+              input: '{"command":"current"}',
+            }),
+            role: "assistant",
+            tc: 1000,
+            sid: "s1",
+            rid: 1,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const messages = await collect(new OpenCodeSource("/tmp/opencode.db"));
+
+    expect(messages[0].blocks[0].toolInput).toBe('{"command":"current"}');
   });
 
   it.each([0, false])("preserves falsy tool values: %j", async (value) => {

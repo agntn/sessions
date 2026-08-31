@@ -12,7 +12,7 @@ afterEach(() => {
   directory = undefined;
 });
 
-function writeSession(name: string, entries: Record<string, unknown>[]): string {
+function writeSession(name: string, entries: readonly Readonly<Record<string, unknown>>[]): string {
   const project = join(directory!, "project");
   mkdirSync(project, { recursive: true });
   const path = join(project, name);
@@ -133,6 +133,24 @@ describe("OmpSource", () => {
       timestamp: mtime.getTime(),
       blocks: [{ type: "text", text: "answer" }],
     });
+  });
+
+  it("keeps the filename fallback when a session header has an empty id", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-omp-"));
+    writeSession("blank.jsonl", [
+      { type: "session", id: "" },
+      {
+        type: "message",
+        timestamp: "2026-08-16T19:20:30.384Z",
+        message: { role: "user", content: [{ type: "text", text: "hello" }] },
+      },
+    ]);
+
+    const messages: Message[] = [];
+    for await (const message of new OmpSource(directory).read()) messages.push(message);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].sessionId).toBe("blank");
   });
 
   it("skips null content items without aborting the rest of the archive", async () => {

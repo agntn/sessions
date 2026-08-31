@@ -1,51 +1,75 @@
-import { home, osUser } from "../core/env.ts";
+import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { existsSync, readdirSync, statSync, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
+import { home, osUser } from "../core/env.ts";
+import type { Block, Channel, Message, Participant, Source } from "../core/types.ts";
+import { isRecord, parseJson, scalarText } from "./parsing.ts";
+
+interface SessionFile {
+  readonly path: string;
+  readonly mtime: number;
+}
+
+function textBlock(type: "text" | "thinking", value: unknown): Block[] {
+  const text = scalarText(value);
+  return text ? [{ type, text }] : [];
+}
+
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((item) => {
+      if (!isRecord(item) || item.type !== "text") return [];
+      const text = scalarText(item.text);
+      return text ? [text] : [];
+    })
+    .join("\n");
+}
+
+function toolCallBlock(value: Readonly<Record<string, unknown>>): Block[] {
+  return [
+    {
+      type: "tool_call",
+      toolName: scalarText(value.name) ?? "",
+      toolCallId: scalarText(value.id) ?? "",
+      toolInput:
+        typeof value.input === "string" ? value.input : (JSON.stringify(value.input) ?? ""),
+    },
+  ];
+}
+
+function toolResultBlock(value: Readonly<Record<string, unknown>>): Block[] {
+  return [
+    {
+      type: "tool_result",
+      toolCallId: scalarText(value.tool_use_id) ?? "",
+      text: toolResultText(value.content),
+    },
+  ];
+}
+
+function parseBlock(value: unknown): Block[] {
+  if (!isRecord(value)) return [];
+  switch (value.type) {
+    case "text":
+      return textBlock("text", value.text);
+    case "thinking":
+      return textBlock("thinking", value.thinking);
+    case "tool_use":
+      return toolCallBlock(value);
+    case "tool_result":
+      return toolResultBlock(value);
+    default:
+      return [];
+  }
+}
 
 function parseBlocks(content: unknown): Block[] {
   if (typeof content === "string") {
     return content.length > 0 ? [{ type: "text", text: content }] : [];
   }
-  if (!Array.isArray(content)) return [];
-
-  const out: Block[] = [];
-  for (const b of content) {
-    const block = b as Record<string, unknown>;
-    switch (block.type) {
-      case "text":
-        if (block.text) out.push({ type: "text", text: String(block.text) });
-        break;
-      case "thinking":
-        if (block.thinking) out.push({ type: "thinking", text: String(block.thinking) });
-        break;
-      case "tool_use":
-        out.push({
-          type: "tool_call",
-          toolName: String(block.name || ""),
-          toolCallId: String(block.id || ""),
-          toolInput: typeof block.input === "string" ? block.input : JSON.stringify(block.input),
-        });
-        break;
-      case "tool_result":
-        out.push({
-          type: "tool_result",
-          toolCallId: String(block.tool_use_id || ""),
-          text:
-            typeof block.content === "string"
-              ? block.content
-              : Array.isArray(block.content)
-                ? (block.content as Record<string, unknown>[])
-                    .filter((c) => c.type === "text")
-                    .map((c) => String(c.text || ""))
-                    .join("\n")
-                : "",
-        });
-        break;
-    }
-  }
-  return out;
+  return Array.isArray(content) ? content.flatMap(parseBlock) : [];
 }
 
 function* walkJsonl(dir: string): Generator<string> {
@@ -55,6 +79,12 @@ function* walkJsonl(dir: string): Generator<string> {
     if (entry.isDirectory()) yield* walkJsonl(full);
     else if (entry.name.endsWith(".jsonl")) yield full;
   }
+}
+
+function nativeRole(type: unknown): Message["role"] | undefined {
+  if (type === "assistant") return "assistant";
+  if (type === "user" || type === "human") return "user";
+  return undefined;
 }
 
 export class ClaudeSource implements Source {
@@ -72,60 +102,52 @@ export class ClaudeSource implements Source {
     return existsSync(this.projectsDir);
   }
 
-  async *read(): AsyncGenerator<Message> {
-    const files: { path: string; mtime: number }[] = [];
-    for (const f of walkJsonl(this.projectsDir)) {
-      files.push({ path: f, mtime: statSync(f).mtimeMs });
-    }
-    files.sort((a, b) => a.mtime - b.mtime);
+  private messageFromEntry(
+    entry: Readonly<Record<string, unknown>>,
+    sessionId: string,
+    mtime: number,
+  ): Message | undefined {
+    const role = nativeRole(entry.type);
+    if (!role || !isRecord(entry.message)) return undefined;
+    const blocks = parseBlocks(entry.message.content);
+    if (blocks.length === 0) return undefined;
 
-    for (const file of files) {
-      const sessionId = file.path.split("/").pop()?.replace(".jsonl", "") || "";
+    const parsed = scalarText(entry.timestamp);
+    const nativeTimestamp = parsed ? new Date(parsed).getTime() : Number.NaN;
+    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : mtime;
+    return {
+      source: this.name,
+      sessionId,
+      role,
+      timestamp,
+      date: new Date(timestamp).toISOString().split("T")[0],
+      blocks,
+      channel: this.channel,
+      author: role === "user" ? this.user : { platform: "cli", name: "claude-code", isBot: true },
+    };
+  }
 
-      const rl = createInterface({
-        input: createReadStream(file.path),
-        crlfDelay: Infinity,
-      });
-
-      for await (const line of rl) {
-        let entry: Record<string, unknown>;
-        try {
-          entry = JSON.parse(line);
-        } catch {
-          continue;
-        }
-
-        const type = String(entry.type || "");
-        const role =
-          type === "assistant"
-            ? ("assistant" as const)
-            : type === "user" || type === "human"
-              ? ("user" as const)
-              : null;
-        if (!role) continue;
-
-        const msg = entry.message as Record<string, unknown> | undefined;
-        if (!msg) continue;
-
-        const entryBlocks = parseBlocks(msg.content);
-        if (!entryBlocks.length) continue;
-
-        const parsed = entry.timestamp ? new Date(String(entry.timestamp)).getTime() : NaN;
-        const ts = Number.isFinite(parsed) ? parsed : file.mtime;
-        const date = new Date(ts).toISOString().split("T")[0];
-
-        yield {
-          source: this.name,
-          sessionId,
-          role,
-          timestamp: ts,
-          date,
-          blocks: entryBlocks,
-          channel: this.channel,
-          author:
-            role === "user" ? this.user : { platform: "cli", name: "claude-code", isBot: true },
-        };
+  private async *readFile(file: SessionFile): AsyncGenerator<Message> {
+    const sessionId = file.path.split("/").pop()?.replace(".jsonl", "") || "";
+    const lines = createInterface({ input: createReadStream(file.path), crlfDelay: Infinity });
+    for await (const line of lines) {
+      try {
+        const entry = parseJson(line);
+        if (!isRecord(entry)) continue;
+        const message = this.messageFromEntry(entry, sessionId, file.mtime);
+        if (message) yield message;
+      } catch {
+        continue;
       }
     }
+  }
+
+  async *read(): AsyncGenerator<Message> {
+    const files: SessionFile[] = [];
+    for (const path of walkJsonl(this.projectsDir)) {
+      files.push({ path, mtime: statSync(path).mtimeMs });
+    }
+    files.sort((left, right) => left.mtime - right.mtime);
+    for (const file of files) yield* this.readFile(file);
   }
 }

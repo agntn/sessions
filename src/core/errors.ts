@@ -1,6 +1,6 @@
 /** Base error for session reader failures. */
 export class SessionsError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  constructor(message: string, options?: Readonly<ErrorOptions>) {
     super(message, options);
     this.name = "SessionsError";
   }

@@ -1,36 +1,80 @@
-import { home, osUser } from "../core/env.ts";
+import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { existsSync, readdirSync, statSync, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
-import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
+import { home, osUser } from "../core/env.ts";
+import type { Block, Channel, Message, Participant, Source } from "../core/types.ts";
+import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
+
+interface SessionFile {
+  readonly path: string;
+  readonly mtime: number;
+}
+
+function textBlock(type: "text" | "thinking", value: unknown): Block[] {
+  const text = scalarText(value);
+  return text ? [{ type, text }] : [];
+}
+
+function toolCallBlock(value: Readonly<Record<string, unknown>>): Block[] {
+  return [
+    {
+      type: "tool_call",
+      toolName: scalarText(value.name) ?? "",
+      toolCallId: scalarText(value.id) ?? "",
+      toolInput:
+        typeof value.arguments === "string"
+          ? value.arguments
+          : (JSON.stringify(value.arguments ?? "") ?? ""),
+    },
+  ];
+}
+
+function parseBlock(value: unknown): Block[] {
+  if (!isRecord(value)) return [];
+  switch (value.type) {
+    case "text":
+      return textBlock("text", value.text);
+    case "thinking":
+      return textBlock("thinking", value.thinking);
+    case "toolCall":
+      return toolCallBlock(value);
+    default:
+      return [];
+  }
+}
 
 function parseBlocks(content: unknown): Block[] {
-  if (!Array.isArray(content)) return [];
-  const out: Block[] = [];
-  for (const b of content) {
-    if (typeof b !== "object" || b === null) continue;
-    const block = b as Record<string, unknown>;
-    switch (block.type) {
-      case "text":
-        if (block.text) out.push({ type: "text", text: String(block.text) });
-        break;
-      case "thinking":
-        if (block.thinking) out.push({ type: "thinking", text: String(block.thinking) });
-        break;
-      case "toolCall":
-        out.push({
-          type: "tool_call",
-          toolName: String(block.name || ""),
-          toolCallId: String(block.id || ""),
-          toolInput:
-            typeof block.arguments === "string"
-              ? block.arguments
-              : JSON.stringify(block.arguments ?? ""),
-        });
-        break;
-    }
-  }
-  return out;
+  return Array.isArray(content) ? content.flatMap(parseBlock) : [];
+}
+
+function toolResultBlocks(message: Readonly<Record<string, unknown>>): Block[] {
+  if (!Array.isArray(message.content)) return [];
+  const text = message.content
+    .flatMap((value) => {
+      if (!isRecord(value) || value.type !== "text") return [];
+      const content = scalarText(value.text);
+      return content ? [content] : [];
+    })
+    .join("\n");
+  if (!text) return [];
+  return [
+    {
+      type: "tool_result",
+      toolCallId: scalarText(message.toolCallId) ?? "",
+      text,
+    },
+  ];
+}
+
+function nativeRole(value: unknown): Message["role"] | undefined {
+  if (value === "assistant") return "assistant";
+  if (value === "user") return "user";
+  if (value === "toolResult") return "tool";
+  return undefined;
+}
+
+function sessionIdFromPath(path: string): string {
+  return path.split("/").pop()?.split("_").pop()?.replace(".jsonl", "") || "";
 }
 
 function* walkJsonl(dir: string): Generator<string> {
@@ -57,91 +101,58 @@ export class OmpSource implements Source {
     return existsSync(this.sessionsDir);
   }
 
-  async *read(): AsyncGenerator<Message> {
-    const files: { path: string; mtime: number }[] = [];
-    for (const f of walkJsonl(this.sessionsDir)) {
-      files.push({ path: f, mtime: statSync(f).mtimeMs });
-    }
-    files.sort((a, b) => a.mtime - b.mtime);
+  private messageFromEntry(
+    entry: Readonly<Record<string, unknown>>,
+    sessionId: string,
+    mtime: number,
+  ): Message | undefined {
+    if (!isRecord(entry.message)) return undefined;
+    const role = nativeRole(entry.message.role);
+    if (!role) return undefined;
+    const blocks =
+      role === "tool" ? toolResultBlocks(entry.message) : parseBlocks(entry.message.content);
+    if (blocks.length === 0) return undefined;
 
-    for (const file of files) {
-      // The id lives in the `session` entry and matches the file name; a
-      // leading `title` entry can precede it, so the file stem stays the
-      // fallback for headerless or truncated transcripts.
-      let sessionId = file.path.split("/").pop()?.split("_").pop()?.replace(".jsonl", "") || "";
-      const rl = createInterface({
-        input: createReadStream(file.path),
-        crlfDelay: Infinity,
-      });
+    const timestampText = scalarText(entry.timestamp);
+    const nativeTimestamp = timestampText ? new Date(timestampText).getTime() : Number.NaN;
+    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : mtime;
+    return {
+      source: this.name,
+      sessionId,
+      role,
+      timestamp,
+      date: new Date(timestamp).toISOString().split("T")[0],
+      blocks,
+      channel: this.channel,
+      author: role === "user" ? this.user : { platform: "cli", name: "omp", isBot: true },
+    };
+  }
 
-      for await (const line of rl) {
-        let entry: Record<string, unknown>;
-        try {
-          entry = JSON.parse(line);
-        } catch {
-          continue;
-        }
-
-        if (entry.type === "session") {
-          sessionId = String(entry.id || sessionId);
-          continue;
-        }
-        if (entry.type !== "message") continue;
-
-        const msg = entry.message as Record<string, unknown> | undefined;
-        if (!msg) continue;
-
-        const nativeRole = String(msg.role || "");
-        const role =
-          nativeRole === "assistant"
-            ? ("assistant" as const)
-            : nativeRole === "user"
-              ? ("user" as const)
-              : nativeRole === "toolResult"
-                ? ("tool" as const)
-                : null;
-        if (!role) continue;
-
-        // A toolResult carries its payload as text blocks plus the call it
-        // answers, so it maps to one tool_result block outside parseBlocks.
-        // A malformed non-array content yields no payload and drops the entry.
-        const blocks =
-          role === "tool"
-            ? Array.isArray(msg.content)
-              ? [
-                  {
-                    type: "tool_result" as const,
-                    toolCallId: String(msg.toolCallId || ""),
-                    text: (msg.content as unknown[])
-                      .filter(
-                        (b): b is Record<string, unknown> =>
-                          typeof b === "object" &&
-                          b !== null &&
-                          (b as Record<string, unknown>).type === "text",
-                      )
-                      .map((b) => String(b.text || ""))
-                      .join("\n"),
-                  },
-                ]
-              : []
-            : parseBlocks(msg.content);
-        if (!blocks.length || (role === "tool" && !blocks[0]!.text)) continue;
-
-        const parsed = entry.timestamp ? new Date(String(entry.timestamp)).getTime() : NaN;
-        const ts = Number.isFinite(parsed) ? parsed : file.mtime;
-        const date = new Date(ts).toISOString().split("T")[0];
-
-        yield {
-          source: this.name,
-          sessionId,
-          role,
-          timestamp: ts,
-          date,
-          blocks,
-          channel: this.channel,
-          author: role === "user" ? this.user : { platform: "cli", name: "omp", isBot: true },
-        };
+  private async *readFile(file: SessionFile): AsyncGenerator<Message> {
+    // The id lives in the `session` entry and matches the file name; a leading
+    // `title` entry can precede it, so the file stem stays the fallback for
+    // headerless or truncated transcripts.
+    let sessionId = sessionIdFromPath(file.path);
+    const lines = createInterface({ input: createReadStream(file.path), crlfDelay: Infinity });
+    for await (const line of lines) {
+      const entry = parseJsonRecord(line);
+      if (!entry) continue;
+      if (entry.type === "session") {
+        sessionId = scalarText(entry.id) || sessionId;
+        continue;
       }
+      if (entry.type !== "message") continue;
+      const message = this.messageFromEntry(entry, sessionId, file.mtime);
+      if (message) yield message;
     }
+  }
+
+  async *read(): AsyncGenerator<Message> {
+    const files: SessionFile[] = [];
+    for (const path of walkJsonl(this.sessionsDir)) {
+      files.push({ path, mtime: statSync(path).mtimeMs });
+    }
+    files.sort((left, right) => left.mtime - right.mtime);
+    for (const file of files) yield* this.readFile(file);
   }
 }

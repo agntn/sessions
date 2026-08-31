@@ -10,7 +10,7 @@
  */
 
 import { allSources, create } from "./index.ts";
-import type { Message, Session, SourceOptions } from "./index.ts";
+import type { Session, SourceOptions } from "./index.ts";
 
 /** One text block plus the details a harness renders next to it. */
 export interface ToolResult<TDetails> {
@@ -64,6 +64,57 @@ export interface ReadParams extends ListParams {
   sessionId: string;
 }
 
+interface SourceParamsInput {
+  readonly source: string;
+  readonly path?: string;
+  readonly paths?: readonly string[];
+}
+
+interface ListParamsInput extends SourceParamsInput {
+  readonly offset?: number;
+  readonly limit?: number;
+}
+
+interface ReadParamsInput extends ListParamsInput {
+  readonly sessionId: string;
+}
+
+interface SnippetBlock {
+  readonly type: string;
+  readonly text?: string;
+}
+
+interface SnippetMessage {
+  readonly role: "user" | "assistant" | "tool";
+  readonly blocks: readonly SnippetBlock[];
+}
+
+interface RenderableBlock extends SnippetBlock {
+  readonly toolName?: string;
+  readonly toolInput?: string;
+  readonly toolCallId?: string;
+}
+
+interface RenderableMessage {
+  readonly timestamp: number;
+  readonly date: string;
+  readonly role: "user" | "assistant" | "tool";
+  readonly blocks: readonly RenderableBlock[];
+}
+
+interface PagingInput {
+  readonly offset?: number;
+  readonly limit?: number;
+}
+
+interface SessionForSummary {
+  readonly id: string;
+  readonly source: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly messages: readonly SnippetMessage[];
+}
+
 export const DEFAULT_SESSION_LIMIT = 20;
 export const MAX_SESSION_LIMIT = 100;
 export const DEFAULT_MESSAGE_LIMIT = 100;
@@ -73,7 +124,7 @@ export const MAX_OUTPUT_CHARS = 100_000;
 const NOTICE_RESERVE = 200;
 const TRUNCATION_SUFFIX = "\n\n[output truncated]";
 
-function optionsFrom(params: SourceParams): SourceOptions | undefined {
+function optionsFrom(params: SourceParamsInput): SourceOptions | undefined {
   const path = params.path?.trim();
   const paths = params.paths?.map((item) => item.trim()).filter(Boolean);
   if (!path && !paths?.length) return undefined;
@@ -104,11 +155,14 @@ const SNIPPET_CHARS = 80;
  * whitespace because pasted terminal output carries raw ANSI escapes, and one
  * escape would let a row restyle the whole listing. Injected blocks run to
  * megabytes, so the cut comes first.
+ *
+ * @param text - Native message text.
+ * @returns {string} A bounded printable line.
  */
 function singleLine(text: string): string {
   return text
     .slice(0, 2048)
-    .replace(/[\s\x00-\x1F\x7F-\x9F]+/g, " ")
+    .replaceAll(/[\s\p{Cc}]+/gu, " ")
     .trim();
 }
 
@@ -116,8 +170,11 @@ function singleLine(text: string): string {
  * The first line the person typed, or the first text at all when a harness
  * kept no user text, so a listing row says what a session is about without
  * paying for a full read.
+ *
+ * @param messages - Session messages in chronological order.
+ * @returns {string | undefined} A bounded human-authored snippet when one exists.
  */
-function snippetOf(messages: readonly Message[]): string | undefined {
+function snippetOf(messages: readonly SnippetMessage[]): string | undefined {
   let fallback: string | undefined;
   for (const message of messages) {
     for (const block of message.blocks) {
@@ -131,7 +188,7 @@ function snippetOf(messages: readonly Message[]): string | undefined {
   return fallback;
 }
 
-function summarize(session: Session): SessionSummary {
+function summarize(session: SessionForSummary): SessionSummary {
   const { messages, ...metadata } = session;
   return { ...metadata, messageCount: messages.length, snippet: snippetOf(messages) };
 }
@@ -139,18 +196,30 @@ function summarize(session: Session): SessionSummary {
 /**
  * A harness timestamp is only a number, so a corrupt archive can carry one
  * outside the Date range and make toISOString throw for a whole listing.
+ *
+ * @param value - Candidate epoch timestamp.
+ * @param fallback - Text returned for an invalid timestamp.
+ * @returns {string} An ISO timestamp or the fallback.
  */
 function isoStamp(value: number, fallback: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
 }
 
-function formatSummary(session: SessionSummary): string {
+function formatSummary(session: Readonly<SessionSummary>): string {
   const row = `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}`;
   return session.snippet ? `${row}\t${session.snippet}` : row;
 }
 
-/** Describes the returned window because tool details never reach the model. */
+/**
+ * Describes the returned window because tool details never reach the model.
+ *
+ * @param unit - Kind of item shown.
+ * @param offset - Zero-based first item.
+ * @param shown - Number of fully rendered items.
+ * @param total - Total item count.
+ * @returns {string} A paging notice, or an empty string for the complete archive.
+ */
 function windowNotice(
   unit: "message" | "session",
   offset: number,
@@ -164,61 +233,57 @@ function windowNotice(
   return `[Showing ${unit}s ${offset + 1}-${end} of ${total}. Use offset=${end} to continue.]`;
 }
 
+function renderBlock(block: RenderableBlock): string {
+  const callId = block.toolCallId ? ` ${block.toolCallId}` : "";
+  if (block.type === "tool_call") {
+    const input = block.toolInput ? ` ${block.toolInput}` : "";
+    return `[tool_call ${block.toolName || "unknown"}${callId}]${input}`;
+  }
+  if (block.type === "tool_result") {
+    const output = block.text ? ` ${block.text}` : "";
+    return `[tool_result${callId}]${output}`;
+  }
+
+  // Thinking and any future block type stay labelled, otherwise a model
+  // reading the transcript takes internal reasoning for a plain answer.
+  const label = block.type === "text" ? "" : `[${block.type}] `;
+  return block.text ? `${label}${block.text}` : `[${block.type}]`;
+}
+
+function renderMessage(message: RenderableMessage): string {
+  const header = `[${isoStamp(message.timestamp, message.date)}] ${message.role}\n`;
+  return `${header}${message.blocks.map(renderBlock).join("\n")}`;
+}
+
 function formatMessages(
-  messages: readonly Message[],
+  messages: readonly RenderableMessage[],
   limit: number,
 ): { text: string; truncated: boolean; rendered: number } {
   const budget = limit - TRUNCATION_SUFFIX.length;
   let text = "";
-  let truncated = false;
   let rendered = 0;
 
-  const append = (value: string): boolean => {
+  for (const [index, message] of messages.entries()) {
+    const renderedMessage = `${index > 0 ? "\n\n" : ""}${renderMessage(message)}`;
     const remaining = budget - text.length;
-    if (value.length <= remaining) {
-      text += value;
-      return true;
+    if (renderedMessage.length > remaining) {
+      text += renderedMessage.slice(0, Math.max(remaining, 0));
+      return { text: `${text}${TRUNCATION_SUFFIX}`, truncated: true, rendered };
     }
-    text += value.slice(0, Math.max(remaining, 0));
-    truncated = true;
-    return false;
-  };
-
-  for (const [messageIndex, message] of messages.entries()) {
-    if (messageIndex > 0 && !append("\n\n")) break;
-    // Every adapter stores `date` as the day alone, so the header takes the
-    // exact time from the numeric timestamp and keeps `date` as the fallback.
-    if (!append(`[${isoStamp(message.timestamp, message.date)}] ${message.role}\n`)) break;
-
-    for (const [blockIndex, block] of message.blocks.entries()) {
-      if (blockIndex > 0 && !append("\n")) break;
-      const callId = block.toolCallId ? ` ${block.toolCallId}` : "";
-      if (block.type === "tool_call") {
-        if (!append(`[tool_call ${block.toolName || "unknown"}${callId}]`)) break;
-        if (block.toolInput && (!append(" ") || !append(block.toolInput))) break;
-        continue;
-      }
-      if (block.type === "tool_result") {
-        if (!append(`[tool_result${callId}]`)) break;
-        if (block.text && (!append(" ") || !append(block.text))) break;
-        continue;
-      }
-      // Thinking and any future block type stay labelled, otherwise a model
-      // reading the transcript takes internal reasoning for a plain answer.
-      const label = block.type === "text" ? "" : `[${block.type}] `;
-      if (!append(block.text ? `${label}${block.text}` : `[${block.type}]`)) break;
-    }
-    if (truncated) break;
+    text += renderedMessage;
     rendered += 1;
   }
 
-  return truncated
-    ? { text: `${text}${TRUNCATION_SUFFIX}`, truncated, rendered }
-    : { text, truncated, rendered };
+  return { text, truncated: false, rendered };
 }
 
-/** The caller's location override, joined for display, or nothing when absent. */
-function overrideLabel(params: SourceParams): string | undefined {
+/**
+ * Returns the caller's location override joined for display.
+ *
+ * @param params - Source location options.
+ * @returns {string | undefined} The display label, or `undefined` when no override exists.
+ */
+function overrideLabel(params: SourceParamsInput): string | undefined {
   return (
     params.path?.trim() ||
     params.paths
@@ -229,15 +294,64 @@ function overrideLabel(params: SourceParams): string | undefined {
   );
 }
 
-/** Names the location that held no readable native data, so a typo is visible. */
-function unavailable(source: string, params: SourceParams): string {
+/**
+ * Names the location that held no readable native data, so a typo is visible.
+ *
+ * @param source - Harness source name.
+ * @param params - Source location options.
+ * @returns {string} A location-aware error message.
+ */
+function unavailable(source: string, params: SourceParamsInput): string {
   const override = overrideLabel(params);
   return override
     ? `No readable ${source} data at ${override}.`
     : `No readable ${source} data at its native location.`;
 }
 
-/** Lists supported harnesses and whether their native data is readable locally. */
+function paging(
+  params: PagingInput,
+  defaultLimit: number,
+): { readonly offset: number; readonly limit: number } {
+  return { offset: params.offset ?? 0, limit: params.limit ?? defaultLimit };
+}
+
+function sessionWindowText(
+  listed: string,
+  notice: string,
+  count: number,
+  offset: number,
+  source: string,
+  total: number,
+): string {
+  if (count === 0) return `No sessions at offset ${offset} for ${source}. It has ${total}.`;
+  return `${listed}${notice ? `\n\n${notice}` : ""}`;
+}
+
+function messageWindow(
+  messages: readonly RenderableMessage[],
+  offset: number,
+  limit: number,
+  total: number,
+): { readonly output: ReturnType<typeof formatMessages>; readonly notice: string } {
+  if (messages.length === 0) {
+    return {
+      output: {
+        text: `No messages in range ${offset}:${offset + limit}. Session has ${total} messages.`,
+        truncated: false,
+        rendered: 0,
+      },
+      notice: "",
+    };
+  }
+  const output = formatMessages(messages, MAX_OUTPUT_CHARS - NOTICE_RESERVE);
+  return { output, notice: windowNotice("message", offset, output.rendered, total) };
+}
+
+/**
+ * Lists supported harnesses and whether their native data is readable locally.
+ *
+ * @returns {ToolResult<SourcesDetails>} Text and structured source availability.
+ */
 export function listSessionSources(): ToolResult<SourcesDetails> {
   const statuses = allSources().map((source) => ({
     name: source.name,
@@ -256,14 +370,18 @@ export function listSessionSources(): ToolResult<SourcesDetails> {
   };
 }
 
-/** Lists bounded session metadata for one harness, newest first. */
-export async function listSessions(params: ListParams): Promise<ToolResult<ListDetails>> {
+/**
+ * Lists bounded session metadata for one harness, newest first.
+ *
+ * @param params - Source, location, and paging options.
+ * @returns {Promise<ToolResult<ListDetails>>} Text and structured metadata for the requested window.
+ */
+export async function listSessions(params: ListParamsInput): Promise<ToolResult<ListDetails>> {
   const source = params.source.trim();
   if (!source) throw new Error("Source cannot be empty");
 
   const reader = create(source, optionsFrom({ ...params, source }));
-  const offset = params.offset ?? 0;
-  const limit = params.limit ?? DEFAULT_SESSION_LIMIT;
+  const { offset, limit } = paging(params, DEFAULT_SESSION_LIMIT);
   // An override pointing nowhere reads as an empty archive, so an unavailable
   // reader says so instead of reporting a harness with no sessions.
   if (!reader.available()) throw new Error(unavailable(source, params));
@@ -279,17 +397,20 @@ export async function listSessions(params: ListParams): Promise<ToolResult<ListD
     content: [
       {
         type: "text",
-        text: window.length
-          ? `${listed}${notice ? `\n\n${notice}` : ""}`
-          : `No sessions at offset ${offset} for ${source}. It has ${all.length}.`,
+        text: sessionWindowText(listed, notice, window.length, offset, source, all.length),
       },
     ],
     details: { source, offset, total: all.length, sessions: window },
   };
 }
 
-/** Renders a bounded message window from one session addressed by exact id. */
-export async function readSession(params: ReadParams): Promise<ToolResult<ReadDetails>> {
+/**
+ * Renders a bounded message window from one session addressed by exact id.
+ *
+ * @param params - Source, session identifier, location, and paging options.
+ * @returns {Promise<ToolResult<ReadDetails>>} Text and structured metadata for the requested message window.
+ */
+export async function readSession(params: ReadParamsInput): Promise<ToolResult<ReadDetails>> {
   const source = params.source.trim();
   const sessionId = params.sessionId.trim();
   if (!source) throw new Error("Source cannot be empty");
@@ -300,18 +421,10 @@ export async function readSession(params: ReadParams): Promise<ToolResult<ReadDe
   const session = (await reader.list()).find((candidate) => candidate.id === sessionId);
   if (!session) throw new Error(`Session not found: ${source}:${sessionId}`);
 
-  const offset = params.offset ?? 0;
-  const limit = params.limit ?? DEFAULT_MESSAGE_LIMIT;
+  const { offset, limit } = paging(params, DEFAULT_MESSAGE_LIMIT);
   const total = session.messages.length;
   const messages = session.messages.slice(offset, offset + limit);
-  const output = messages.length
-    ? formatMessages(messages, MAX_OUTPUT_CHARS - NOTICE_RESERVE)
-    : {
-        text: `No messages in range ${offset}:${offset + limit}. Session has ${total} messages.`,
-        truncated: false,
-        rendered: 0,
-      };
-  const notice = messages.length ? windowNotice("message", offset, output.rendered, total) : "";
+  const { output, notice } = messageWindow(messages, offset, limit, total);
 
   return {
     content: [{ type: "text", text: notice ? `${output.text}\n\n${notice}` : output.text }],

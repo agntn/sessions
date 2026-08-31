@@ -27,8 +27,8 @@ const ALL_EXTRA_MSG_COLS = [
 const ALL_SESSION_COLS = ["id", "project", "git_remote", "hostname", "os_user", "initiator_id"];
 
 function mockPragma(
-  msgCols: string[] = ALL_EXTRA_MSG_COLS,
-  sesCols: string[] = ALL_SESSION_COLS,
+  msgCols: readonly string[] = ALL_EXTRA_MSG_COLS,
+  sesCols: readonly string[] = ALL_SESSION_COLS,
 ): void {
   const msgBaseRows = ["id", "session_id", "role", "timestamp", "date", "source"].map((name) => ({
     name,
@@ -40,8 +40,8 @@ function mockPragma(
 }
 
 function mockMessagesAndBlocks(
-  messages: Record<string, unknown>[],
-  blocksByMessage: Record<string, unknown>[][],
+  messages: readonly Readonly<Record<string, unknown>>[],
+  blocksByMessage: readonly (readonly Readonly<Record<string, unknown>>[])[],
 ): void {
   executeMock.mockResolvedValueOnce({ rows: messages });
   const allBlocks: Record<string, unknown>[] = [];
@@ -55,7 +55,7 @@ function mockMessagesAndBlocks(
   executeMock.mockResolvedValueOnce({ rows: allBlocks });
 }
 
-async function collect(source: AeiSource): Promise<Message[]> {
+async function collect(source: Readonly<AeiSource>): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;

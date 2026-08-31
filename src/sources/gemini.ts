@@ -1,52 +1,58 @@
-import { home, osUser } from "../core/env.ts";
-import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import type { Source, Message, Block, Channel, Participant } from "../core/types.ts";
+import { join } from "node:path";
+import { home, osUser } from "../core/env.ts";
+import type { Block, Channel, Message, Participant, Source } from "../core/types.ts";
+import { isRecord, parseJson, scalarText } from "./parsing.ts";
 
-function parseGeminiBlocks(entry: Record<string, unknown>): Block[] {
-  const out: Block[] = [];
-
-  if (Array.isArray(entry.thoughts)) {
-    for (const t of entry.thoughts as Record<string, unknown>[]) {
-      const text = [t.subject, t.description].filter(Boolean).join(": ");
-      if (text) out.push({ type: "thinking", text: text });
-    }
-  }
-
-  if (typeof entry.content === "string" && entry.content.length > 0) {
-    out.push({ type: "text", text: String(entry.content) });
-  }
-
-  if (Array.isArray(entry.toolCalls)) {
-    for (const tc of entry.toolCalls as Record<string, unknown>[]) {
-      out.push({
-        type: "tool_call",
-        toolName: String(tc.name || tc.displayName || ""),
-        toolCallId: String(tc.id || ""),
-        toolInput: typeof tc.args === "string" ? tc.args : JSON.stringify(tc.args),
-      });
-
-      if (Array.isArray(tc.result)) {
-        for (const r of tc.result as Record<string, unknown>[]) {
-          const fr = r.functionResponse as Record<string, unknown> | undefined;
-          const resp = fr?.response as Record<string, unknown> | undefined;
-          const output = resp?.output;
-          if (output) {
-            out.push({
-              type: "tool_result",
-              toolCallId: String(tc.id || ""),
-              text: String(output),
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return out;
+interface ChatFile {
+  readonly path: string;
+  readonly mtime: number;
 }
 
-function* walkChatFiles(dir: string): Generator<{ path: string; mtime: number }> {
+function thoughtBlock(value: unknown): Block[] {
+  if (!isRecord(value)) return [];
+  const text = [scalarText(value.subject), scalarText(value.description)]
+    .filter(Boolean)
+    .join(": ");
+  return text ? [{ type: "thinking", text }] : [];
+}
+
+function toolResultBlocks(toolCallId: string, results: unknown): Block[] {
+  if (!Array.isArray(results)) return [];
+  return results.flatMap((result) => {
+    if (!isRecord(result) || !isRecord(result.functionResponse)) return [];
+    const response = result.functionResponse.response;
+    if (!isRecord(response)) return [];
+    const output = scalarText(response.output);
+    return output ? [{ type: "tool_result" as const, toolCallId, text: output }] : [];
+  });
+}
+
+function toolCallBlocks(value: unknown): Block[] {
+  if (!isRecord(value)) return [];
+  const toolCallId = scalarText(value.id) ?? "";
+  return [
+    {
+      type: "tool_call",
+      toolName: scalarText(value.name) ?? scalarText(value.displayName) ?? "",
+      toolCallId,
+      toolInput: typeof value.args === "string" ? value.args : (JSON.stringify(value.args) ?? ""),
+    },
+    ...toolResultBlocks(toolCallId, value.result),
+  ];
+}
+
+function parseGeminiBlocks(entry: Readonly<Record<string, unknown>>): Block[] {
+  const thoughts = Array.isArray(entry.thoughts) ? entry.thoughts.flatMap(thoughtBlock) : [];
+  const content =
+    typeof entry.content === "string" && entry.content.length > 0
+      ? [{ type: "text" as const, text: entry.content }]
+      : [];
+  const tools = Array.isArray(entry.toolCalls) ? entry.toolCalls.flatMap(toolCallBlocks) : [];
+  return [...thoughts, ...content, ...tools];
+}
+
+function* walkChatFiles(dir: string): Generator<ChatFile> {
   if (!existsSync(dir)) return;
   for (const project of readdirSync(dir, { withFileTypes: true })) {
     if (!project.isDirectory()) continue;
@@ -54,10 +60,16 @@ function* walkChatFiles(dir: string): Generator<{ path: string; mtime: number }>
     if (!existsSync(chatsDir)) continue;
     for (const file of readdirSync(chatsDir, { withFileTypes: true })) {
       if (!file.name.endsWith(".json")) continue;
-      const full = join(chatsDir, file.name);
-      yield { path: full, mtime: statSync(full).mtimeMs };
+      const path = join(chatsDir, file.name);
+      yield { path, mtime: statSync(path).mtimeMs };
     }
   }
+}
+
+function nativeRole(type: unknown): Message["role"] | undefined {
+  if (type === "user") return "user";
+  if (type === "gemini") return "assistant";
+  return undefined;
 }
 
 export class GeminiSource implements Source {
@@ -75,56 +87,57 @@ export class GeminiSource implements Source {
     return existsSync(this.geminiDir);
   }
 
+  private messageFromEntry(
+    entry: Readonly<Record<string, unknown>>,
+    sessionId: string,
+    mtime: number,
+  ): Message | undefined {
+    const role = nativeRole(entry.type);
+    if (!role) return undefined;
+    const blocks =
+      role === "user"
+        ? typeof entry.content === "string" && entry.content.length > 0
+          ? [{ type: "text" as const, text: entry.content }]
+          : []
+        : parseGeminiBlocks(entry);
+    if (blocks.length === 0) return undefined;
+
+    const timestampText = scalarText(entry.timestamp);
+    const nativeTimestamp = timestampText ? new Date(timestampText).getTime() : Number.NaN;
+    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : mtime;
+    return {
+      source: this.name,
+      sessionId,
+      role,
+      timestamp,
+      date: new Date(timestamp).toISOString().split("T")[0],
+      blocks,
+      channel: this.channel,
+      author: role === "user" ? this.user : { platform: "cli", name: "gemini", isBot: true },
+    };
+  }
+
+  private *readFile(file: ChatFile): Generator<Message> {
+    let data: unknown;
+    try {
+      data = parseJson(readFileSync(file.path, "utf-8"));
+    } catch {
+      return;
+    }
+    if (!isRecord(data) || !Array.isArray(data.messages)) return;
+
+    const sessionId = file.path.split("/").pop()?.replace(".json", "") || "";
+    for (const entry of data.messages) {
+      if (!isRecord(entry)) continue;
+      const message = this.messageFromEntry(entry, sessionId, file.mtime);
+      if (message) yield message;
+    }
+  }
+
   async *read(): AsyncGenerator<Message> {
-    const files: { path: string; mtime: number }[] = [];
-    for (const f of walkChatFiles(this.geminiDir)) {
-      files.push(f);
-    }
-    files.sort((a, b) => a.mtime - b.mtime);
-
-    for (const file of files) {
-      let data: Record<string, unknown>;
-      try {
-        data = JSON.parse(readFileSync(file.path, "utf-8"));
-      } catch {
-        continue;
-      }
-
-      const msgs = data.messages as Record<string, unknown>[] | undefined;
-      if (!Array.isArray(msgs)) continue;
-
-      const sessionId = file.path.split("/").pop()?.replace(".json", "") || "";
-
-      for (const entry of msgs) {
-        const type = String(entry.type || "");
-        const role =
-          type === "user" ? ("user" as const) : type === "gemini" ? ("assistant" as const) : null;
-        if (!role) continue;
-
-        const entryBlocks =
-          role === "user"
-            ? typeof entry.content === "string" && entry.content.length > 0
-              ? [{ type: "text" as const, text: String(entry.content) }]
-              : []
-            : parseGeminiBlocks(entry);
-
-        if (!entryBlocks.length) continue;
-
-        const parsed = entry.timestamp ? new Date(String(entry.timestamp)).getTime() : NaN;
-        const ts = Number.isFinite(parsed) ? parsed : file.mtime;
-        const date = new Date(ts).toISOString().split("T")[0];
-
-        yield {
-          source: this.name,
-          sessionId,
-          role,
-          timestamp: ts,
-          date,
-          blocks: entryBlocks,
-          channel: this.channel,
-          author: role === "user" ? this.user : { platform: "cli", name: "gemini", isBot: true },
-        };
-      }
-    }
+    const files = [...walkChatFiles(this.geminiDir)].sort(
+      (left, right) => left.mtime - right.mtime,
+    );
+    for (const file of files) yield* this.readFile(file);
   }
 }

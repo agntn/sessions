@@ -15,7 +15,7 @@ vi.mock("@libsql/client", () => ({
 
 import { MastraSource } from "../../src/sources/mastra.ts";
 
-async function collect(source: MastraSource): Promise<Message[]> {
+async function collect(source: Readonly<MastraSource>): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const m of source.read()) messages.push(m);
   return messages;
@@ -52,11 +52,11 @@ describe("MastraSource", () => {
     expect(msgs[0].blocks).toEqual([{ type: "text", text: "hello from user" }]);
     expect(msgs[0].author?.isBot).toBeUndefined();
     expect(msgs[0].channel?.name).toBe("mastra");
-    expect(executeMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sql: expect.not.stringContaining("createdAt >"),
-        args: [],
-      }),
+    expect(executeMock).toHaveBeenCalledTimes(1);
+    expect(executeMock.mock.calls[0]?.[0]).toHaveProperty("args", []);
+    expect(executeMock.mock.calls[0]?.[0]).not.toHaveProperty(
+      "sql",
+      expect.stringContaining("createdAt >"),
     );
   });
 

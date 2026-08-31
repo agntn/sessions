@@ -16,19 +16,13 @@ export interface SessionReader {
   list(): Promise<Session[]>;
 }
 
-function toSession(source: string, id: string, messages: Message[]): Session {
-  messages.sort((left, right) => left.timestamp - right.timestamp);
-  return {
-    id,
-    source,
-    createdAt: messages[0]?.timestamp ?? 0,
-    updatedAt: messages.at(-1)?.timestamp ?? 0,
-    messages,
-  };
-}
-
-/** Adapts an existing harness parser to the session-oriented public API. */
-export function createSessionReader(source: Source): SessionReader {
+/**
+ * Adapts an existing harness parser to the session-oriented public API.
+ *
+ * @param source - Native harness parser to group by session identifier.
+ * @returns {SessionReader} A reader exposing normalized sessions.
+ */
+export function createSessionReader(source: Readonly<Source>): SessionReader {
   return {
     name: source.name,
     available: () => source.available(),
@@ -41,7 +35,16 @@ export function createSessionReader(source: Source): SessionReader {
       }
 
       return [...sessions.entries()]
-        .map(([id, messages]) => toSession(source.name, id, messages))
+        .map(([id, messages]) => {
+          messages.sort((left, right) => left.timestamp - right.timestamp);
+          return {
+            id,
+            source: source.name,
+            createdAt: messages[0]?.timestamp ?? 0,
+            updatedAt: messages.at(-1)?.timestamp ?? 0,
+            messages,
+          };
+        })
         .sort(
           (left, right) =>
             right.updatedAt - left.updatedAt ||
