@@ -116,6 +116,48 @@ describe("CodexSource JSONL", () => {
     });
   });
 
+  it("parses custom tool calls and textual output items", async () => {
+    writeJsonl("session-custom.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:04Z",
+        payload: {
+          type: "custom_tool_call",
+          name: "apply_patch",
+          call_id: "custom-1",
+          input: "*** Begin Patch",
+        },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:05Z",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "custom-1",
+          output: [
+            { type: "input_text", text: "Chunk ID: 123" },
+            { type: "input_text", text: "Process exited with code 0" },
+          ],
+        },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].blocks[0]).toEqual({
+      type: "tool_call",
+      toolName: "apply_patch",
+      toolCallId: "custom-1",
+      toolInput: "*** Begin Patch",
+    });
+    expect(msgs[1].blocks[0]).toEqual({
+      type: "tool_result",
+      toolCallId: "custom-1",
+      text: "Chunk ID: 123\nProcess exited with code 0",
+    });
+  });
+
   it("keeps each user turn while skipping its mirrored event", async () => {
     writeJsonl("session-4.jsonl", [
       {
