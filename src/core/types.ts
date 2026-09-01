@@ -38,9 +38,31 @@ export interface Message {
   channel?: Channel;
 }
 
+/** Optional native filter for adapters that can avoid scanning unrelated sessions. */
+export interface SourceReadOptions {
+  readonly sessionId?: string;
+}
+
+/** One session summary projected without retaining its message payloads. */
+export interface SourceSessionSummary {
+  readonly id: string;
+  readonly source: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly messageCount: number;
+  readonly snippetText?: string;
+}
+
+/** A bounded native summary page plus the complete session count. */
+export interface SourceSummaryWindow {
+  readonly total: number;
+  readonly sessions: readonly SourceSessionSummary[];
+}
+
 /** Internal parser contract implemented by each harness adapter. */
 export interface Source {
   readonly name: string;
   available(): boolean;
-  read(): AsyncGenerator<Message>;
+  read(options?: SourceReadOptions): AsyncGenerator<Message>;
+  summaryWindow?(offset: number, limit: number): Promise<SourceSummaryWindow>;
 }

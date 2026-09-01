@@ -15,7 +15,25 @@ const sessionsMock = vi.hoisted(() => ({
 
 vi.mock("../../src/index.ts", () => ({
   allSources: sessionsMock.allSources,
-  create: sessionsMock.create,
+}));
+
+vi.mock("../../src/sources/index.ts", () => ({
+  createSource: (name: string, options: unknown) => {
+    const reader = sessionsMock.create(name, options) as {
+      available(): boolean;
+      list(): Promise<readonly (typeof session)[]>;
+    };
+    return {
+      name,
+      available: () => reader.available(),
+      async *read() {
+        for (const item of await reader.list()) {
+          for (const message of item.messages)
+            yield { ...message, source: name, sessionId: item.id };
+        }
+      },
+    };
+  },
 }));
 
 interface CapturedRuntime {
@@ -251,7 +269,7 @@ describe("Pi extension", () => {
     );
     const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
 
-    expect(text).toBe("session-1\t1 messages\t1970-01-01T00:00:02.000Z");
+    expect(text).toBe("session-1\t1 messages\t1970-01-01T00:00:01.000Z");
   });
 
   it("reads an exact bounded message window", async () => {
@@ -296,7 +314,15 @@ describe("Pi extension", () => {
   });
 
   it("keeps listing sessions when a harness timestamp is outside the Date range", async () => {
-    sessionsMock.list.mockResolvedValue([{ ...session, updatedAt: 9_000_000_000_000_000 }]);
+    sessionsMock.list.mockResolvedValue([
+      {
+        ...session,
+        messages: session.messages.map((message) => ({
+          ...message,
+          timestamp: 9_000_000_000_000_000,
+        })),
+      },
+    ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     const result = await tool(loadExtension(), "sessions_list").execute(

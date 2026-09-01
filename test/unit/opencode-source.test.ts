@@ -19,6 +19,7 @@ vi.mock("../../src/core/env.ts", async (importOriginal) => {
 });
 
 import { OpenCodeSource } from "../../src/sources/opencode.ts";
+import { INJECTED_PREFIXES } from "../../src/tool-snippet.ts";
 
 async function collect(source: Readonly<OpenCodeSource>): Promise<Message[]> {
   const messages: Message[] = [];
@@ -360,6 +361,67 @@ describe("OpenCodeSource", () => {
     expect(executeMock).toHaveBeenCalledTimes(3);
     const calls: readonly (readonly unknown[])[] = executeMock.mock.calls;
     expect(calls[1]?.[0]).toEqual(expect.objectContaining({ args: [1000, 1000, 10, 5000] }));
+  });
+
+  it("pushes an exact session filter into the database read", async () => {
+    executeMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            pdata: JSON.stringify({ type: "text", text: "only this session" }),
+            role: "user",
+            tc: 1000,
+            sid: "wanted",
+            rid: 10,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const source = new OpenCodeSource("/tmp/opencode.db");
+    const messages: Message[] = [];
+    for await (const message of source.read({ sessionId: "wanted" })) messages.push(message);
+
+    expect(messages).toHaveLength(1);
+    const firstCall = executeMock.mock.calls[0]?.[0] as { sql: string; args: unknown[] };
+    expect(firstCall.sql).toContain("p.session_id = ?");
+    expect(firstCall.args).toEqual(["wanted", 5000]);
+  });
+
+  it("returns a bounded session summary page from SQL", async () => {
+    executeMock.mockResolvedValueOnce({
+      rows: [
+        {
+          sid: "session-2",
+          createdAt: 1000,
+          updatedAt: 2000,
+          messageCount: 3,
+          snippetText: "fix the tool read",
+          total: 12,
+        },
+      ],
+    });
+
+    const source = new OpenCodeSource("/tmp/opencode.db");
+    const result = await source.summaryWindow(20, 10);
+
+    expect(result).toEqual({
+      total: 12,
+      sessions: [
+        {
+          id: "session-2",
+          source: "opencode",
+          createdAt: 1000,
+          updatedAt: 2000,
+          messageCount: 3,
+          snippetText: "fix the tool read",
+        },
+      ],
+    });
+    const firstCall = executeMock.mock.calls[0]?.[0] as { sql: string; args: unknown[] };
+    expect(firstCall.sql).not.toContain("p.data as pdata");
+    expect(firstCall.args).toEqual([10, 20, ...INJECTED_PREFIXES.map((prefix) => `${prefix}*`)]);
+    expect(closeMock).toHaveBeenCalledTimes(1);
   });
 
   it("preserves complete tool_call input", async () => {
