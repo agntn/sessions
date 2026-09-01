@@ -80,7 +80,7 @@ const tools: ToolDefinition[] = [
     name: "sessions_read",
     title: "Read Session",
     description:
-      "Read a bounded message window from one normalized session addressed by the exact id returned by sessions_list. Every call re-reads the harness archive, so read one wide window instead of many small ones.",
+      "Read a bounded message window from one normalized session addressed by the exact id returned by sessions_list. Sources without a native exact session filter still scan their archive for each call.",
     inputSchema: Type.Object({
       ...sourceArguments,
       sessionId: Type.String({

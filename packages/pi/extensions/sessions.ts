@@ -114,7 +114,7 @@ export default function sessionsExtension(pi: ExtensionAPI) {
       "Choose one supported source; use sessions_sources if uncertain.",
       "Use path or paths only to override the harness's native default location.",
       "Sessions come newest first; page older ones with offset.",
-      "Triage on the snippet column; sessions_read costs a full archive read.",
+      "Triage on the snippet column before reading full message bodies.",
       "Use sessions_read with an exact returned session id to inspect messages.",
     ],
     parameters: listParameters,
@@ -139,7 +139,7 @@ export default function sessionsExtension(pi: ExtensionAPI) {
     promptGuidelines: [
       "Get the exact session id from sessions_list.",
       "Use offset and limit to page long sessions without unbounded tool output.",
-      "Every call re-reads the harness archive, so read one wide window instead of many small ones.",
+      "Sources without a native exact session filter still scan their archive for each call.",
     ],
     parameters: readParameters,
     renderCall(args, theme) {

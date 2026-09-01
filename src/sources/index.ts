@@ -42,10 +42,21 @@ const adapters: Record<string, AdapterFactory> = {
  * @returns {SessionReader} A session-oriented reader for the harness.
  */
 export function create(name: string, options?: SourceOptionsInput): SessionReader {
+  return createSessionReader(createSource(name, options));
+}
+
+/**
+ * Creates the native parser used by bounded internal read paths.
+ *
+ * @param name - Registered harness source name.
+ * @param options - Optional native data location overrides.
+ * @returns {Source} The native harness parser.
+ */
+export function createSource(name: string, options?: SourceOptionsInput): Source {
   if (!Object.hasOwn(adapters, name)) throw new UnknownSourceError(name);
   const factory = adapters[name];
   if (!factory) throw new UnknownSourceError(name);
-  return createSessionReader(factory(options));
+  return factory(options);
 }
 
 /**

@@ -5,12 +5,14 @@
  * agent harnesses attach to the call. An MCP client sees only the text, so every
  * fact needed for a follow-up call has to be in it.
  *
- * Imports go through the package entrypoint so both surfaces read sessions the
- * same way the public API does.
+ * Both surfaces use the same bounded source projections. The public `list()`
+ * API remains the path that returns complete archives to library consumers.
  */
 
-import { allSources, create } from "./index.ts";
-import type { Session, SourceOptions } from "./index.ts";
+import { allSources } from "./index.ts";
+import type { SourceOptions } from "./index.ts";
+import { createSource } from "./sources/index.ts";
+import { listSourceSessions, readSourceSession, type ToolSessionSummary } from "./tool-reader.ts";
 
 /** One text block plus the details a harness renders next to it. */
 export interface ToolResult<TDetails> {
@@ -19,10 +21,7 @@ export interface ToolResult<TDetails> {
 }
 
 /** Session metadata without the message bodies. */
-export type SessionSummary = Omit<Session, "messages"> & {
-  messageCount: number;
-  snippet?: string;
-};
+export type SessionSummary = ToolSessionSummary;
 
 /** Supported harnesses and whether their native data is readable locally. */
 export interface SourcesDetails {
@@ -79,17 +78,9 @@ interface ReadParamsInput extends ListParamsInput {
   readonly sessionId: string;
 }
 
-interface SnippetBlock {
+interface RenderableBlock {
   readonly type: string;
   readonly text?: string;
-}
-
-interface SnippetMessage {
-  readonly role: "user" | "assistant" | "tool";
-  readonly blocks: readonly SnippetBlock[];
-}
-
-interface RenderableBlock extends SnippetBlock {
   readonly toolName?: string;
   readonly toolInput?: string;
   readonly toolCallId?: string;
@@ -107,14 +98,6 @@ interface PagingInput {
   readonly limit?: number;
 }
 
-interface SessionForSummary {
-  readonly id: string;
-  readonly source: string;
-  readonly createdAt: number;
-  readonly updatedAt: number;
-  readonly messages: readonly SnippetMessage[];
-}
-
 export const DEFAULT_SESSION_LIMIT = 20;
 export const MAX_SESSION_LIMIT = 100;
 export const DEFAULT_MESSAGE_LIMIT = 100;
@@ -129,68 +112,6 @@ function optionsFrom(params: SourceParamsInput): SourceOptions | undefined {
   const paths = params.paths?.map((item) => item.trim()).filter(Boolean);
   if (!path && !paths?.length) return undefined;
   return { path: path || undefined, paths: paths?.length ? paths : undefined };
-}
-
-/**
- * Injected context that opens sessions instead of the person: codex prepends
- * AGENTS.md instructions, user instructions, and environment context as user
- * messages; claude prepends system reminders and local-command caveats. Each
- * shape reads the same for every session, so a snippet built from one says
- * nothing about the conversation.
- */
-const INJECTED_PREFIXES = [
-  "# AGENTS.md instructions",
-  "<environment_context>",
-  "<user_instructions>",
-  "<system-reminder>",
-  "<local-command-stdout>",
-  "Caveat: The messages below",
-];
-
-/** Maximum characters of session text shown in one listing row. */
-const SNIPPET_CHARS = 80;
-
-/**
- * Collapses text to one printable listing line. Control characters count as
- * whitespace because pasted terminal output carries raw ANSI escapes, and one
- * escape would let a row restyle the whole listing. Injected blocks run to
- * megabytes, so the cut comes first.
- *
- * @param text - Native message text.
- * @returns {string} A bounded printable line.
- */
-function singleLine(text: string): string {
-  return text
-    .slice(0, 2048)
-    .replaceAll(/[\s\p{Cc}]+/gu, " ")
-    .trim();
-}
-
-/**
- * The first line the person typed, or the first text at all when a harness
- * kept no user text, so a listing row says what a session is about without
- * paying for a full read.
- *
- * @param messages - Session messages in chronological order.
- * @returns {string | undefined} A bounded human-authored snippet when one exists.
- */
-function snippetOf(messages: readonly SnippetMessage[]): string | undefined {
-  let fallback: string | undefined;
-  for (const message of messages) {
-    for (const block of message.blocks) {
-      if (block.type !== "text" || !block.text) continue;
-      const line = singleLine(block.text);
-      if (!line || INJECTED_PREFIXES.some((prefix) => line.startsWith(prefix))) continue;
-      if (message.role === "user") return line.slice(0, SNIPPET_CHARS);
-      fallback ??= line.slice(0, SNIPPET_CHARS);
-    }
-  }
-  return fallback;
-}
-
-function summarize(session: SessionForSummary): SessionSummary {
-  const { messages, ...metadata } = session;
-  return { ...metadata, messageCount: messages.length, snippet: snippetOf(messages) };
 }
 
 /**
@@ -380,27 +301,25 @@ export async function listSessions(params: ListParamsInput): Promise<ToolResult<
   const source = params.source.trim();
   if (!source) throw new Error("Source cannot be empty");
 
-  const reader = create(source, optionsFrom({ ...params, source }));
+  const nativeSource = createSource(source, optionsFrom({ ...params, source }));
   const { offset, limit } = paging(params, DEFAULT_SESSION_LIMIT);
-  // An override pointing nowhere reads as an empty archive, so an unavailable
-  // reader says so instead of reporting a harness with no sessions.
-  if (!reader.available()) throw new Error(unavailable(source, params));
-  const all = await reader.list();
-  // A directory override only has to exist for available() to pass, so a path
-  // that holds no sessions is a wrong location rather than an empty harness.
-  if (!all.length && overrideLabel(params)) throw new Error(unavailable(source, params));
-  const window = all.slice(offset, offset + limit).map(summarize);
-  const listed = window.map(formatSummary).join("\n");
-  const notice = window.length ? windowNotice("session", offset, window.length, all.length) : "";
+  if (!nativeSource.available()) throw new Error(unavailable(source, params));
+  const window = await listSourceSessions(nativeSource, offset, limit);
+  if (!window.total && overrideLabel(params)) throw new Error(unavailable(source, params));
+  const sessions = [...window.sessions];
+  const listed = sessions.map(formatSummary).join("\n");
+  const notice = sessions.length
+    ? windowNotice("session", offset, sessions.length, window.total)
+    : "";
 
   return {
     content: [
       {
         type: "text",
-        text: sessionWindowText(listed, notice, window.length, offset, source, all.length),
+        text: sessionWindowText(listed, notice, sessions.length, offset, source, window.total),
       },
     ],
-    details: { source, offset, total: all.length, sessions: window },
+    details: { source, offset, total: window.total, sessions },
   };
 }
 
@@ -416,15 +335,13 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
   if (!source) throw new Error("Source cannot be empty");
   if (!sessionId) throw new Error("Session id cannot be empty");
 
-  const reader = create(source, optionsFrom({ ...params, source }));
-  if (!reader.available()) throw new Error(unavailable(source, params));
-  const session = (await reader.list()).find((candidate) => candidate.id === sessionId);
-  if (!session) throw new Error(`Session not found: ${source}:${sessionId}`);
+  const nativeSource = createSource(source, optionsFrom({ ...params, source }));
+  if (!nativeSource.available()) throw new Error(unavailable(source, params));
 
   const { offset, limit } = paging(params, DEFAULT_MESSAGE_LIMIT);
-  const total = session.messages.length;
-  const messages = session.messages.slice(offset, offset + limit);
-  const { output, notice } = messageWindow(messages, offset, limit, total);
+  const window = await readSourceSession(nativeSource, sessionId, offset, limit);
+  if (!window.total) throw new Error(`Session not found: ${source}:${sessionId}`);
+  const { output, notice } = messageWindow(window.messages, offset, limit, window.total);
 
   return {
     content: [{ type: "text", text: notice ? `${output.text}\n\n${notice}` : output.text }],
@@ -433,8 +350,8 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
       sessionId,
       offset,
       limit,
-      totalMessages: total,
-      returnedMessages: messages.length,
+      totalMessages: window.total,
+      returnedMessages: window.messages.length,
       outputTruncated: output.truncated,
     },
   };

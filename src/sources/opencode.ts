@@ -2,11 +2,24 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabase } from "../core/db.ts";
 import { home, osUser } from "../core/env.ts";
-import type { Block, Channel, Message, Participant, Source } from "../core/types.ts";
+import { INJECTED_PREFIXES } from "../tool-snippet.ts";
+import type {
+  Block,
+  Channel,
+  Message,
+  Participant,
+  Source,
+  SourceReadOptions,
+  SourceSummaryWindow,
+} from "../core/types.ts";
 import { parseJsonRecord, scalarText } from "./parsing.ts";
 
 // Large window keeps keyset pagination bounded without truncating native payloads.
 const WINDOW = 5000;
+const SNIPPET_FILTER_SQL = INJECTED_PREFIXES.map(
+  () => "AND ltrim(candidate.textValue, char(9) || char(10) || char(13) || ' ') NOT GLOB ?",
+).join("\n");
+const SNIPPET_FILTER_ARGS = INJECTED_PREFIXES.map((prefix) => `${prefix}*`);
 
 interface Boundary {
   readonly timestamp: number;
@@ -25,6 +38,15 @@ interface ParsedPart {
   readonly role?: Message["role"];
   readonly blocks: Block[];
   readonly botAuthor: boolean;
+}
+
+interface SummaryRow {
+  readonly sid: unknown;
+  readonly createdAt: unknown;
+  readonly updatedAt: unknown;
+  readonly messageCount: unknown;
+  readonly snippetText: unknown;
+  readonly total: unknown;
 }
 
 function textPart(part: Readonly<Record<string, unknown>>): ParsedPart | undefined {
@@ -83,6 +105,27 @@ function parsePart(raw: string): ParsedPart | undefined {
   }
 }
 
+function partPage(
+  options: Readonly<SourceReadOptions> | undefined,
+  boundary: Readonly<Boundary> | undefined,
+): { readonly whereSql: string; readonly args: Array<string | number> } {
+  const predicates: string[] = [];
+  const args: Array<string | number> = [];
+  if (options?.sessionId) {
+    predicates.push("p.session_id = ?");
+    args.push(options.sessionId);
+  }
+  if (boundary) {
+    predicates.push("(p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))");
+    args.push(boundary.timestamp, boundary.timestamp, boundary.rowId);
+  }
+  args.push(WINDOW);
+  return {
+    whereSql: predicates.length ? `WHERE ${predicates.join(" AND ")}` : "",
+    args,
+  };
+}
+
 export class OpenCodeSource implements Source {
   name = "opencode";
   private dbPath: string;
@@ -124,14 +167,118 @@ export class OpenCodeSource implements Source {
     };
   }
 
-  async *read(): AsyncGenerator<Message> {
+  async summaryWindow(offset: number, limit: number): Promise<SourceSummaryWindow> {
+    const db = await openDatabase(this.dbPath);
+    try {
+      const result = await db.execute({
+        sql: `
+          WITH parsed AS (
+            SELECT
+              p.session_id AS sid,
+              p.time_created AS timestamp,
+              p.rowid AS rowId,
+              CASE WHEN json_valid(m.data) THEN json_extract(m.data, '$.role') END AS role,
+              CASE WHEN json_valid(p.data) THEN json_extract(p.data, '$.type') END AS partType,
+              CASE
+                WHEN json_valid(p.data) AND json_type(p.data, '$.text') = 'true' THEN 'true'
+                WHEN json_valid(p.data) AND json_type(p.data, '$.text') = 'false' THEN 'false'
+                WHEN json_valid(p.data) AND json_type(p.data, '$.text') IN ('text', 'integer', 'real')
+                  THEN CAST(json_extract(p.data, '$.text') AS TEXT)
+              END AS textValue
+            FROM part p
+            JOIN message m ON p.message_id = m.id
+            WHERE p.time_created BETWEEN -8640000000000000 AND 8640000000000000
+          ),
+          summaries AS (
+            SELECT
+              sid,
+              MIN(timestamp) AS createdAt,
+              MAX(timestamp) AS updatedAt,
+              COUNT(*) AS messageCount
+            FROM parsed
+            WHERE role IN ('user', 'assistant')
+              AND (
+                partType IN ('tool-invocation', 'tool-call', 'tool-result')
+                OR (partType = 'text' AND COALESCE(textValue, '') <> '')
+              )
+            GROUP BY sid
+          ),
+          paged AS (
+            SELECT *
+            FROM summaries
+            ORDER BY updatedAt DESC, sid ASC
+            LIMIT ? OFFSET ?
+          ),
+          totals AS (SELECT COUNT(*) AS total FROM summaries)
+          SELECT
+            paged.sid,
+            paged.createdAt,
+            paged.updatedAt,
+            paged.messageCount,
+            (
+              SELECT substr(candidate.textValue, 1, 2048)
+              FROM (
+                SELECT
+                  p2.time_created AS timestamp,
+                  p2.rowid AS rowId,
+                  json_extract(m2.data, '$.role') AS role,
+                  json_extract(p2.data, '$.type') AS partType,
+                  CASE
+                    WHEN json_type(p2.data, '$.text') = 'true' THEN 'true'
+                    WHEN json_type(p2.data, '$.text') = 'false' THEN 'false'
+                    WHEN json_type(p2.data, '$.text') IN ('text', 'integer', 'real')
+                      THEN CAST(json_extract(p2.data, '$.text') AS TEXT)
+                  END AS textValue
+                FROM part p2
+                JOIN message m2 ON p2.message_id = m2.id
+                WHERE p2.session_id = paged.sid
+                  AND json_valid(p2.data)
+                  AND json_valid(m2.data)
+              ) AS candidate
+              WHERE candidate.role IN ('user', 'assistant')
+                AND candidate.partType = 'text'
+                AND COALESCE(candidate.textValue, '') <> ''
+                ${SNIPPET_FILTER_SQL}
+              ORDER BY
+                CASE candidate.role WHEN 'user' THEN 0 ELSE 1 END,
+                candidate.timestamp,
+                candidate.rowId
+              LIMIT 1
+            ) AS snippetText,
+            totals.total
+          FROM totals
+          LEFT JOIN paged ON TRUE
+          ORDER BY paged.updatedAt DESC, paged.sid ASC
+        `,
+        args: [limit, offset, ...SNIPPET_FILTER_ARGS],
+      });
+      const rows = result.rows as unknown as SummaryRow[];
+      const total = Number(rows[0]?.total ?? 0);
+      const sessions = rows.flatMap((row) => {
+        if (typeof row.sid !== "string") return [];
+        return [
+          {
+            id: row.sid,
+            source: this.name,
+            createdAt: Number(row.createdAt),
+            updatedAt: Number(row.updatedAt),
+            messageCount: Number(row.messageCount),
+            snippetText: typeof row.snippetText === "string" ? row.snippetText : undefined,
+          },
+        ];
+      });
+      return { total, sessions };
+    } finally {
+      db.close();
+    }
+  }
+
+  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const db = await openDatabase(this.dbPath);
     try {
       let boundary: Boundary | undefined;
       while (true) {
-        const boundarySql = boundary
-          ? "WHERE (p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))"
-          : "";
+        const { whereSql, args } = partPage(options, boundary);
         const rowsResult = await db.execute({
           sql: `
     SELECT
@@ -142,13 +289,11 @@ export class OpenCodeSource implements Source {
       p.rowid as rid
     FROM part p
     JOIN message m ON p.message_id = m.id
-    ${boundarySql}
+    ${whereSql}
     ORDER BY p.time_created, p.rowid
     LIMIT ?
   `,
-          args: boundary
-            ? [boundary.timestamp, boundary.timestamp, boundary.rowId, WINDOW]
-            : [WINDOW],
+          args,
         });
         const rows = rowsResult.rows as unknown as PartRow[];
         if (rows.length === 0) break;

@@ -11,7 +11,25 @@ const sessionsMock = vi.hoisted(() => ({
 
 vi.mock("../../src/index.ts", () => ({
   allSources: sessionsMock.allSources,
-  create: sessionsMock.create,
+}));
+
+vi.mock("../../src/sources/index.ts", () => ({
+  createSource: (name: string, options: unknown) => {
+    const reader = sessionsMock.create(name, options) as {
+      available(): boolean;
+      list(): Promise<readonly (typeof session)[]>;
+    };
+    return {
+      name,
+      available: () => reader.available(),
+      async *read() {
+        for (const item of await reader.list()) {
+          for (const message of item.messages)
+            yield { ...message, source: name, sessionId: item.id };
+        }
+      },
+    };
+  },
 }));
 
 const session = {
@@ -93,7 +111,7 @@ describe("sessions MCP server", () => {
 
     expect(sessionsMock.create).toHaveBeenCalledWith("codex", { path: "/tmp/codex" });
     const listed = text(response.content);
-    expect(listed).toContain("session-1\t1 messages\t1970-01-01T00:00:02.000Z\tfirst");
+    expect(listed).toContain("session-1\t1 messages\t1970-01-01T00:00:01.000Z\tfirst");
     expect(listed).toContain("[Showing sessions 1-1 of 2. Use offset=1 to continue.]");
     // Details never reach an MCP client, so the structured window stays out of the result.
     expect(response.structuredContent).toBeUndefined();
