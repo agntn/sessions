@@ -9,11 +9,14 @@ import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import {
   DEFAULT_MESSAGE_LIMIT,
+  DEFAULT_OUTPUT_CHARS,
   DEFAULT_SESSION_LIMIT,
   listSessions,
   listSessionSources,
   MAX_MESSAGE_LIMIT,
+  MAX_OUTPUT_CHARS,
   MAX_SESSION_LIMIT,
+  MIN_OUTPUT_CHARS,
   readSession,
   type ListParams,
   type ReadParams,
@@ -46,6 +49,21 @@ const sourceArguments = {
     }),
   ),
 };
+
+const readPosition = Type.Object(
+  {
+    message: Type.Integer({ description: "Zero-based message index.", minimum: 0 }),
+    block: Type.Integer({ description: "Zero-based block index within that message.", minimum: 0 }),
+    character: Type.Integer({
+      description: "Character offset within the rendered block.",
+      minimum: 0,
+    }),
+  },
+  {
+    additionalProperties: false,
+    description: "Exact continuation position returned by the previous call.",
+  },
+);
 
 const tools: ToolDefinition[] = [
   {
@@ -90,11 +108,19 @@ const tools: ToolDefinition[] = [
       offset: Type.Optional(
         Type.Integer({ description: "Zero-based message offset. Defaults to 0.", minimum: 0 }),
       ),
+      position: Type.Optional(readPosition),
       limit: Type.Optional(
         Type.Integer({
-          description: `Maximum messages to return. Defaults to ${DEFAULT_MESSAGE_LIMIT}.`,
+          description: `Maximum messages to inspect. Defaults to ${DEFAULT_MESSAGE_LIMIT}.`,
           minimum: 1,
           maximum: MAX_MESSAGE_LIMIT,
+        }),
+      ),
+      maxChars: Type.Optional(
+        Type.Integer({
+          description: `Maximum response characters, including the continuation notice. Defaults to ${DEFAULT_OUTPUT_CHARS}.`,
+          minimum: MIN_OUTPUT_CHARS,
+          maximum: MAX_OUTPUT_CHARS,
         }),
       ),
     }),

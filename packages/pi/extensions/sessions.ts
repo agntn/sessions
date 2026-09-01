@@ -9,6 +9,9 @@ const DEFAULT_SESSION_LIMIT = 20;
 const MAX_SESSION_LIMIT = 100;
 const DEFAULT_MESSAGE_LIMIT = 100;
 const MAX_MESSAGE_LIMIT = 500;
+const DEFAULT_OUTPUT_CHARS = 20_000;
+const MIN_OUTPUT_CHARS = 1_000;
+const MAX_OUTPUT_CHARS = 100_000;
 
 const distributionModuleUrl = new URL("../../../dist/tool-operations.mjs", import.meta.url);
 const sourceModulePath = fileURLToPath(new URL("../../../src/tool-operations.ts", import.meta.url));
@@ -56,17 +59,39 @@ const listParameters = Type.Object({
     }),
   ),
 });
+const readPosition = Type.Object(
+  {
+    message: Type.Integer({ description: "Zero-based message index.", minimum: 0 }),
+    block: Type.Integer({ description: "Zero-based block index within that message.", minimum: 0 }),
+    character: Type.Integer({
+      description: "Character offset within the rendered block.",
+      minimum: 0,
+    }),
+  },
+  {
+    additionalProperties: false,
+    description: "Exact continuation position returned by the previous call.",
+  },
+);
 const readParameters = Type.Object({
   ...sourceOptions,
   sessionId: Type.String({ description: "Exact native session identifier." }),
   offset: Type.Optional(
     Type.Integer({ description: "Zero-based message offset. Defaults to 0.", minimum: 0 }),
   ),
+  position: Type.Optional(readPosition),
   limit: Type.Optional(
     Type.Integer({
-      description: `Maximum messages to return. Defaults to ${DEFAULT_MESSAGE_LIMIT}.`,
+      description: `Maximum messages to inspect. Defaults to ${DEFAULT_MESSAGE_LIMIT}.`,
       minimum: 1,
       maximum: MAX_MESSAGE_LIMIT,
+    }),
+  ),
+  maxChars: Type.Optional(
+    Type.Integer({
+      description: `Maximum response characters, including the continuation notice. Defaults to ${DEFAULT_OUTPUT_CHARS}.`,
+      minimum: MIN_OUTPUT_CHARS,
+      maximum: MAX_OUTPUT_CHARS,
     }),
   ),
 });
@@ -81,6 +106,8 @@ interface ListParams {
 
 interface ReadParams extends ListParams {
   readonly sessionId: string;
+  readonly maxChars?: number;
+  readonly position?: SessionsTools.ReadPosition;
 }
 
 export default function sessionsExtension(pi: ExtensionAPI) {
@@ -138,7 +165,7 @@ export default function sessionsExtension(pi: ExtensionAPI) {
     promptSnippet: "Read normalized messages from an exact coding session id.",
     promptGuidelines: [
       "Get the exact session id from sessions_list.",
-      "Use offset and limit to page long sessions without unbounded tool output.",
+      "Set maxChars for the host's output budget and reuse the exact returned position to continue.",
       "Sources without a native exact session filter still scan their archive for each call.",
     ],
     parameters: readParameters,

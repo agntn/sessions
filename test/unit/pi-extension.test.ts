@@ -347,7 +347,7 @@ describe("Pi extension", () => {
         .join("");
 
     expect(await render({ source: "codex", sessionId: "session-1", limit: 1 })).toContain(
-      "[Showing messages 1-1 of 2. Use offset=1 to continue.]",
+      '[Showing messages 1-1 of 2. Use position={"message":1,"block":0,"character":0} to continue.]',
     );
     expect(await render({ source: "codex", sessionId: "session-1" })).not.toContain("[Showing");
   });
@@ -449,29 +449,158 @@ describe("Pi extension", () => {
     );
     const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
 
-    expect(text.length).toBeLessThanOrEqual(100_000);
+    expect(text.length).toBeLessThanOrEqual(20_000);
     expect(text).toContain("[output truncated]");
-    expect(text).toContain("[The message at offset 0 exceeds the output budget and was cut.]");
-    expect(result.details).toMatchObject({ returnedMessages: 1, outputTruncated: true });
+    expect(text).toContain('[Use position={"message":0,"block":0,"character":');
+    expect(result.details).toMatchObject({
+      returnedMessages: 1,
+      outputTruncated: true,
+      nextPosition: { message: 0, block: 0 },
+    });
   });
 
-  it("points the model at the first unrendered message when output is truncated", async () => {
-    const hugeText = "x".repeat(60_000);
-    const huge = { ...session.messages[0], blocks: [{ type: "text" as const, text: hugeText }] };
-    sessionsMock.list.mockResolvedValue([{ ...session, messages: [huge, huge, huge] }]);
+  it("resumes inside a block with a caller output budget", async () => {
+    const hugeText = Array.from(
+      { length: 5_000 },
+      (_, index) => `${index.toString().padStart(4, "0")}|`,
+    ).join("");
+    sessionsMock.list.mockResolvedValue([
+      {
+        ...session,
+        messages: [
+          {
+            ...session.messages[0],
+            blocks: [{ type: "text" as const, text: hugeText }],
+          },
+        ],
+      },
+    ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
+    const read = tool(loadExtension(), "sessions_read");
 
-    const result = await tool(loadExtension(), "sessions_read").execute(
+    const first = await read.execute(
       "test",
-      { source: "codex", sessionId: "session-1" },
+      { source: "codex", sessionId: "session-1", maxChars: 1_000 },
       undefined,
       undefined,
       {} as ExtensionContext,
     );
-    const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
+    const firstText = first.content.map((item) => (item.type === "text" ? item.text : "")).join("");
+    const nextPosition = (first.details as Record<string, unknown>)["nextPosition"] as
+      | { message: number; block: number; character: number }
+      | undefined;
 
-    expect(text.length).toBeLessThanOrEqual(100_000);
-    expect(text).toContain("[Showing messages 1-1 of 3. Use offset=1 to continue.]");
+    expect(firstText.length).toBeLessThanOrEqual(1_000);
+    expect(nextPosition).toMatchObject({ message: 0, block: 0 });
+    expect(nextPosition?.character).toBeGreaterThan(0);
+    const header = "[1970-01-01T00:00:01.000Z] user\n";
+    const firstBody = firstText.slice(header.length, firstText.indexOf("\n\n[output truncated]"));
+    expect(firstBody).toBe(hugeText.slice(0, nextPosition?.character));
+
+    const second = await read.execute(
+      "test",
+      { source: "codex", sessionId: "session-1", maxChars: 1_000, position: nextPosition },
+      undefined,
+      undefined,
+      {} as ExtensionContext,
+    );
+    const secondText = second.content
+      .map((item) => (item.type === "text" ? item.text : ""))
+      .join("");
+
+    expect(secondText).not.toBe(firstText);
+    expect(secondText.slice(header.length)).toContain(
+      hugeText.slice(nextPosition?.character, (nextPosition?.character ?? 0) + 80),
+    );
+  });
+
+  it("keeps continuation positions outside surrogate pairs", async () => {
+    const hugeText = "😀".repeat(5_000);
+    sessionsMock.list.mockResolvedValue([
+      {
+        ...session,
+        messages: [
+          {
+            ...session.messages[0],
+            blocks: [{ type: "text" as const, text: hugeText }],
+          },
+        ],
+      },
+    ]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
+
+    const result = await tool(loadExtension(), "sessions_read").execute(
+      "test",
+      { source: "codex", sessionId: "session-1", maxChars: 1_001 },
+      undefined,
+      undefined,
+      {} as ExtensionContext,
+    );
+    const position = (result.details as SessionsTools.ReadDetails).nextPosition;
+
+    expect(position?.character).toBeGreaterThan(0);
+    expect((position?.character ?? 1) % 2).toBe(0);
+  });
+
+  it("advances past a corrupt oversized date fallback", async () => {
+    sessionsMock.list.mockResolvedValue([
+      {
+        ...session,
+        messages: [
+          {
+            ...session.messages[0],
+            timestamp: 9_000_000_000_000_000,
+            date: "d".repeat(1_100),
+            blocks: [{ type: "text" as const, text: `payload${"p".repeat(2_000)}` }],
+          },
+        ],
+      },
+    ]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
+
+    const result = await tool(loadExtension(), "sessions_read").execute(
+      "test",
+      { source: "aei", sessionId: "session-1", maxChars: 1_000 },
+      undefined,
+      undefined,
+      {} as ExtensionContext,
+    );
+    const position = (result.details as SessionsTools.ReadDetails).nextPosition;
+
+    expect(position).toMatchObject({ message: 0, block: 0 });
+    expect(position?.character).toBeGreaterThan(0);
+    const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
+    expect(text).toContain("payload");
+  });
+
+  it("rejects conflicting and invalid output windows", async () => {
+    sessionsMock.list.mockResolvedValue([session]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
+    const read = tool(loadExtension(), "sessions_read");
+
+    await expect(
+      read.execute(
+        "test",
+        {
+          source: "codex",
+          sessionId: "session-1",
+          offset: 0,
+          position: { message: 0, block: 0, character: 0 },
+        },
+        undefined,
+        undefined,
+        {} as ExtensionContext,
+      ),
+    ).rejects.toThrow("Use either offset or position");
+    await expect(
+      read.execute(
+        "test",
+        { source: "codex", sessionId: "session-1", maxChars: 999 },
+        undefined,
+        undefined,
+        {} as ExtensionContext,
+      ),
+    ).rejects.toThrow("maxChars must be an integer between 1000 and 100000");
   });
 
   it("rejects an unknown exact session id", async () => {
