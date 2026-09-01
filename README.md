@@ -64,7 +64,7 @@ The package exposes the same three read-only tools over MCP and through its [pi]
 
 - `sessions_sources` lists supported harnesses and local availability.
 - `sessions_list` returns bounded session metadata for one harness, newest first: id, message count, last activity, and a snippet of the session's first text (user turns take priority).
-- `sessions_read` returns a bounded message window for an exact session ID.
+- `sessions_read` returns messages for an exact session ID within a character budget chosen by the caller.
 
 Both reading tools accept optional native `path` or `paths` overrides. They do not persist, index, or search session data. Session listings retain only one bounded summary per conversation, and exact reads retain only the requested message window. Adapters can push those projections into a native store; OpenCode aggregates listings in SQLite and filters exact session reads before decoding parts.
 
@@ -84,7 +84,9 @@ Speaks MCP over stdio. Point a client at it:
 }
 ```
 
-An MCP client sees the text a tool returns and nothing else, so the text carries the whole answer: the window it covers and the offset that continues it. A failed read comes back as a tool error, not a transport failure: an unknown source, a path override that holds no native data, or an unknown session ID.
+`sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. When more text remains, its answer carries an exact `position` that can continue inside a message block instead of repeating the cut text. `offset` remains the simple way to start at a message boundary.
+
+An MCP client sees the text a tool returns and nothing else, so continuation instructions stay in the text as well as Pi details. A failed read comes back as a tool error, not a transport failure: an unknown source, a path override that holds no native data, or an unknown session ID.
 
 File adapters still scan their native archive for each call, so response time follows archive size even though retained memory stays bounded to session summaries or the requested window. Database adapters can answer more narrowly when their native schema supports it.
 

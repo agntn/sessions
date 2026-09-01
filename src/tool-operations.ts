@@ -36,6 +36,13 @@ export interface ListDetails {
   sessions: SessionSummary[];
 }
 
+/** Exact position within a normalized session read. */
+export interface ReadPosition {
+  readonly message: number;
+  readonly block: number;
+  readonly character: number;
+}
+
 /** The rendered message window and how much of it survived the output budget. */
 export interface ReadDetails {
   source: string;
@@ -45,6 +52,7 @@ export interface ReadDetails {
   totalMessages: number;
   returnedMessages: number;
   outputTruncated: boolean;
+  nextPosition?: ReadPosition;
 }
 
 /** Native data location overrides accepted by both reading tools. */
@@ -61,6 +69,8 @@ export interface ListParams extends SourceParams {
 
 export interface ReadParams extends ListParams {
   sessionId: string;
+  maxChars?: number;
+  position?: ReadPosition;
 }
 
 interface SourceParamsInput {
@@ -76,6 +86,8 @@ interface ListParamsInput extends SourceParamsInput {
 
 interface ReadParamsInput extends ListParamsInput {
   readonly sessionId: string;
+  readonly maxChars?: number;
+  readonly position?: Readonly<ReadPosition>;
 }
 
 interface RenderableBlock {
@@ -102,10 +114,10 @@ export const DEFAULT_SESSION_LIMIT = 20;
 export const MAX_SESSION_LIMIT = 100;
 export const DEFAULT_MESSAGE_LIMIT = 100;
 export const MAX_MESSAGE_LIMIT = 500;
+export const DEFAULT_OUTPUT_CHARS = 20_000;
+export const MIN_OUTPUT_CHARS = 1_000;
 export const MAX_OUTPUT_CHARS = 100_000;
-/** Upper bound on the window notice so message text plus notice stays within the budget. */
-const NOTICE_RESERVE = 200;
-const TRUNCATION_SUFFIX = "\n\n[output truncated]";
+const MAX_DATE_STAMP_CHARS = 64;
 
 function optionsFrom(params: SourceParamsInput): SourceOptions | undefined {
   const path = params.path?.trim();
@@ -124,7 +136,8 @@ function optionsFrom(params: SourceParamsInput): SourceOptions | undefined {
  */
 function isoStamp(value: number, fallback: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
+  if (!Number.isNaN(date.getTime())) return date.toISOString();
+  return fallback.length <= MAX_DATE_STAMP_CHARS ? fallback : "unknown";
 }
 
 function formatSummary(session: Readonly<SessionSummary>): string {
@@ -154,48 +167,162 @@ function windowNotice(
   return `[Showing ${unit}s ${offset + 1}-${end} of ${total}. Use offset=${end} to continue.]`;
 }
 
-function renderBlock(block: RenderableBlock): string {
+function blockParts(block: RenderableBlock): readonly string[] {
   const callId = block.toolCallId ? ` ${block.toolCallId}` : "";
   if (block.type === "tool_call") {
-    const input = block.toolInput ? ` ${block.toolInput}` : "";
-    return `[tool_call ${block.toolName || "unknown"}${callId}]${input}`;
+    return [
+      `[tool_call ${block.toolName || "unknown"}${callId}]`,
+      block.toolInput ? ` ${block.toolInput}` : "",
+    ];
   }
   if (block.type === "tool_result") {
-    const output = block.text ? ` ${block.text}` : "";
-    return `[tool_result${callId}]${output}`;
+    return [`[tool_result${callId}]`, block.text ? ` ${block.text}` : ""];
   }
 
-  // Thinking and any future block type stay labelled, otherwise a model
-  // reading the transcript takes internal reasoning for a plain answer.
   const label = block.type === "text" ? "" : `[${block.type}] `;
-  return block.text ? `${label}${block.text}` : `[${block.type}]`;
+  return block.text ? [label, block.text] : [`[${block.type}]`];
 }
 
-function renderMessage(message: RenderableMessage): string {
-  const header = `[${isoStamp(message.timestamp, message.date)}] ${message.role}\n`;
-  return `${header}${message.blocks.map(renderBlock).join("\n")}`;
+function blockLength(block: RenderableBlock): number {
+  return blockParts(block).reduce((length, part) => length + part.length, 0);
 }
 
-function formatMessages(
-  messages: readonly RenderableMessage[],
-  limit: number,
-): { text: string; truncated: boolean; rendered: number } {
-  const budget = limit - TRUNCATION_SUFFIX.length;
-  let text = "";
-  let rendered = 0;
+function splitsSurrogatePair(text: string, offset: number): boolean {
+  if (offset <= 0 || offset >= text.length) return false;
+  return (
+    /[\uD800-\uDBFF]/u.test(text.slice(offset - 1, offset)) &&
+    /[\uDC00-\uDFFF]/u.test(text.slice(offset, offset + 1))
+  );
+}
 
-  for (const [index, message] of messages.entries()) {
-    const renderedMessage = `${index > 0 ? "\n\n" : ""}${renderMessage(message)}`;
-    const remaining = budget - text.length;
-    if (renderedMessage.length > remaining) {
-      text += renderedMessage.slice(0, Math.max(remaining, 0));
-      return { text: `${text}${TRUNCATION_SUFFIX}`, truncated: true, rendered };
-    }
-    text += renderedMessage;
-    rendered += 1;
+class RenderBuffer {
+  readonly #parts: string[] = [];
+  #remaining: number;
+
+  constructor(remaining: number) {
+    this.#remaining = remaining;
   }
 
-  return { text, truncated: false, rendered };
+  append(text: string): boolean {
+    if (text.length > this.#remaining) return false;
+    this.#parts.push(text);
+    this.#remaining -= text.length;
+    return true;
+  }
+
+  appendBlock(
+    block: RenderableBlock,
+    character: number,
+  ): { readonly complete: boolean; readonly nextCharacter: number } {
+    let partStart = 0;
+    for (const part of blockParts(block)) {
+      const partEnd = partStart + part.length;
+      if (character >= partEnd) {
+        partStart = partEnd;
+        continue;
+      }
+
+      const localStart = Math.max(character - partStart, 0);
+      if (splitsSurrogatePair(part, localStart)) {
+        throw new RangeError("position.character must come from the previous response");
+      }
+      if (part.length - localStart <= this.#remaining) {
+        this.#parts.push(part.slice(localStart));
+        this.#remaining -= part.length - localStart;
+        partStart = partEnd;
+        continue;
+      }
+
+      let localEnd = localStart + this.#remaining;
+      if (splitsSurrogatePair(part, localEnd)) localEnd -= 1;
+      this.#parts.push(part.slice(localStart, localEnd));
+      this.#remaining -= localEnd - localStart;
+      return { complete: false, nextCharacter: partStart + localEnd };
+    }
+
+    return { complete: true, nextCharacter: partStart };
+  }
+
+  renderBlocks(
+    message: RenderableMessage,
+    position: Readonly<ReadPosition>,
+  ): ReadPosition | undefined {
+    for (let blockIndex = position.block; blockIndex < message.blocks.length; blockIndex += 1) {
+      const block = message.blocks[blockIndex];
+      if (!block) continue;
+      const character = blockIndex === position.block ? position.character : 0;
+      const length = blockLength(block);
+      if (character < 0 || character >= length) {
+        throw new RangeError(`position.character must be between 0 and ${Math.max(length - 1, 0)}`);
+      }
+      if (blockIndex > position.block && !this.append("\n")) {
+        return { message: position.message, block: blockIndex, character: 0 };
+      }
+
+      const rendered = this.appendBlock(block, character);
+      if (!rendered.complete) {
+        return {
+          message: position.message,
+          block: blockIndex,
+          character: rendered.nextCharacter,
+        };
+      }
+    }
+    return undefined;
+  }
+
+  renderMessage(
+    message: RenderableMessage,
+    position: Readonly<ReadPosition>,
+    prefix: string,
+  ): ReadPosition | undefined {
+    const header = `[${isoStamp(message.timestamp, message.date)}] ${message.role}\n`;
+    if (!this.append(`${prefix}${header}`)) return { ...position };
+    if (message.blocks.length === 0) return undefined;
+    if (position.block >= message.blocks.length) {
+      throw new RangeError(`position.block must be below ${message.blocks.length}`);
+    }
+    return this.renderBlocks(message, position);
+  }
+
+  text(): string {
+    return this.#parts.join("");
+  }
+}
+
+interface RenderedMessageWindow {
+  readonly text: string;
+  readonly nextPosition?: ReadPosition;
+  readonly outputTruncated: boolean;
+}
+
+function renderMessageWindow(
+  messages: readonly RenderableMessage[],
+  position: Readonly<ReadPosition>,
+  total: number,
+  budget: number,
+): RenderedMessageWindow {
+  const buffer = new RenderBuffer(budget);
+
+  for (const [messageIndex, message] of messages.entries()) {
+    const current =
+      messageIndex === 0
+        ? position
+        : { message: position.message + messageIndex, block: 0, character: 0 };
+    const nextPosition = buffer.renderMessage(message, current, messageIndex === 0 ? "" : "\n\n");
+    if (nextPosition) {
+      return { text: buffer.text(), nextPosition, outputTruncated: true };
+    }
+  }
+
+  const nextMessage = position.message + messages.length;
+  return {
+    text: buffer.text(),
+    ...(nextMessage < total
+      ? { nextPosition: { message: nextMessage, block: 0, character: 0 } }
+      : {}),
+    outputTruncated: false,
+  };
 }
 
 /**
@@ -248,24 +375,101 @@ function sessionWindowText(
   return `${listed}${notice ? `\n\n${notice}` : ""}`;
 }
 
+function continuationNotice(
+  position: Readonly<ReadPosition>,
+  startMessage: number,
+  total: number,
+  outputTruncated: boolean,
+): string {
+  const argument = JSON.stringify(position);
+  if (outputTruncated) {
+    return `[output truncated]\n[Use position=${argument} to continue.]`;
+  }
+  return `[Showing messages ${startMessage + 1}-${position.message} of ${total}. Use position=${argument} to continue.]`;
+}
+
+function samePosition(left: Readonly<ReadPosition>, right: Readonly<ReadPosition>): boolean {
+  return (
+    left.message === right.message &&
+    left.block === right.block &&
+    left.character === right.character
+  );
+}
+
+function assertProgress(
+  output: Readonly<RenderedMessageWindow>,
+  position: Readonly<ReadPosition>,
+): void {
+  if (
+    output.outputTruncated &&
+    output.nextPosition &&
+    samePosition(output.nextPosition, position)
+  ) {
+    throw new Error("The output budget could not advance the session position");
+  }
+}
+
 function messageWindow(
   messages: readonly RenderableMessage[],
-  offset: number,
+  position: Readonly<ReadPosition>,
   limit: number,
   total: number,
-): { readonly output: ReturnType<typeof formatMessages>; readonly notice: string } {
+  maxChars: number,
+): RenderedMessageWindow {
+  if (position.message > total) {
+    throw new RangeError(`position.message must be between 0 and ${total}`);
+  }
   if (messages.length === 0) {
+    if (position.block !== 0 || position.character !== 0) {
+      throw new RangeError("position.block and position.character must be zero at the session end");
+    }
     return {
-      output: {
-        text: `No messages in range ${offset}:${offset + limit}. Session has ${total} messages.`,
-        truncated: false,
-        rendered: 0,
-      },
-      notice: "",
+      text: `No messages in range ${position.message}:${position.message + limit}. Session has ${total} messages.`,
+      outputTruncated: false,
     };
   }
-  const output = formatMessages(messages, MAX_OUTPUT_CHARS - NOTICE_RESERVE);
-  return { output, notice: windowNotice("message", offset, output.rendered, total) };
+
+  let bodyBudget = maxChars;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const output = renderMessageWindow(messages, position, total, bodyBudget);
+    if (!output.nextPosition) return output;
+    assertProgress(output, position);
+    const notice = continuationNotice(
+      output.nextPosition,
+      position.message,
+      total,
+      output.outputTruncated,
+    );
+    const text = `${output.text}\n\n${notice}`;
+    if (text.length <= maxChars) return { ...output, text };
+    bodyBudget -= text.length - maxChars;
+  }
+
+  throw new Error("Unable to fit the session continuation within maxChars");
+}
+
+function readPosition(params: ReadParamsInput): ReadPosition {
+  if (params.position && params.offset !== undefined) {
+    throw new RangeError("Use either offset or position, not both");
+  }
+  const position = params.position ?? { message: params.offset ?? 0, block: 0, character: 0 };
+  for (const name of ["message", "block", "character"] as const) {
+    const value = position[name];
+    if (!Number.isInteger(value) || value < 0) {
+      throw new RangeError(`position.${name} must be a non-negative integer`);
+    }
+  }
+  return { message: position.message, block: position.block, character: position.character };
+}
+
+function readMaxChars(value?: number): number {
+  const maxChars = value ?? DEFAULT_OUTPUT_CHARS;
+  if (!Number.isInteger(maxChars) || maxChars < MIN_OUTPUT_CHARS || maxChars > MAX_OUTPUT_CHARS) {
+    throw new RangeError(
+      `maxChars must be an integer between ${MIN_OUTPUT_CHARS} and ${MAX_OUTPUT_CHARS}`,
+    );
+  }
+  return maxChars;
 }
 
 /**
@@ -338,21 +542,24 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
   const nativeSource = createSource(source, optionsFrom({ ...params, source }));
   if (!nativeSource.available()) throw new Error(unavailable(source, params));
 
-  const { offset, limit } = paging(params, DEFAULT_MESSAGE_LIMIT);
-  const window = await readSourceSession(nativeSource, sessionId, offset, limit);
+  const position = readPosition(params);
+  const { limit } = paging(params, DEFAULT_MESSAGE_LIMIT);
+  const maxChars = readMaxChars(params.maxChars);
+  const window = await readSourceSession(nativeSource, sessionId, position.message, limit);
   if (!window.total) throw new Error(`Session not found: ${source}:${sessionId}`);
-  const { output, notice } = messageWindow(window.messages, offset, limit, window.total);
+  const output = messageWindow(window.messages, position, limit, window.total, maxChars);
 
   return {
-    content: [{ type: "text", text: notice ? `${output.text}\n\n${notice}` : output.text }],
+    content: [{ type: "text", text: output.text }],
     details: {
       source,
       sessionId,
-      offset,
+      offset: position.message,
       limit,
       totalMessages: window.total,
       returnedMessages: window.messages.length,
-      outputTruncated: output.truncated,
+      outputTruncated: output.outputTruncated,
+      ...(output.nextPosition ? { nextPosition: output.nextPosition } : {}),
     },
   };
 }

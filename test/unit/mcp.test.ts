@@ -83,6 +83,15 @@ describe("sessions MCP server", () => {
       "sessions_read",
     ]);
     expect(response.tools[1]?.inputSchema).toMatchObject({ type: "object", required: ["source"] });
+    expect(response.tools[2]?.inputSchema).toMatchObject({
+      properties: {
+        maxChars: { minimum: 1_000, maximum: 100_000 },
+        position: {
+          type: "object",
+          required: ["message", "block", "character"],
+        },
+      },
+    });
     expect(response.tools[2]?.annotations).toMatchObject({ readOnlyHint: true });
   });
 
