@@ -86,14 +86,18 @@ function* walkJsonl(dir: string): Generator<string> {
   }
 }
 
-export class OmpSource implements Source {
-  name = "omp";
-  private sessionsDir: string;
-  private channel: Channel = { platform: "cli", name: "omp" };
-  private user: Participant;
+type PiFamilySourceName = "omp" | "pi";
 
-  constructor(sessionsDir?: string) {
-    this.sessionsDir = sessionsDir ?? join(home(), ".omp/agent/sessions");
+export class OmpSource implements Source {
+  readonly name: PiFamilySourceName;
+  private readonly sessionsDir: string;
+  private readonly channel: Channel;
+  private readonly user: Participant;
+
+  constructor(sessionsDir?: string, sourceName: PiFamilySourceName = "omp") {
+    this.name = sourceName;
+    this.sessionsDir = sessionsDir ?? join(home(), `.${sourceName}/agent/sessions`);
+    this.channel = { platform: "cli", name: sourceName };
     this.user = { platform: "cli", name: osUser() };
   }
 
@@ -124,7 +128,7 @@ export class OmpSource implements Source {
       date: new Date(timestamp).toISOString().split("T")[0],
       blocks,
       channel: this.channel,
-      author: role === "user" ? this.user : { platform: "cli", name: "omp", isBot: true },
+      author: role === "user" ? this.user : { platform: "cli", name: this.name, isBot: true },
     };
   }
 

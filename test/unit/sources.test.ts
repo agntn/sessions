@@ -21,10 +21,12 @@ describe("public harness registry", () => {
       "omp",
       "openclaw",
       "opencode",
+      "pi",
     ]);
     expect(allSources().map((reader) => reader.name)).toEqual(sources());
     expect(create("claude").name).toBe("claude");
     expect(has("claude")).toBe(true);
+    expect(has("pi")).toBe(true);
     expect(has("claude-mem")).toBe(false);
     expect(has("toString")).toBe(false);
     expect(() => create("toString")).toThrow(UnknownSourceError);
