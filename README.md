@@ -60,7 +60,7 @@ Each adapter accepts the native session format as its source of truth. Messages 
 
 ## Agent tools
 
-The package exposes the same three read-only tools over MCP and through its [pi](https://pi.dev) extension:
+The package exposes the same three read-only tools over MCP and through native [Pi](https://pi.dev) and [OMP](https://omp.sh) extensions:
 
 - `sessions_sources` lists supported harnesses and local availability.
 - `sessions_list` returns bounded session metadata for one harness, newest first: id, message count, last activity, and a snippet of the session's first text (user turns take priority).
@@ -92,13 +92,14 @@ File adapters still scan their native archive for each call, so response time fo
 
 `createMcpServer()` is exported from `@agntn/sessions/mcp` for hosts that bring their own transport.
 
-### Pi extension
+### Pi and OMP extensions
 
 ```bash
 pi install npm:@agntn/sessions
+omp install @agntn/sessions
 ```
 
-Both surfaces call the executors in `src/tool-operations.ts`, so they answer identically. The extension adds the details pi renders; MCP drops them and keeps the text.
+All three surfaces call the executors in `src/tool-operations.ts`, so they answer identically. The extensions add structured details for their hosts; MCP drops them and keeps the text.
 
 ## License
 

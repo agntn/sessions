@@ -25,6 +25,7 @@
   },
   "files": [
     "dist",
+    "packages/omp/extensions",
     "packages/pi/extensions"
   ],
   "type": "module",
@@ -62,6 +63,8 @@
     "@agntn/ox": "^0.1.0",
     "@earendil-works/pi-coding-agent": "^0.84.2",
     "@earendil-works/pi-tui": "^0.84.2",
+    "@oh-my-pi/omptype": "^18.0.0",
+    "@oh-my-pi/pi-coding-agent": "^18.0.0",
     "@types/node": "^25.3.0",
     "changelogen": "^0.6.2",
     "obuild": "^0.4.31",
@@ -73,13 +76,17 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
+    "@earendil-works/pi-tui": "*",
+    "@oh-my-pi/pi-coding-agent": ">=18.0.0 <19"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {
       "optional": true
     },
     "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "@oh-my-pi/pi-coding-agent": {
       "optional": true
     }
   },
@@ -90,6 +97,11 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./packages/omp/extensions/sessions.ts"
     ]
   },
   "pi": {
