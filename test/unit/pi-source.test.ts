@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Message } from "../../src/core/types.ts";
+import { OmpSource } from "../../src/sources/omp.ts";
 import { PiSource } from "../../src/sources/pi.ts";
 
 let directory: string | undefined;
@@ -12,7 +13,11 @@ afterEach(() => {
 });
 
 describe("PiSource", () => {
-  it("reads Pi records without inheriting OMP identity", async () => {
+  it("owns the session format used by OMP", () => {
+    expect(new OmpSource("/tmp")).toBeInstanceOf(PiSource);
+  });
+
+  it("reads native Pi records with Pi identity", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
     const entries = [
       {
