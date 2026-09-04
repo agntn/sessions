@@ -12,7 +12,7 @@ import type {
   SourceReadOptions,
   SourceSummaryWindow,
 } from "../core/types.ts";
-import { parseJsonRecord, scalarText } from "./parsing.ts";
+import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
 
 // Large window keeps keyset pagination bounded without truncating native payloads.
 const WINDOW = 5000;
@@ -89,6 +89,43 @@ function toolResultPart(part: Readonly<Record<string, unknown>>): ParsedPart {
   };
 }
 
+function currentToolResult(
+  state: Readonly<Record<string, unknown>>,
+  toolCallId: string,
+): Block | undefined {
+  if (state.status === "completed" && state.output !== undefined) {
+    return {
+      type: "tool_result",
+      toolCallId,
+      text: typeof state.output === "string" ? state.output : (JSON.stringify(state.output) ?? ""),
+    };
+  }
+  if (state.status === "error" && state.error !== undefined) {
+    return {
+      type: "tool_result",
+      toolCallId,
+      text: typeof state.error === "string" ? state.error : (JSON.stringify(state.error) ?? ""),
+    };
+  }
+  return undefined;
+}
+
+function currentToolPart(part: Readonly<Record<string, unknown>>): ParsedPart {
+  const state = isRecord(part.state) ? part.state : {};
+  const toolCallId = scalarText(part.callID) ?? scalarText(part.callId) ?? "";
+  const blocks: Block[] = [
+    {
+      type: "tool_call",
+      toolName: scalarText(part.tool) ?? "",
+      toolCallId,
+      toolInput: toolInput(state),
+    },
+  ];
+  const result = currentToolResult(state, toolCallId);
+  if (result) blocks.push(result);
+  return { blocks, botAuthor: true };
+}
+
 function parsePart(raw: string): ParsedPart | undefined {
   const part = parseJsonRecord(raw);
   if (!part) return undefined;
@@ -98,6 +135,8 @@ function parsePart(raw: string): ParsedPart | undefined {
     case "tool-invocation":
     case "tool-call":
       return toolCallPart(part);
+    case "tool":
+      return currentToolPart(part);
     case "tool-result":
       return toolResultPart(part);
     default:
@@ -198,7 +237,7 @@ export class OpenCodeSource implements Source {
             FROM parsed
             WHERE role IN ('user', 'assistant')
               AND (
-                partType IN ('tool-invocation', 'tool-call', 'tool-result')
+                partType IN ('tool-invocation', 'tool-call', 'tool-result', 'tool')
                 OR (partType = 'text' AND COALESCE(textValue, '') <> '')
               )
             GROUP BY sid
