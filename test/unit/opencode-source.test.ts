@@ -149,6 +149,49 @@ describe("OpenCodeSource", () => {
     });
   });
 
+  it("parses current tool blocks with nested input and completed output", async () => {
+    executeMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            pdata: JSON.stringify({
+              type: "tool",
+              callID: "tc-current",
+              tool: "read",
+              state: {
+                status: "completed",
+                input: { path: "/foo" },
+                output: "file contents here",
+              },
+            }),
+            role: "assistant",
+            tc: 1700000003500,
+            sid: "s1",
+            rid: 5,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const source = new OpenCodeSource("/tmp/opencode.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].blocks).toEqual([
+      {
+        type: "tool_call",
+        toolName: "read",
+        toolCallId: "tc-current",
+        toolInput: '{"path":"/foo"}',
+      },
+      {
+        type: "tool_result",
+        toolCallId: "tc-current",
+        text: "file contents here",
+      },
+    ]);
+  });
+
   it("parses tool-result blocks", async () => {
     executeMock
       .mockResolvedValueOnce({
@@ -420,6 +463,9 @@ describe("OpenCodeSource", () => {
     });
     const firstCall = executeMock.mock.calls[0]?.[0] as { sql: string; args: unknown[] };
     expect(firstCall.sql).not.toContain("p.data as pdata");
+    expect(firstCall.sql).toContain(
+      "partType IN ('tool-invocation', 'tool-call', 'tool-result', 'tool')",
+    );
     expect(firstCall.args).toEqual([10, 20, ...INJECTED_PREFIXES.map((prefix) => `${prefix}*`)]);
     expect(closeMock).toHaveBeenCalledTimes(1);
   });
