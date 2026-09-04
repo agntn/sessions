@@ -18,6 +18,7 @@ It deliberately does not provide a database, synchronization cursors, file watch
 - OMP
 - OpenClaw
 - OpenCode
+- Pi
 
 ## Install
 
