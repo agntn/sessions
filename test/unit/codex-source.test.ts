@@ -158,6 +158,65 @@ describe("CodexSource JSONL", () => {
     });
   });
 
+  it("keeps reasoning summaries and raw text as thinking blocks", async () => {
+    writeJsonl("session-reasoning.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:06Z",
+        payload: {
+          type: "reasoning",
+          id: "rs_1",
+          summary: [
+            { type: "summary_text", text: "**Inspecting the parser**" },
+            { type: "summary_text", text: "**Choosing a fix**" },
+          ],
+          content: [{ type: "reasoning_text", text: "The parser drops every reasoning item." }],
+          encrypted_content: "gAAAAA",
+        },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:07Z",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "I will keep them." }],
+        },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].role).toBe("assistant");
+    expect(msgs[0].author).toEqual({ platform: "cli", name: "codex", isBot: true });
+    expect(msgs[0].blocks).toEqual([
+      { type: "thinking", text: "**Inspecting the parser**" },
+      { type: "thinking", text: "**Choosing a fix**" },
+      { type: "thinking", text: "The parser drops every reasoning item." },
+    ]);
+    expect(msgs[1].blocks).toEqual([{ type: "text", text: "I will keep them." }]);
+  });
+
+  it("skips reasoning that carries only encrypted content", async () => {
+    writeJsonl("session-encrypted.jsonl", [
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:08Z",
+        payload: { type: "reasoning", id: "rs_2", summary: [], encrypted_content: "gAAAAA" },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-03-10T10:00:09Z",
+        payload: { type: "reasoning", id: "rs_3", summary: [{ type: "summary_text", text: "" }] },
+      },
+    ]);
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
   it("keeps each user turn while skipping its mirrored event", async () => {
     writeJsonl("session-4.jsonl", [
       {
@@ -495,6 +554,27 @@ describe("CodexSource JSON", () => {
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(0);
+  });
+
+  it("keeps reasoning summaries in JSON items", async () => {
+    writeJson("session-reasoning.json", {
+      session: { id: "ses-rs", timestamp: "2026-03-10T10:00:00Z" },
+      items: [
+        {
+          type: "reasoning",
+          summary: [{ type: "summary_text", text: "**Reading the diff**" }],
+          encrypted_content: "gAAAAA",
+        },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "Done." }] },
+      ],
+    });
+    const source = new CodexSource(tempDir);
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].role).toBe("assistant");
+    expect(msgs[0].blocks).toEqual([{ type: "thinking", text: "**Reading the diff**" }]);
+    expect(msgs[1].blocks[0].text).toBe("Done.");
   });
 
   it("parses function_call in JSON items", async () => {

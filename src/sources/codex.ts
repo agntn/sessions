@@ -46,6 +46,27 @@ function textBlocks(content: unknown): Block[] {
   });
 }
 
+function thinkingBlocks(entries: unknown): Block[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((value) => {
+    if (!isRecord(value)) return [];
+    const text = scalarText(value.text);
+    return text ? [{ type: "thinking" as const, text }] : [];
+  });
+}
+
+/**
+ * Reads a reasoning item's summary entries, then the raw text some models add.
+ *
+ * @param payload - Native `reasoning` response item.
+ * @returns {ParsedPayload | undefined} Thinking blocks, or `undefined` when only encrypted content is left.
+ */
+function reasoningPayload(payload: Readonly<Record<string, unknown>>): ParsedPayload | undefined {
+  const blocks = [...thinkingBlocks(payload.summary), ...thinkingBlocks(payload.content)];
+  if (blocks.length === 0) return undefined;
+  return { role: "assistant", blocks };
+}
+
 function messagePayload(payload: Readonly<Record<string, unknown>>): ParsedPayload | undefined {
   const nativeRole = scalarText(payload.role) ?? "";
   if (nativeRole === "developer") return undefined;
@@ -99,6 +120,8 @@ function parsePayload(payload: Readonly<Record<string, unknown>>): ParsedPayload
   switch (payload.type) {
     case "message":
       return messagePayload(payload);
+    case "reasoning":
+      return reasoningPayload(payload);
     case "function_call":
       return toolCallPayload(payload, payload.arguments);
     case "custom_tool_call":
