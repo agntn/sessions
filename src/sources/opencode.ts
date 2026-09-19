@@ -54,6 +54,11 @@ function textPart(part: Readonly<Record<string, unknown>>): ParsedPart | undefin
   return text ? { blocks: [{ type: "text", text }], botAuthor: false } : undefined;
 }
 
+function reasoningPart(part: Readonly<Record<string, unknown>>): ParsedPart | undefined {
+  const text = scalarText(part.text) ?? "";
+  return text ? { blocks: [{ type: "thinking", text }], botAuthor: false } : undefined;
+}
+
 function toolInput(part: Readonly<Record<string, unknown>>): string {
   if (typeof part.args === "string") return part.args;
   if (typeof part.input === "string") return part.input;
@@ -132,6 +137,8 @@ function parsePart(raw: string): ParsedPart | undefined {
   switch (part.type) {
     case "text":
       return textPart(part);
+    case "reasoning":
+      return reasoningPart(part);
     case "tool-invocation":
     case "tool-call":
       return toolCallPart(part);
@@ -238,7 +245,7 @@ export class OpenCodeSource implements Source {
             WHERE role IN ('user', 'assistant')
               AND (
                 partType IN ('tool-invocation', 'tool-call', 'tool-result', 'tool')
-                OR (partType = 'text' AND COALESCE(textValue, '') <> '')
+                OR (partType IN ('text', 'reasoning') AND COALESCE(textValue, '') <> '')
               )
             GROUP BY sid
           ),
