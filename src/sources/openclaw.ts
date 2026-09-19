@@ -2,7 +2,14 @@ import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { home } from "../core/env.ts";
-import type { Block, Channel, Message, Participant, Source } from "../core/types.ts";
+import type {
+  Block,
+  Channel,
+  Message,
+  Participant,
+  Source,
+  SourceReadOptions,
+} from "../core/types.ts";
 import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
 
 const RE_DISCORD_DM = /^\[Discord (\S+) user id:(\d+)/;
@@ -126,11 +133,16 @@ function parseBlocks(content: unknown): Block[] {
   return Array.isArray(content) ? content.flatMap(parseBlock) : [];
 }
 
-function* walkJsonl(dirs: readonly string[]): Generator<string> {
+function sessionIdFromPath(path: string): string {
+  return path.split("/").pop()?.replace(".jsonl", "") || "";
+}
+
+function* walkJsonl(dirs: readonly string[], sessionId?: string): Generator<string> {
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name.endsWith(".jsonl")) yield join(dir, entry.name);
+      if (!entry.name.endsWith(".jsonl")) continue;
+      if (!sessionId || sessionIdFromPath(entry.name) === sessionId) yield join(dir, entry.name);
     }
   }
 }
@@ -250,7 +262,7 @@ export class OpenClawSource implements Source {
   }
 
   private async *readFile(file: SessionFile): AsyncGenerator<Message> {
-    const sessionId = file.path.split("/").pop()?.replace(".jsonl", "") || "";
+    const sessionId = sessionIdFromPath(file.path);
     const lines = createInterface({ input: createReadStream(file.path), crlfDelay: Infinity });
     let sessionTimestamp = "";
     let sessionContext: StringContext | undefined;
@@ -276,9 +288,9 @@ export class OpenClawSource implements Source {
     }
   }
 
-  async *read(): AsyncGenerator<Message> {
+  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const files: SessionFile[] = [];
-    for (const path of walkJsonl(this.sessionsDirs)) {
+    for (const path of walkJsonl(this.sessionsDirs, options?.sessionId || undefined)) {
       files.push({ path, mtime: statSync(path).mtimeMs });
     }
     files.sort((left, right) => left.mtime - right.mtime);

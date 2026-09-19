@@ -114,7 +114,7 @@ The extensions and MCP use the [same executors](./src/tool-operations.ts). Exten
 
 Both reading tools accept `path`, or `paths` where supported. Page session listings with `offset`. For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
 
-These tools retain bounded summaries or the requested message window, not the complete archive. File adapters still scan on each call. OpenCode can query its SQLite store more narrowly. Bounded output does not mean instant reads.
+These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session: Claude Code, Codex, Gemini CLI, and OpenClaw name them after it, while Pi and OMP settle each one from its header. OpenCode answers both from SQLite. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
 
 Unknown sources, unreadable overrides, and missing session IDs return tool errors over MCP. See the [tool schemas](./src/mcp.ts) for all limits. Session text can contain private data. Only connect clients you trust with it.
 

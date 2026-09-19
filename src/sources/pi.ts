@@ -2,7 +2,7 @@ import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { home, osUser } from "../core/env.ts";
-import type { Block, Message, Participant, Source } from "../core/types.ts";
+import type { Block, Message, Participant, Source, SourceReadOptions } from "../core/types.ts";
 import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
 
 interface SessionFile {
@@ -77,6 +77,21 @@ function sessionIdFromPath(path: string): string {
   return path.split("/").pop()?.split("_").pop()?.replace(".jsonl", "") || "";
 }
 
+/** Chunk size for a filtered read, so a foreign file costs one small read before it is dropped. */
+const PEEK_BYTES = 4096;
+
+function foreignSession(sessionId: string, wanted: string | undefined): boolean {
+  return wanted !== undefined && sessionId !== wanted;
+}
+
+function settledSessionId(
+  entry: Readonly<Record<string, unknown>>,
+  current: string,
+): string | undefined {
+  if (entry.type === "session") return scalarText(entry.id) || current;
+  return entry.type === "message" ? current : undefined;
+}
+
 function* walkJsonl(dir: string): Generator<string> {
   if (!existsSync(dir)) return;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -130,33 +145,44 @@ export class PiSource implements Source {
     };
   }
 
-  private async *readFile(file: SessionFile): AsyncGenerator<Message> {
+  private async *readFile(file: SessionFile, wanted?: string): AsyncGenerator<Message> {
     /**
-     * The id lives in the `session` entry and matches the file name. A leading
-     * `title` entry can precede it, so the file stem remains the fallback for
-     * headerless or truncated transcripts.
+     * The id lives in the `session` entry. It matches the file name of a
+     * top-level session, while a subagent run sits under its parent's directory
+     * with a name of its own, so an exact filter is settled from the header and
+     * a foreign file is dropped there. A leading `title` entry can precede the
+     * header, so the file stem remains the fallback for headerless or truncated
+     * transcripts.
      */
     let sessionId = sessionIdFromPath(file.path);
-    const lines = createInterface({ input: createReadStream(file.path), crlfDelay: Infinity });
-    for await (const line of lines) {
-      const entry = parseJsonRecord(line);
-      if (!entry) continue;
-      if (entry.type === "session") {
-        sessionId = scalarText(entry.id) || sessionId;
-        continue;
+    const input = createReadStream(
+      file.path,
+      wanted === undefined ? {} : { highWaterMark: PEEK_BYTES },
+    );
+    try {
+      for await (const line of createInterface({ input, crlfDelay: Infinity })) {
+        const entry = parseJsonRecord(line);
+        if (!entry) continue;
+        const settled = settledSessionId(entry, sessionId);
+        if (settled === undefined) continue;
+        sessionId = settled;
+        if (foreignSession(sessionId, wanted)) return;
+        if (entry.type === "session") continue;
+        const message = this.messageFromEntry(entry, sessionId, file.mtime);
+        if (message) yield message;
       }
-      if (entry.type !== "message") continue;
-      const message = this.messageFromEntry(entry, sessionId, file.mtime);
-      if (message) yield message;
+    } finally {
+      input.destroy();
     }
   }
 
-  async *read(): AsyncGenerator<Message> {
+  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
+    const wanted = options?.sessionId || undefined;
     const files: SessionFile[] = [];
     for (const path of walkJsonl(this.sessionsDir)) {
       files.push({ path, mtime: statSync(path).mtimeMs });
     }
     files.sort((left, right) => left.mtime - right.mtime);
-    for (const file of files) yield* this.readFile(file);
+    for (const file of files) yield* this.readFile(file, wanted);
   }
 }

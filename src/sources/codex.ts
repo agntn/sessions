@@ -2,7 +2,7 @@ import { createReadStream, existsSync, readdirSync, readFileSync, statSync } fro
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { home, osUser } from "../core/env.ts";
-import type { Block, Message, Source } from "../core/types.ts";
+import type { Block, Message, Source, SourceReadOptions } from "../core/types.ts";
 import { isRecord, parseJson, parseJsonRecord, scalarText } from "./parsing.ts";
 
 interface SessionFile {
@@ -21,19 +21,32 @@ interface ParsedTimestamp {
   readonly native?: number;
 }
 
-function* walkSessions(dir: string): Generator<Pick<SessionFile, "path" | "format">> {
-  if (!existsSync(dir)) return;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) yield* walkSessions(path);
-    else if (entry.name.endsWith(".jsonl")) yield { path, format: "jsonl" };
-    else if (entry.name.endsWith(".json")) yield { path, format: "json" };
-  }
-}
-
 function extractSessionId(filename: string): string {
   const match = filename.match(/rollout-[\dT-]+-(.+)\.jsonl?$/);
   return match?.[1] ?? filename.replace(/\.jsonl?$/, "");
+}
+
+/**
+ * A JSONL rollout is named after its session, so an exact filter skips the
+ * others unopened; a legacy JSON rollout carries its id inside and is settled
+ * by `readJsonSession`.
+ *
+ * @param dir - Directory to walk recursively.
+ * @param sessionId - Exact session filter.
+ * @yields {Pick<SessionFile, "path" | "format">} Rollout files that can hold the session.
+ */
+function* walkSessions(
+  dir: string,
+  sessionId?: string,
+): Generator<Pick<SessionFile, "path" | "format">> {
+  if (!existsSync(dir)) return;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) yield* walkSessions(path, sessionId);
+    else if (entry.name.endsWith(".jsonl")) {
+      if (!sessionId || extractSessionId(entry.name) === sessionId) yield { path, format: "jsonl" };
+    } else if (entry.name.endsWith(".json")) yield { path, format: "json" };
+  }
 }
 
 function textBlocks(content: unknown): Block[] {
@@ -318,10 +331,11 @@ export class CodexSource implements Source {
     return existsSync(this.sessionsDir);
   }
 
-  private *readJsonSession(file: SessionFile): Generator<Message> {
+  private *readJsonSession(file: SessionFile, sessionId?: string): Generator<Message> {
     const data = readJsonObject(file.path);
     if (!data || !Array.isArray(data.items)) return;
     const session = jsonSessionInfo(data, file);
+    if (sessionId && session.id !== sessionId) return;
 
     for (const [index, item] of data.items.entries()) {
       if (!isRecord(item)) continue;
@@ -360,14 +374,15 @@ export class CodexSource implements Source {
     }
   }
 
-  async *read(): AsyncGenerator<Message> {
+  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
+    const sessionId = options?.sessionId || undefined;
     const files: SessionFile[] = [];
-    for (const file of walkSessions(this.sessionsDir)) {
+    for (const file of walkSessions(this.sessionsDir, sessionId)) {
       files.push({ ...file, mtime: statSync(file.path).mtimeMs });
     }
     files.sort((left, right) => left.mtime - right.mtime);
     for (const file of files) {
-      if (file.format === "json") yield* this.readJsonSession(file);
+      if (file.format === "json") yield* this.readJsonSession(file, sessionId);
       else yield* this.readJsonlSession(file);
     }
   }

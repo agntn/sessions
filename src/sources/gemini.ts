@@ -1,7 +1,14 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { home, osUser } from "../core/env.ts";
-import type { Block, Channel, Message, Participant, Source } from "../core/types.ts";
+import type {
+  Block,
+  Channel,
+  Message,
+  Participant,
+  Source,
+  SourceReadOptions,
+} from "../core/types.ts";
 import { isRecord, parseJson, scalarText } from "./parsing.ts";
 
 interface ChatFile {
@@ -52,7 +59,11 @@ function parseGeminiBlocks(entry: Readonly<Record<string, unknown>>): Block[] {
   return [...thoughts, ...content, ...tools];
 }
 
-function* walkChatFiles(dir: string): Generator<ChatFile> {
+function sessionIdFromPath(path: string): string {
+  return path.split("/").pop()?.replace(".json", "") || "";
+}
+
+function* walkChatFiles(dir: string, sessionId?: string): Generator<ChatFile> {
   if (!existsSync(dir)) return;
   for (const project of readdirSync(dir, { withFileTypes: true })) {
     if (!project.isDirectory()) continue;
@@ -60,6 +71,7 @@ function* walkChatFiles(dir: string): Generator<ChatFile> {
     if (!existsSync(chatsDir)) continue;
     for (const file of readdirSync(chatsDir, { withFileTypes: true })) {
       if (!file.name.endsWith(".json")) continue;
+      if (sessionId && sessionIdFromPath(file.name) !== sessionId) continue;
       const path = join(chatsDir, file.name);
       yield { path, mtime: statSync(path).mtimeMs };
     }
@@ -126,7 +138,7 @@ export class GeminiSource implements Source {
     }
     if (!isRecord(data) || !Array.isArray(data.messages)) return;
 
-    const sessionId = file.path.split("/").pop()?.replace(".json", "") || "";
+    const sessionId = sessionIdFromPath(file.path);
     for (const entry of data.messages) {
       if (!isRecord(entry)) continue;
       const message = this.messageFromEntry(entry, sessionId, file.mtime);
@@ -134,8 +146,8 @@ export class GeminiSource implements Source {
     }
   }
 
-  async *read(): AsyncGenerator<Message> {
-    const files = [...walkChatFiles(this.geminiDir)].sort(
+  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
+    const files = [...walkChatFiles(this.geminiDir, options?.sessionId || undefined)].sort(
       (left, right) => left.mtime - right.mtime,
     );
     for (const file of files) yield* this.readFile(file);

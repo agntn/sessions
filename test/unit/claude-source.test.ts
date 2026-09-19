@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
+import type { Message, SourceReadOptions } from "../../src/core/types.ts";
 import { ClaudeSource } from "../../src/sources/claude.ts";
 
 let directory: string | undefined;
@@ -10,6 +11,19 @@ afterEach(() => {
   if (directory) rmSync(directory, { recursive: true, force: true });
   directory = undefined;
 });
+
+function userLine(text: string): string {
+  return `${JSON.stringify({ type: "user", timestamp: "2026-01-01T00:00:00.000Z", message: { content: text } })}\n`;
+}
+
+async function collect(
+  source: Readonly<ClaudeSource>,
+  options?: SourceReadOptions,
+): Promise<Message[]> {
+  const messages: Message[] = [];
+  for await (const message of source.read(options)) messages.push(message);
+  return messages;
+}
 
 describe("ClaudeSource", () => {
   it("reads a native JSONL session without truncating message text", async () => {
@@ -97,5 +111,25 @@ describe("ClaudeSource", () => {
       timestamp: mtime.getTime(),
       blocks: [{ type: "tool_result", toolCallId: "tool-2", text: "first\nsecond" }],
     });
+  });
+
+  it("opens only the transcripts named after the requested session", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-claude-"));
+    for (const project of ["project-a", "project-b"]) {
+      mkdirSync(join(directory, project));
+      writeFileSync(join(directory, project, "wanted.jsonl"), userLine(`${project} wanted`));
+    }
+    writeFileSync(join(directory, "project-a", "other.jsonl"), userLine("other"));
+    symlinkSync(join(directory, "missing.jsonl"), join(directory, "project-b", "trap.jsonl"));
+    const source = new ClaudeSource(directory);
+
+    await expect(collect(source)).rejects.toThrow(/ENOENT/);
+
+    const messages = await collect(source, { sessionId: "wanted" });
+    const turns = messages.map((message) => `${message.sessionId}: ${message.blocks[0]?.text}`);
+    expect(turns.sort((left, right) => left.localeCompare(right))).toEqual([
+      "wanted: project-a wanted",
+      "wanted: project-b wanted",
+    ]);
   });
 });
