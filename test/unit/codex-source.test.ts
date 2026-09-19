@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CodexSource } from "../../src/sources/codex.ts";
-import type { Message } from "../../src/core/types.ts";
+import type { Message, SourceReadOptions } from "../../src/core/types.ts";
 
 let tempDir: string;
 
@@ -15,9 +15,12 @@ function writeJson(filename: string, data: Readonly<Record<string, unknown>>): v
   writeFileSync(join(tempDir, filename), JSON.stringify(data));
 }
 
-async function collect(source: Readonly<CodexSource>): Promise<Message[]> {
+async function collect(
+  source: Readonly<CodexSource>,
+  options?: SourceReadOptions,
+): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.read()) messages.push(m);
+  for await (const m of source.read(options)) messages.push(m);
   return messages;
 }
 
@@ -459,6 +462,31 @@ describe("CodexSource JSONL", () => {
     expect(msgs[0].sessionId).toBe("mySessionId");
   });
 
+  it("opens only the rollout named after the requested session", async () => {
+    const message = {
+      type: "response_item",
+      timestamp: "2026-03-10T10:00:00Z",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "hello" }],
+      },
+    };
+    writeJsonl("rollout-2026-03-10T10-00-00-wanted.jsonl", [message]);
+    writeJsonl("rollout-2026-03-10T10-00-01-other.jsonl", [message]);
+    symlinkSync(
+      join(tempDir, "missing.jsonl"),
+      join(tempDir, "rollout-2026-03-10T10-00-02-trap.jsonl"),
+    );
+    const source = new CodexSource(tempDir);
+
+    await expect(collect(source)).rejects.toThrow(/ENOENT/);
+
+    const msgs = await collect(source, { sessionId: "wanted" });
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].sessionId).toBe("wanted");
+  });
+
   it("falls back to full filename for non-rollout files", async () => {
     writeJsonl("custom-session.jsonl", [
       {
@@ -699,6 +727,19 @@ describe("CodexSource error handling", () => {
     const missingDir = join(tempDir, "nonexistent-codex-dir");
     const source = new CodexSource(missingDir);
     expect(source.available()).toBe(false);
+  });
+
+  it("settles a JSON session filter from the id inside the file", async () => {
+    const items = [
+      { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
+    ];
+    writeJson("rollout-2026-03-10-renamed.json", { session: { id: "wanted" }, items });
+    writeJson("rollout-2026-03-10-other.json", { session: { id: "other" }, items });
+    const source = new CodexSource(tempDir);
+
+    const msgs = await collect(source, { sessionId: "wanted" });
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].sessionId).toBe("wanted");
   });
 
   it("JSON session falls back to filename sessionId when session.id missing", async () => {

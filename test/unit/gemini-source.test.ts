@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { GeminiSource } from "../../src/sources/gemini.ts";
 import { osUser } from "../../src/core/env.ts";
-import type { Message } from "../../src/core/types.ts";
+import type { Message, SourceReadOptions } from "../../src/core/types.ts";
 
 let tempDir: string;
 
@@ -18,9 +18,12 @@ function writeChat(
   writeFileSync(join(dir, filename), JSON.stringify(data));
 }
 
-async function collect(source: Readonly<GeminiSource>): Promise<Message[]> {
+async function collect(
+  source: Readonly<GeminiSource>,
+  options?: SourceReadOptions,
+): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.read()) messages.push(m);
+  for await (const m of source.read(options)) messages.push(m);
   return messages;
 }
 
@@ -160,6 +163,24 @@ describe("GeminiSource", () => {
 
     expect(msgs).toHaveLength(1);
     expect(msgs[0].blocks[0].text).toBe("valid");
+  });
+
+  it("opens only the chat file named after the requested session", async () => {
+    writeChat("alpha", "wanted.json", {
+      messages: [{ type: "user", timestamp: "2026-03-10T10:00:00Z", content: "wanted" }],
+    });
+    writeChat("alpha", "other.json", {
+      messages: [{ type: "user", timestamp: "2026-03-10T10:00:01Z", content: "other" }],
+    });
+    symlinkSync(join(tempDir, "missing.json"), join(tempDir, "alpha", "chats", "trap.json"));
+    const source = new GeminiSource(tempDir);
+
+    await expect(collect(source)).rejects.toThrow(/ENOENT/);
+
+    const msgs = await collect(source, { sessionId: "wanted" });
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].sessionId).toBe("wanted");
+    expect(msgs[0].blocks[0].text).toBe("wanted");
   });
 
   it("handles multiple projects with separate chat dirs", async () => {

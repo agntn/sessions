@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { OpenClawSource } from "../../src/sources/openclaw.ts";
-import type { Message } from "../../src/core/types.ts";
+import type { Message, SourceReadOptions } from "../../src/core/types.ts";
 
 let tempDir: string;
 
@@ -11,9 +11,12 @@ function writeJsonl(filename: string, lines: readonly Readonly<Record<string, un
   writeFileSync(join(tempDir, filename), lines.map((l) => JSON.stringify(l)).join("\n"));
 }
 
-async function collect(source: Readonly<OpenClawSource>): Promise<Message[]> {
+async function collect(
+  source: Readonly<OpenClawSource>,
+  options?: SourceReadOptions,
+): Promise<Message[]> {
   const messages: Message[] = [];
-  for await (const m of source.read()) messages.push(m);
+  for await (const m of source.read(options)) messages.push(m);
   return messages;
 }
 
@@ -310,6 +313,26 @@ describe("OpenClawSource session classification", () => {
 
     expect(msgs[0].context?.origin).toBe("interactive");
     expect(msgs[0].channel).toEqual({ platform: "cli", type: "interactive" });
+  });
+});
+
+describe("OpenClawSource session filter", () => {
+  it("opens only the transcript named after the requested session", async () => {
+    const message = {
+      type: "message",
+      timestamp: "2026-03-10T10:00:00Z",
+      message: { role: "user", content: [{ type: "text", text: "hello" }] },
+    };
+    writeJsonl("wanted.jsonl", [message]);
+    writeJsonl("other.jsonl", [message]);
+    symlinkSync(join(tempDir, "missing.jsonl"), join(tempDir, "trap.jsonl"));
+    const source = new OpenClawSource([tempDir]);
+
+    await expect(collect(source)).rejects.toThrow(/ENOENT/);
+
+    const msgs = await collect(source, { sessionId: "wanted" });
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].sessionId).toBe("wanted");
   });
 });
 
