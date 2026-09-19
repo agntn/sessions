@@ -300,6 +300,65 @@ describe("OpenCodeSource", () => {
     expect(msgs).toHaveLength(0);
   });
 
+  it("parses reasoning parts as thinking blocks", async () => {
+    executeMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            pdata: JSON.stringify({
+              type: "reasoning",
+              text: "The user wants the parser fixed.",
+              time: { start: 1700000001000, end: 1700000001500 },
+            }),
+            role: "assistant",
+            tc: 1700000001000,
+            sid: "session-1",
+            rid: 2,
+          },
+          {
+            pdata: JSON.stringify({ type: "text", text: "Fixing it now." }),
+            role: "assistant",
+            tc: 1700000002000,
+            sid: "session-1",
+            rid: 3,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const source = new OpenCodeSource("/tmp/opencode.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].role).toBe("assistant");
+    expect(msgs[0].blocks).toEqual([
+      { type: "thinking", text: "The user wants the parser fixed." },
+    ]);
+    expect(msgs[0].author).toEqual({ platform: "cli", name: "opencode", isBot: true });
+    expect(msgs[1].blocks).toEqual([{ type: "text", text: "Fixing it now." }]);
+  });
+
+  it("skips reasoning parts with empty text", async () => {
+    executeMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            pdata: JSON.stringify({ type: "reasoning", text: "", time: { start: 1700000000000 } }),
+            role: "assistant",
+            tc: 1700000000000,
+            sid: "s1",
+            rid: 1,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const source = new OpenCodeSource("/tmp/opencode.db");
+    const msgs = await collect(source);
+
+    expect(msgs).toHaveLength(0);
+  });
+
   it("skips text parts with empty text", async () => {
     executeMock
       .mockResolvedValueOnce({
@@ -465,6 +524,9 @@ describe("OpenCodeSource", () => {
     expect(firstCall.sql).not.toContain("p.data as pdata");
     expect(firstCall.sql).toContain(
       "partType IN ('tool-invocation', 'tool-call', 'tool-result', 'tool')",
+    );
+    expect(firstCall.sql).toContain(
+      "partType IN ('text', 'reasoning') AND COALESCE(textValue, '') <> ''",
     );
     expect(firstCall.args).toEqual([10, 20, ...INJECTED_PREFIXES.map((prefix) => `${prefix}*`)]);
     expect(closeMock).toHaveBeenCalledTimes(1);
