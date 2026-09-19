@@ -1,107 +1,152 @@
 # @agntn/sessions
 
-Read and normalize AI coding sessions across harnesses through one TypeScript API.
+[![npm version](https://npmx.dev/api/registry/badge/version/@agntn/sessions)](https://npmx.dev/package/@agntn/sessions)
+[![npm downloads](https://npmx.dev/api/registry/badge/downloads/@agntn/sessions)](https://npmx.dev/package/@agntn/sessions)
+[![license](https://npmx.dev/api/registry/badge/license/@agntn/sessions)](https://npmx.dev/package/@agntn/sessions)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/agntn/sessions)
 
-## Scope
+📚 Read conversations from nine AI coding harnesses through one TypeScript API. Your agent can read them too.
 
-This package does one thing: it discovers native session data produced by supported AI coding harnesses and exposes each conversation as a normalized `Session`.
+## Why?
 
-It deliberately does not provide a database, synchronization cursors, file watching, full-text search, analytics, or long-term agent memory. Applications can compose those concerns on top of the session reader API.
+The conversation you need is in another harness. Of course it is. `@agntn/sessions` reads native session stores and turns them into the same `Session`, `Message`, and `Block` shapes. Build your viewer, export, or index without collecting parsers as a side hobby.
 
-## Supported harnesses
+## 📦 Start here
 
-- AEI
-- Claude Code
-- Codex
-- Gemini CLI
-- Mastra
-- OMP
-- OpenClaw
-- OpenCode
-- Pi
-
-## Install
-
-Requires Node.js 24 or later.
+You'll need Node.js 24 or later.
 
 ```bash
 pnpm add @agntn/sessions
 ```
 
-## Usage
+Want the library? Start below. Want your agent to read old conversations? Skip to [agent tools](#-agent-tools).
 
-```ts
+## 🧠 Read your first archive
+
+Save this as `sessions.mjs` and run `node sessions.mjs`:
+
+```js
 import { create } from "@agntn/sessions";
 
-const claude = create("claude", { path: "/custom/claude/projects" });
-if (claude.available()) {
-  for (const session of await claude.list()) {
+const reader = create("claude");
+if (reader.available()) {
+  for (const session of await reader.list()) {
     console.log(session.id, session.updatedAt, session.messages.length);
   }
+} else {
+  console.log("No Claude Code session data found.");
 }
 ```
 
-Use `sources()` to list supported harness names and `allSources()` to create every reader.
+Readers use native data locations by default. Moved yours? Pass `create("claude", { path: "/custom/claude/projects" })`. Sessions come back newest first, with messages in chronological order. Text, thinking, tool calls, tool results, roles, timestamps, and source metadata are normalized where the harness exposes them.
 
-```ts
-import { allSources } from "@agntn/sessions";
+**Mind the archive size.** Library `list()` loads the complete archive, including message payloads, into memory. It is not the paged agent tool. A small loop can still have a large appetite.
 
-for (const reader of allSources()) {
-  if (!reader.available()) continue;
+Need more than one harness? `allSources()` creates every reader. Check each reader's `available()` before calling `list()`. The [public exports](./src/index.ts), [session contract](./src/core/session.ts), and [message types](./src/core/types.ts) have the details.
 
-  for (const session of await reader.list()) {
-    // Index, render, export, or persist the normalized session in your application.
-  }
-}
-```
+## 🗂️ Which harnesses?
 
-Each adapter accepts the native session format as its source of truth. Messages preserve text, thinking, tool calls, tool results, timestamps, roles, and stable source metadata when the harness exposes them.
+| Harness     | Source name |
+| ----------- | ----------- |
+| AEI         | `aei`       |
+| Claude Code | `claude`    |
+| Codex       | `codex`     |
+| Gemini CLI  | `gemini`    |
+| Mastra      | `mastra`    |
+| OMP         | `omp`       |
+| OpenClaw    | `openclaw`  |
+| OpenCode    | `opencode`  |
+| Pi          | `pi`        |
 
-`list()` materializes the complete native archive and preserves full message payloads in memory. For very large archives or tool outputs, consumers should account for that memory cost before indexing, rendering, exporting, or persisting the returned sessions.
-
-## Agent tools
-
-The package exposes the same three read-only tools over MCP and through native [Pi](https://pi.dev) and [OMP](https://omp.sh) extensions:
-
-- `sessions_sources` lists supported harnesses and local availability.
-- `sessions_list` returns bounded session metadata for one harness, newest first: id, message count, last activity, and a snippet of the session's first text (user turns take priority).
-- `sessions_read` returns messages for an exact session ID within a character budget chosen by the caller.
-
-Both reading tools accept optional native `path` or `paths` overrides. They do not persist, index, or search session data. Session listings retain only one bounded summary per conversation, and exact reads retain only the requested message window. Adapters can push those projections into a native store; OpenCode aggregates listings in SQLite and filters exact session reads before decoding parts.
-
-### MCP server
+Ask the registry rather than guessing names:
 
 ```bash
-sessions mcp
+node --input-type=module -e 'import { sources } from "@agntn/sessions"; console.log(sources().join(", "));'
 ```
 
-Speaks MCP over stdio. Point a client at it:
+Output:
+
+```text
+aei, claude, codex, gemini, mastra, omp, openclaw, opencode, pi
+```
+
+OpenClaw also accepts `paths` for multiple native locations. See the [source registry](./src/sources/index.ts) for supported overrides and links to each parser.
+
+## 🤖 Agent tools
+
+Same three read-only tools in MCP, [Pi](https://pi.dev), and [OMP](https://omp.sh):
+
+| Tool               | What you get                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `sessions_sources` | Supported harnesses and local data availability                                          |
+| `sessions_list`    | A page of session IDs, message counts, last activity, and opening snippets, newest first |
+| `sessions_read`    | A bounded message window from one exact session ID                                       |
+
+Start with `sessions_sources`, pick a source, then list its sessions. Snippets prefer the user's first text. Read the interesting conversation, not the whole haystack.
+
+### MCP
+
+Add this to your client's MCP configuration:
 
 ```json
 {
   "mcpServers": {
-    "sessions": { "command": "npx", "args": ["-y", "@agntn/sessions", "mcp"] }
+    "sessions": {
+      "command": "npx",
+      "args": ["-y", "@agntn/sessions", "mcp"]
+    }
   }
 }
 ```
 
-`sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. When more text remains, its answer carries an exact `position` that can continue inside a message block instead of repeating the cut text. `offset` remains the simple way to start at a message boundary.
+The server speaks stdio. With a local package install, `pnpm exec sessions mcp` starts it directly. Bring your own transport with `createMcpServer()` from `@agntn/sessions/mcp`.
 
-An MCP client sees the text a tool returns and nothing else, so continuation instructions stay in the text as well as Pi details. A failed read comes back as a tool error, not a transport failure: an unknown source, a path override that holds no native data, or an unknown session ID.
-
-File adapters still scan their native archive for each call, so response time follows archive size even though retained memory stays bounded to session summaries or the requested window. Database adapters can answer more narrowly when their native schema supports it.
-
-`createMcpServer()` is exported from `@agntn/sessions/mcp` for hosts that bring their own transport.
-
-### Pi and OMP extensions
+### Pi and OMP
 
 ```bash
 pi install npm:@agntn/sessions
 omp install @agntn/sessions
 ```
 
-All three surfaces call the executors in `src/tool-operations.ts`, so they answer identically. The extensions add structured details for their hosts; MCP drops them and keeps the text.
+The extensions and MCP use the [same executors](./src/tool-operations.ts). Extensions also attach structured details. MCP carries the answer and continuation instructions in text.
 
-## License
+### Keep reading, without starting over
 
-MIT
+Both reading tools accept `path`, or `paths` where supported. Page session listings with `offset`. For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
+
+These tools retain bounded summaries or the requested message window, not the complete archive. File adapters still scan on each call. OpenCode can query its SQLite store more narrowly. Bounded output does not mean instant reads.
+
+Unknown sources, unreadable overrides, and missing session IDs return tool errors over MCP. See the [tool schemas](./src/mcp.ts) for all limits. Session text can contain private data. Only connect clients you trust with it.
+
+## 🚫 Just the reader
+
+No database of its own, synchronization cursors, watchers, full-text search, analytics, or long-term agent memory. Your application owns storage, indexing, rendering, and export. Reading a conversation also doesn't resume it in the original harness.
+
+## 🛠️ Development
+
+From a checkout:
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build
+node dist/cli.mjs --help
+```
+
+Run the library examples from the repository root after building.
+
+```bash
+pnpm fmt        # Format and apply lint fixes
+pnpm lint       # Check lint and formatting
+pnpm typecheck  # Check the library and extensions
+pnpm test:run   # Run the fixture and integration tests
+```
+
+Adding a harness? Start with the [adapter contract](./src/sources/AGENTS.md) and [parser tests](./test/unit). Keep native format quirks in the adapter, not in your caller.
+
+## 💛 Thanks
+
+Built with support from [Claude for Open Source](https://claude.com/contact-sales/claude-for-oss) and [Codex for Open Source](https://developers.openai.com/community/codex-for-oss). More room to build things like this. Much appreciated.
+
+## 📄 License
+
+[MIT](./LICENSE)
