@@ -40,7 +40,26 @@ if (reader.available()) {
 
 Readers use native data locations by default. Moved yours? Pass `create("claude", { path: "/custom/claude/projects" })`. Sessions come back newest first, with messages in chronological order. Text, thinking, tool calls, tool results, roles, timestamps, and source metadata are normalized where the harness exposes them.
 
-**Mind the archive size.** Library `list()` loads the complete archive, including message payloads, into memory. It is not the paged agent tool. A small loop can still have a large appetite.
+**Mind the archive size.** Library `list()` loads the complete archive, including message payloads, into memory. For large archives, read a page instead:
+
+```js
+import { createSource, listSourceSessions, readSourceSession } from "@agntn/sessions";
+
+const source = createSource("claude");
+if (source.available()) {
+  const page = await listSourceSessions(source, 0, 20);
+  for (const session of page.sessions) {
+    const window = await readSourceSession(source, session.id, 0, 100);
+    console.log(session.id, window.messages);
+  }
+}
+```
+
+`createSource()` accepts the same location overrides as `create()`. Continue a message read with `window.nextMessage` as the offset when it's defined.
+
+Both functions take a zero-based `offset`, a positive integer `limit`, and optional `{ since, until }` bounds in epoch milliseconds. Summary bounds filter last activity; message bounds filter individual timestamps. Both endpoints are inclusive. Summary `total` counts matching sessions. Message `total` counts the entire selected session, while `indices` and `nextMessage` retain its original positions, even across filtered gaps. Reuse the same bounds when continuing.
+
+Messages arrive in native read order, with complete blocks and no character truncation. The limit counts messages, not bytes: one large message can still be large. An empty time window keeps the session's total; a missing exact ID returns zero. These functions share the agent tools' projections and [scan limitations](#keep-reading-without-starting-over), not an index or snapshot. See the [window types](./src/tool-reader.ts) for the result shapes.
 
 Need more than one harness? `allSources()` creates every reader. Check each reader's `available()` before calling `list()`. The [public exports](./src/index.ts), [session contract](./src/core/session.ts), and [message types](./src/core/types.ts) have the details.
 

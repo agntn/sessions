@@ -1,7 +1,7 @@
 import type { Message, Source, SourceSessionSummary, SessionTimeRange } from "./core/types.ts";
 import { snippetLine } from "./tool-snippet.ts";
 
-/** Session metadata retained by the bounded agent tool read path. */
+/** Session metadata shared by bounded library and agent reads. */
 export interface ToolSessionSummary {
   readonly id: string;
   readonly source: string;
@@ -9,6 +9,37 @@ export interface ToolSessionSummary {
   readonly updatedAt: number;
   readonly messageCount: number;
   readonly snippet?: string;
+}
+
+/**
+ * Rejects unbounded windows before opening a native store.
+ * @param offset - Original zero-based position.
+ * @param limit - Maximum retained records.
+ * @param range - Inclusive epoch millisecond bounds.
+ */
+function validateWindow(offset: number, limit: number, range?: SessionTimeRange): void {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new RangeError("offset must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(limit) || limit < 1) {
+    throw new RangeError("limit must be a positive safe integer");
+  }
+  validateRange(range ?? {});
+}
+
+/**
+ * Checks bounds without excluding open-ended windows.
+ * @param range - Inclusive epoch millisecond bounds.
+ */
+function validateRange(range: SessionTimeRange): void {
+  for (const value of [range.since, range.until]) {
+    if (value !== undefined && !Number.isFinite(new Date(value).getTime())) {
+      throw new RangeError("time bounds must be valid epoch milliseconds");
+    }
+  }
+  if ((range.since ?? -Infinity) > (range.until ?? Infinity)) {
+    throw new RangeError("since must not be after until");
+  }
 }
 
 function inTimeRange(timestamp: number, range?: SessionTimeRange): boolean {
@@ -100,6 +131,7 @@ export async function listSourceSessions(
   limit: number,
   range?: SessionTimeRange,
 ): Promise<ToolSummaryWindow> {
+  validateWindow(offset, limit, range);
   if (source.summaryWindow) {
     const projected = await source.summaryWindow(offset, limit, range);
     return { total: projected.total, sessions: projected.sessions.map(projectedSummary) };
@@ -155,6 +187,7 @@ export async function readSourceSession(
   limit: number,
   range?: SessionTimeRange,
 ): Promise<ToolMessageWindow> {
+  validateWindow(offset, limit, range);
   const messages: Message[] = [];
   const indices: number[] = [];
   let nextMessage: number | undefined;
