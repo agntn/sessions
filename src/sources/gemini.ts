@@ -78,6 +78,10 @@ function* walkChatFiles(dir: string, sessionId?: string): Generator<ChatFile> {
   }
 }
 
+function userBlocks(content: unknown): Block[] {
+  return typeof content === "string" && content.length > 0 ? [{ type: "text", text: content }] : [];
+}
+
 function nativeRole(type: unknown): Message["role"] | undefined {
   if (type === "user") return "user";
   if (type === "gemini") return "assistant";
@@ -106,12 +110,7 @@ export class GeminiSource implements Source {
   ): Message | undefined {
     const role = nativeRole(entry.type);
     if (!role) return undefined;
-    const blocks =
-      role === "user"
-        ? typeof entry.content === "string" && entry.content.length > 0
-          ? [{ type: "text" as const, text: entry.content }]
-          : []
-        : parseGeminiBlocks(entry);
+    const blocks = role === "user" ? userBlocks(entry.content) : parseGeminiBlocks(entry);
     if (blocks.length === 0) return undefined;
 
     const timestampText = scalarText(entry.timestamp);
@@ -122,6 +121,7 @@ export class GeminiSource implements Source {
       sessionId,
       role,
       timestamp,
+      timestampSource: Number.isFinite(nativeTimestamp) ? "message" : "file",
       date: new Date(timestamp).toISOString().split("T")[0],
       blocks,
       channel: this.channel,

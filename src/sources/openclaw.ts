@@ -204,11 +204,12 @@ function timestampForEntry(
   entry: Readonly<Record<string, unknown>>,
   sessionTimestamp: string,
   mtime: number,
-): number {
+): Pick<Message, "timestamp" | "timestampSource"> {
   const entryTimestamp = scalarText(entry.timestamp);
   const raw = entryTimestamp || sessionTimestamp;
   const parsed = raw ? new Date(raw).getTime() : Number.NaN;
-  return Number.isFinite(parsed) ? parsed : mtime;
+  if (!Number.isFinite(parsed)) return { timestamp: mtime, timestampSource: "file" };
+  return { timestamp: parsed, timestampSource: entryTimestamp ? "message" : "session" };
 }
 
 export class OpenClawSource implements Source {
@@ -244,15 +245,15 @@ export class OpenClawSource implements Source {
     const nextSessionContext =
       sessionContext ?? (role === "user" && firstText ? classifySession(firstText) : undefined);
     const context = messageContext(nextSessionContext, role, firstText);
-    const timestamp = timestampForEntry(entry, sessionTimestamp, mtime);
+    const time = timestampForEntry(entry, sessionTimestamp, mtime);
     return {
       sessionContext: nextSessionContext,
       message: {
         source: this.name,
         sessionId,
         role,
-        timestamp,
-        date: new Date(timestamp).toISOString().split("T")[0],
+        ...time,
+        date: new Date(time.timestamp).toISOString().split("T")[0],
         blocks,
         context,
         author: authorFromContext(context),

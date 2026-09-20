@@ -9,7 +9,7 @@
  * API remains the path that returns complete archives to library consumers.
  */
 
-import type { SessionTimeRange } from "./core/types.ts";
+import type { Message, SessionTimeRange } from "./core/types.ts";
 import { allSources } from "./index.ts";
 import type { SourceOptions } from "./index.ts";
 import { createSource } from "./sources/index.ts";
@@ -129,6 +129,7 @@ interface RenderableBlock {
 
 interface RenderableMessage {
   readonly timestamp: number;
+  readonly timestampSource?: Message["timestampSource"];
   readonly date: string;
   readonly role: "user" | "assistant" | "tool";
   readonly blocks: readonly RenderableBlock[];
@@ -309,7 +310,11 @@ class RenderBuffer {
     position: Readonly<ReadPosition>,
     prefix: string,
   ): ReadPosition | undefined {
-    const header = `[${isoStamp(message.timestamp, message.date)}] ${message.role}\n`;
+    const inferred =
+      message.timestampSource === "file" || message.timestampSource === "session"
+        ? `; inferred from ${message.timestampSource}`
+        : "";
+    const header = `[${isoStamp(message.timestamp, message.date)}${inferred}] ${message.role}\n`;
     if (!this.append(`${prefix}${header}`)) return { ...position };
     if (message.blocks.length === 0) return undefined;
     if (position.block >= message.blocks.length) {

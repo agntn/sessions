@@ -243,6 +243,7 @@ class JsonlNormalizer {
       source: this.source,
       sessionId: this.sessionId,
       role: "user",
+      timestampSource: timestamp.native === undefined ? "file" : "message",
       timestamp: timestamp.timestamp,
       date: new Date(timestamp.timestamp).toISOString().split("T")[0],
       blocks: [{ type: "text", text }],
@@ -267,6 +268,7 @@ class JsonlNormalizer {
       source: this.source,
       sessionId: this.sessionId,
       role: parsed.role,
+      timestampSource: timestamp.native === undefined ? "file" : "message",
       timestamp: timestamp.timestamp,
       date: new Date(timestamp.timestamp).toISOString().split("T")[0],
       blocks: parsed.blocks,
@@ -294,6 +296,7 @@ class JsonlNormalizer {
 interface JsonSessionInfo {
   readonly id: string;
   readonly timestamp: number;
+  readonly timestampSource: "session" | "file";
 }
 
 function readJsonObject(path: string): Readonly<Record<string, unknown>> | undefined {
@@ -314,7 +317,7 @@ function jsonSessionInfo(
   const timestampText = scalarText(session?.timestamp);
   const nativeTimestamp = timestampText ? new Date(timestampText).getTime() : Number.NaN;
   const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : file.mtime;
-  return { id, timestamp };
+  return { id, timestamp, timestampSource: Number.isFinite(nativeTimestamp) ? "session" : "file" };
 }
 
 export class CodexSource implements Source {
@@ -347,6 +350,7 @@ export class CodexSource implements Source {
         sessionId: session.id,
         role: parsed.role,
         timestamp,
+        timestampSource: session.timestampSource,
         date: new Date(timestamp).toISOString().split("T")[0],
         blocks: parsed.blocks,
         channel: { platform: "cli", name: "codex" },
