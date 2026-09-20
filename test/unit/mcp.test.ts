@@ -86,6 +86,8 @@ describe("sessions MCP server", () => {
     expect(response.tools[1]?.inputSchema.properties).toHaveProperty("lastHours");
     expect(response.tools[2]?.inputSchema).toMatchObject({
       properties: {
+        since: { type: "string" },
+        until: { type: "string" },
         maxChars: { minimum: 1_000, maximum: 100_000 },
         position: {
           type: "object",
@@ -94,6 +96,33 @@ describe("sessions MCP server", () => {
       },
     });
     expect(response.tools[2]?.annotations).toMatchObject({ readOnlyHint: true });
+  });
+
+  it("filters message times through the protocol", async () => {
+    sessionsMock.list.mockResolvedValue([
+      {
+        ...session,
+        messages: [
+          ...session.messages,
+          { ...session.messages[0], timestamp: 2000, blocks: [{ type: "text", text: "selected" }] },
+        ],
+      },
+    ]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
+    const client = await connectTestClient();
+    const response = await client.callTool({
+      name: "sessions_read",
+      arguments: {
+        source: "codex",
+        sessionId: "session-1",
+        since: "1970-01-01T00:00:02Z",
+        until: "1970-01-01T00:00:02Z",
+      },
+    });
+    expect(response.isError).not.toBe(true);
+    expect(text(response.content)).toContain("selected");
+    expect(text(response.content)).not.toContain("first");
+    expect(text(response.content)).toContain('"since":"1970-01-01T00:00:02.000Z"');
   });
 
   it("reports supported source availability", async () => {

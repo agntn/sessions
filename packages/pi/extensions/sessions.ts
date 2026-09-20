@@ -110,9 +110,21 @@ const readParameters = Type.Object({
     Type.Integer({ description: "Zero-based message offset. Defaults to 0.", minimum: 0 }),
   ),
   position: Type.Optional(readPosition),
+  since: Type.Optional(
+    Type.String({
+      description:
+        "Inclusive message timestamp lower bound, ISO timestamp with timezone. Reuse when continuing.",
+    }),
+  ),
+  until: Type.Optional(
+    Type.String({
+      description:
+        "Inclusive message timestamp upper bound, ISO timestamp with timezone. Reuse when continuing.",
+    }),
+  ),
   limit: Type.Optional(
     Type.Integer({
-      description: `Maximum messages to inspect. Defaults to ${DEFAULT_MESSAGE_LIMIT}.`,
+      description: `Maximum matching messages to retain. Defaults to ${DEFAULT_MESSAGE_LIMIT}.`,
       minimum: 1,
       maximum: MAX_MESSAGE_LIMIT,
     }),

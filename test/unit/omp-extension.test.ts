@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { ToolResult } from "../../src/tool-operations.ts";
 import * as TypeBox from "@oh-my-pi/omptype/typebox";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import sessionsExtension from "../../packages/omp/extensions/sessions";
 
 const sessionsMock = vi.hoisted(() => ({
@@ -18,7 +22,7 @@ interface RegisteredTool {
   readonly execute: (
     toolCallId: string,
     params: Readonly<Record<string, unknown>>,
-  ) => Promise<unknown>;
+  ) => Promise<ToolResult<unknown>>;
 }
 
 function registerExtension() {
@@ -46,6 +50,11 @@ function requireTool(tools: Readonly<Map<string, RegisteredTool>>, name: string)
   return tool;
 }
 
+const directories: string[] = [];
+afterEach(() => {
+  for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true });
+});
+
 describe("OMP extension", () => {
   it("registers the three session readers with the host TypeBox facade", () => {
     const { label, objectSchema, tools } = registerExtension();
@@ -58,6 +67,40 @@ describe("OMP extension", () => {
     const listSchema = requireTool(tools, "sessions_list").parameters as TypeBox.TSchema;
     expect(listSchema.safeParse({ source: "codex", limit: 100 }).success).toBe(true);
     expect(listSchema.safeParse({ source: "codex", limit: 101 }).success).toBe(false);
+  });
+
+  it("reads a time interval through the registered tool", async () => {
+    const path = mkdtempSync(join(tmpdir(), "omp-time-"));
+    directories.push(path);
+    writeFileSync(
+      join(path, "session.jsonl"),
+      [
+        { type: "session", id: "interval" },
+        ...[1, 2].map((day) => ({
+          type: "message",
+          timestamp: `2026-01-0${day}T00:00:00Z`,
+          message: { role: "user", content: [{ type: "text", text: `day${day}` }] },
+        })),
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n"),
+    );
+    const tool = requireTool(registerExtension().tools, "sessions_read");
+    const params = {
+      source: "pi",
+      path,
+      sessionId: "interval",
+      since: "2026-01-02T00:00:00Z",
+      until: "2026-01-02T00:00:00Z",
+    };
+    expect((tool.parameters as TypeBox.TSchema).safeParse(params)).toMatchObject({
+      success: true,
+      data: params,
+    });
+    const result = await tool.execute("test", params);
+    expect(result.content[0]?.text).toContain("day2");
+    expect(result.details).toMatchObject({ returnedMessages: 1 });
+    expect(JSON.stringify(result)).not.toContain("day1");
   });
 
   it("delegates execution to the shared session operations", async () => {

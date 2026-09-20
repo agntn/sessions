@@ -273,6 +273,40 @@ describe("Pi extension", () => {
     expect(text).toBe("session-1\t1 messages\t1970-01-01T00:00:01.000Z");
   });
 
+  it("exposes message time bounds and returns filtered text and details", async () => {
+    sessionsMock.list.mockResolvedValue([session]);
+    sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
+    const runtime = loadExtension();
+    expect(runtime.getTool("sessions_read")).toMatchObject({
+      parameters: {
+        properties: {
+          since: { type: "string" },
+          until: { type: "string" },
+        },
+      },
+    });
+    const result = await tool(runtime, "sessions_read").execute(
+      "test",
+      {
+        source: "codex",
+        sessionId: "session-1",
+        since: "1970-01-01T00:00:02Z",
+        until: "1970-01-01T00:00:02Z",
+      },
+      undefined,
+      undefined,
+      {} as ExtensionContext,
+    );
+    expect(
+      result.content.map((item) => (item.type === "text" ? item.text : "")).join(""),
+    ).toContain("second");
+    expect(JSON.stringify(result.content)).not.toContain("first");
+    expect(result.details).toMatchObject({
+      returnedMessages: 1,
+      since: "1970-01-01T00:00:02.000Z",
+    });
+  });
+
   it("reads an exact bounded message window", async () => {
     sessionsMock.list.mockResolvedValue([session]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });

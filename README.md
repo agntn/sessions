@@ -126,6 +126,19 @@ Pi and OMP tool results retain the native `isError` boolean, including results w
 
 For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
 
+To read only messages from a period, pass `since` and/or `until` to `sessions_read` too. These bounds apply to message timestamps, not session activity, and include both endpoints. For example:
+
+```json
+{
+  "source": "pi",
+  "sessionId": "SESSION_ID",
+  "since": "2026-01-02T00:00:00Z",
+  "until": "2026-01-03T00:00:00Z"
+}
+```
+
+Reuse the same bounds with each returned `position`. `limit` caps matching messages (100 by default, up to 500); `offset` and continuation positions still refer to the original session, never a renumbered subset. Messages with invalid timestamps are excluded only when filtering. A period with no matches returns an empty window, not a missing-session error.
+
 These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session: Claude Code, Codex, Gemini CLI, and OpenClaw name them after it, while Pi and OMP settle each one from its header. OpenCode answers both from SQLite. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
 
 Unknown sources, unreadable overrides, and missing session IDs return tool errors over MCP. See the [tool schemas](./src/mcp.ts) for all limits. Session text can contain private data. Only connect clients you trust with it.

@@ -94,6 +94,20 @@ describe("tool session reader", () => {
     expect(source.readOptions).toBeUndefined();
   });
 
+  it("excludes invalid timestamps only for filtered reads", async () => {
+    const source = new FixtureSource();
+    source.messages.push(
+      message("wanted", "user", NaN, "invalid"),
+      message("wanted", "user", Infinity, "infinite"),
+      message("wanted", "user", 9e15, "outside Date"),
+      message("wanted", "user", 2, "valid"),
+    );
+    expect((await readSourceSession(source, "wanted", 0, 10)).messages).toHaveLength(4);
+    const filtered = await readSourceSession(source, "wanted", 0, 10, { since: 0 });
+    expect(filtered.indices).toEqual([3]);
+    expect(filtered.total).toBe(4);
+  });
+
   it("keeps only the requested message window while counting the exact session", async () => {
     const source = new FixtureSource();
     source.messages.push(
