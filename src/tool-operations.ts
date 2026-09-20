@@ -9,6 +9,7 @@
  * API remains the path that returns complete archives to library consumers.
  */
 
+import { createHash } from "node:crypto";
 import type { Message, SessionTimeRange } from "./core/types.ts";
 import { allSources } from "./index.ts";
 import type { SourceOptions } from "./index.ts";
@@ -81,6 +82,7 @@ export interface ListParams {
 }
 
 export interface ReadParams extends SourceParams {
+  knownToolResults?: string[];
   since?: string;
   until?: string;
   offset?: number;
@@ -109,6 +111,7 @@ interface ListParamsInput {
 }
 
 interface ReadParamsInput extends SourceParamsInput {
+  readonly knownToolResults?: readonly string[];
   readonly since?: string;
   readonly until?: string;
   readonly offset?: number;
@@ -119,6 +122,7 @@ interface ReadParamsInput extends SourceParamsInput {
 }
 
 interface RenderableBlock {
+  readonly renderedParts?: readonly string[];
   readonly type: string;
   readonly text?: string;
   readonly toolName?: string;
@@ -218,7 +222,10 @@ function blockParts(block: RenderableBlock): readonly string[] {
 }
 
 function blockLength(block: RenderableBlock): number {
-  return blockParts(block).reduce((length, part) => length + part.length, 0);
+  return (block.renderedParts ?? blockParts(block)).reduce(
+    (length, part) => length + part.length,
+    0,
+  );
 }
 
 function splitsSurrogatePair(text: string, offset: number): boolean {
@@ -249,7 +256,7 @@ class RenderBuffer {
     character: number,
   ): { readonly complete: boolean; readonly nextCharacter: number } {
     let partStart = 0;
-    for (const part of blockParts(block)) {
+    for (const part of block.renderedParts ?? blockParts(block)) {
       const partEnd = partStart + part.length;
       if (character >= partEnd) {
         partStart = partEnd;
@@ -339,6 +346,70 @@ interface RenderedMessageWindow {
   readonly text: string;
   readonly nextPosition?: ReadPosition;
   readonly outputTruncated: boolean;
+}
+
+function knownToolResults(value: readonly string[] | undefined): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new RangeError("knownToolResults must be an array of at most 100 digests");
+  }
+  return value.map((digest: unknown) => {
+    if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) {
+      throw new RangeError("knownToolResults must contain lowercase SHA-256 hex digests");
+    }
+    return digest;
+  });
+}
+
+function referenceBlock(
+  block: RenderableBlock,
+  position: Readonly<ReadPosition>,
+  params: ReadParamsInput,
+  known: readonly string[],
+): RenderableBlock {
+  if (block.type !== "tool_result" || block.text === undefined) return block;
+  const digest = createHash("sha256").update(block.text, "utf16le").digest("hex");
+  const omitted = known.includes(digest);
+  const kind = omitted ? "body_reference" : "body";
+  const metadata = `[${kind} sha256:${digest} length=${block.text.length} message=${position.message} block=${position.block}]`;
+  const request = JSON.stringify({
+    source: params.source.trim(),
+    path: params.path,
+    paths: params.paths,
+    sessionId: params.sessionId.trim(),
+    position,
+    limit: 1,
+  });
+  return {
+    ...block,
+    renderedParts: [
+      blockParts(block)[0] ?? "",
+      `\n${metadata}\n`,
+      ...(omitted ? [`[Read body with sessions_read ${request}]`] : [block.text]),
+    ],
+  };
+}
+
+function referenceWindow(
+  window: RenderableWindow,
+  params: ReadParamsInput,
+  known: readonly string[] | undefined,
+): RenderableWindow {
+  if (!known) return window;
+  return {
+    ...window,
+    messages: window.messages.map((message, index) => ({
+      ...message,
+      blocks: message.blocks.map((block, blockIndex) =>
+        referenceBlock(
+          block,
+          { message: window.indices[index]!, block: blockIndex, character: 0 },
+          params,
+          known,
+        ),
+      ),
+    })),
+  };
 }
 
 function renderMessageWindow(
@@ -756,6 +827,7 @@ export async function listSessions(params: ListParamsInput): Promise<ToolResult<
  * @returns {Promise<ToolResult<ReadDetails>>} Text and structured metadata for the requested message window.
  */
 export async function readSession(params: ReadParamsInput): Promise<ToolResult<ReadDetails>> {
+  const known = knownToolResults(params.knownToolResults);
   const range = sessionTimeRange({ since: params.since, until: params.until });
   const source = params.source.trim();
   const sessionId = params.sessionId.trim();
@@ -771,10 +843,20 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
   const window = await readSourceSession(nativeSource, sessionId, position.message, limit, range);
   if (!window.total) throw new Error(`Session not found: ${source}:${sessionId}`);
   const bounds = listedTimeBounds(range);
-  const header = range
+  const timeHeader = range
     ? `[Message time: ${JSON.stringify(bounds)} (inclusive). Reuse these bounds when continuing. Positions use original message indices.]\n`
     : "";
-  const output = messageWindow(window, position, limit, maxChars - header.length, !!range);
+  const referenceHeader = known
+    ? "[Tool bodies: SHA-256 of UTF-16LE text; length in UTF-16 units. Reuse the same knownToolResults when continuing. References indicate equal text, not independent evidence or trusted provenance.]\n"
+    : "";
+  const header = timeHeader + referenceHeader;
+  const output = messageWindow(
+    referenceWindow(window, params, known),
+    position,
+    limit,
+    maxChars - header.length,
+    !!range,
+  );
 
   return {
     content: [{ type: "text", text: header + output.text }],

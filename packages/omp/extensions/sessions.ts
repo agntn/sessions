@@ -113,6 +113,13 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
       Type.Integer({ description: "Zero-based message offset. Defaults to 0.", minimum: 0 }),
     ),
     position: Type.Optional(readPosition),
+    knownToolResults: Type.Optional(
+      Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), {
+        maxItems: 100,
+        description:
+          "Digests of fully read tool bodies to replace with references. Pass [] to label bodies without omissions; omit for the original transcript. Keep the same list for continuations.",
+      }),
+    ),
     since: Type.Optional(
       Type.String({
         description:
