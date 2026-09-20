@@ -122,6 +122,8 @@ Use `source` with `path`, or `paths` where supported, to override one harness's 
 
 Page session listings with `offset` and `limit` (up to 100). For a fixed period, pass `since` and/or `until` as ISO timestamps with a timezone. Both bounds are inclusive. Don't combine them with `lastHours`. Its response gives fixed bounds to reuse on later pages, so the time window doesn't move between calls. The archive itself isn't a snapshot.
 
+Pi and OMP tool results retain the native `isError` boolean, including results with no text. `sessions_read` prints it beside the tool call ID. An absent flag means unknown, not success.
+
 For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
 
 These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session: Claude Code, Codex, Gemini CLI, and OpenClaw name them after it, while Pi and OMP settle each one from its header. OpenCode answers both from SQLite. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.

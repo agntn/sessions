@@ -118,6 +118,7 @@ interface RenderableBlock {
   readonly toolName?: string;
   readonly toolInput?: string;
   readonly toolCallId?: string;
+  readonly isError?: boolean;
 }
 
 interface RenderableMessage {
@@ -189,6 +190,10 @@ function windowNotice(
   return `[Showing ${unit}s ${offset + 1}-${end} of ${total}. Use offset=${end} to continue.]`;
 }
 
+function toolResultStatus(block: RenderableBlock): string {
+  return block.isError === undefined ? "" : ` isError=${block.isError}`;
+}
+
 function blockParts(block: RenderableBlock): readonly string[] {
   const callId = block.toolCallId ? ` ${block.toolCallId}` : "";
   if (block.type === "tool_call") {
@@ -198,7 +203,7 @@ function blockParts(block: RenderableBlock): readonly string[] {
     ];
   }
   if (block.type === "tool_result") {
-    return [`[tool_result${callId}]`, block.text ? ` ${block.text}` : ""];
+    return [`[tool_result${callId}${toolResultStatus(block)}]`, block.text ? ` ${block.text}` : ""];
   }
 
   const label = block.type === "text" ? "" : `[${block.type}] `;

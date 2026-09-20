@@ -48,20 +48,22 @@ function parseBlocks(content: unknown): Block[] {
 }
 
 function toolResultBlocks(message: Readonly<Record<string, unknown>>): Block[] {
-  if (!Array.isArray(message.content)) return [];
-  const text = message.content
+  const isError = typeof message.isError === "boolean" ? message.isError : undefined;
+  const content = Array.isArray(message.content) ? message.content : [];
+  const text = content
     .flatMap((value) => {
       if (!isRecord(value) || value.type !== "text") return [];
       const content = scalarText(value.text);
       return content ? [content] : [];
     })
     .join("\n");
-  if (!text) return [];
+  if (!text && isError === undefined) return [];
   return [
     {
       type: "tool_result",
       toolCallId: scalarText(message.toolCallId) ?? "",
       text,
+      ...(isError === undefined ? {} : { isError }),
     },
   ];
 }
