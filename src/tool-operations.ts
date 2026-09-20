@@ -49,6 +49,8 @@ export interface ReadPosition {
 
 /** The rendered message window and how much of it survived the output budget. */
 export interface ReadDetails {
+  since?: string;
+  until?: string;
   source: string;
   sessionId: string;
   offset: number;
@@ -79,6 +81,8 @@ export interface ListParams {
 }
 
 export interface ReadParams extends SourceParams {
+  since?: string;
+  until?: string;
   offset?: number;
   limit?: number;
   sessionId: string;
@@ -105,6 +109,8 @@ interface ListParamsInput {
 }
 
 interface ReadParamsInput extends SourceParamsInput {
+  readonly since?: string;
+  readonly until?: string;
   readonly offset?: number;
   readonly limit?: number;
   readonly sessionId: string;
@@ -317,6 +323,13 @@ class RenderBuffer {
   }
 }
 
+interface RenderableWindow {
+  readonly total: number;
+  readonly messages: readonly RenderableMessage[];
+  readonly indices: readonly number[];
+  readonly nextMessage?: number;
+}
+
 interface RenderedMessageWindow {
   readonly text: string;
   readonly nextPosition?: ReadPosition;
@@ -324,28 +337,27 @@ interface RenderedMessageWindow {
 }
 
 function renderMessageWindow(
-  messages: readonly RenderableMessage[],
+  window: RenderableWindow,
   position: Readonly<ReadPosition>,
-  total: number,
   budget: number,
 ): RenderedMessageWindow {
   const buffer = new RenderBuffer(budget);
 
-  for (const [messageIndex, message] of messages.entries()) {
+  for (const [messageIndex, message] of window.messages.entries()) {
+    const index = window.indices[messageIndex];
+    if (index === undefined) throw new Error("Missing original message index");
     const current =
-      messageIndex === 0
-        ? position
-        : { message: position.message + messageIndex, block: 0, character: 0 };
+      index === position.message ? position : { message: index, block: 0, character: 0 };
     const nextPosition = buffer.renderMessage(message, current, messageIndex === 0 ? "" : "\n\n");
     if (nextPosition) {
       return { text: buffer.text(), nextPosition, outputTruncated: true };
     }
   }
 
-  const nextMessage = position.message + messages.length;
+  const nextMessage = window.nextMessage;
   return {
     text: buffer.text(),
-    ...(nextMessage < total
+    ...(nextMessage !== undefined
       ? { nextPosition: { message: nextMessage, block: 0, character: 0 } }
       : {}),
     outputTruncated: false,
@@ -407,11 +419,13 @@ function continuationNotice(
   startMessage: number,
   total: number,
   outputTruncated: boolean,
+  filtered: boolean,
 ): string {
   const argument = JSON.stringify(position);
   if (outputTruncated) {
     return `[output truncated]\n[Use position=${argument} to continue.]`;
   }
+  if (filtered) return `[Use position=${argument} to continue through matching messages.]`;
   return `[Showing messages ${startMessage + 1}-${position.message} of ${total}. Use position=${argument} to continue.]`;
 }
 
@@ -436,29 +450,45 @@ function assertProgress(
   }
 }
 
+function validateWindowPosition(window: RenderableWindow, position: Readonly<ReadPosition>): void {
+  if (position.message > window.total) {
+    throw new RangeError(`position.message must be between 0 and ${window.total}`);
+  }
+  if (position.block === 0 && position.character === 0) return;
+  if (window.indices[0] !== position.message) {
+    throw new RangeError("The continuation message is not in the selected time range");
+  }
+}
+
+function messageLimit(value?: number): number {
+  const limit = value ?? DEFAULT_MESSAGE_LIMIT;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_MESSAGE_LIMIT) {
+    throw new RangeError(`limit must be an integer between 1 and ${MAX_MESSAGE_LIMIT}`);
+  }
+  return limit;
+}
+
 function messageWindow(
-  messages: readonly RenderableMessage[],
+  window: RenderableWindow,
   position: Readonly<ReadPosition>,
   limit: number,
-  total: number,
   maxChars: number,
+  filtered: boolean,
 ): RenderedMessageWindow {
-  if (position.message > total) {
-    throw new RangeError(`position.message must be between 0 and ${total}`);
-  }
+  const { messages, total } = window;
+  validateWindowPosition(window, position);
   if (messages.length === 0) {
-    if (position.block !== 0 || position.character !== 0) {
-      throw new RangeError("position.block and position.character must be zero at the session end");
-    }
     return {
-      text: `No messages in range ${position.message}:${position.message + limit}. Session has ${total} messages.`,
+      text: filtered
+        ? `No messages match the time bounds at or after offset ${position.message}. Session has ${total} messages.`
+        : `No messages in range ${position.message}:${position.message + limit}. Session has ${total} messages.`,
       outputTruncated: false,
     };
   }
 
   let bodyBudget = maxChars;
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const output = renderMessageWindow(messages, position, total, bodyBudget);
+    const output = renderMessageWindow(window, position, bodyBudget);
     if (!output.nextPosition) return output;
     assertProgress(output, position);
     const notice = continuationNotice(
@@ -466,6 +496,7 @@ function messageWindow(
       position.message,
       total,
       output.outputTruncated,
+      filtered,
     );
     const text = `${output.text}\n\n${notice}`;
     if (text.length <= maxChars) return { ...output, text };
@@ -720,6 +751,7 @@ export async function listSessions(params: ListParamsInput): Promise<ToolResult<
  * @returns {Promise<ToolResult<ReadDetails>>} Text and structured metadata for the requested message window.
  */
 export async function readSession(params: ReadParamsInput): Promise<ToolResult<ReadDetails>> {
+  const range = sessionTimeRange({ since: params.since, until: params.until });
   const source = params.source.trim();
   const sessionId = params.sessionId.trim();
   if (!source) throw new Error("Source cannot be empty");
@@ -729,19 +761,24 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
   if (!nativeSource.available()) throw new Error(unavailable(source, params));
 
   const position = readPosition(params);
-  const { limit } = paging(params, DEFAULT_MESSAGE_LIMIT);
+  const limit = messageLimit(params.limit);
   const maxChars = readMaxChars(params.maxChars);
-  const window = await readSourceSession(nativeSource, sessionId, position.message, limit);
+  const window = await readSourceSession(nativeSource, sessionId, position.message, limit, range);
   if (!window.total) throw new Error(`Session not found: ${source}:${sessionId}`);
-  const output = messageWindow(window.messages, position, limit, window.total, maxChars);
+  const bounds = listedTimeBounds(range);
+  const header = range
+    ? `[Message time: ${JSON.stringify(bounds)} (inclusive). Reuse these bounds when continuing. Positions use original message indices.]\n`
+    : "";
+  const output = messageWindow(window, position, limit, maxChars - header.length, !!range);
 
   return {
-    content: [{ type: "text", text: output.text }],
+    content: [{ type: "text", text: header + output.text }],
     details: {
       source,
       sessionId,
       offset: position.message,
       limit,
+      ...bounds,
       totalMessages: window.total,
       returnedMessages: window.messages.length,
       outputTruncated: output.outputTruncated,

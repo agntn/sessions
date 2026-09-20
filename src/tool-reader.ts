@@ -11,10 +11,17 @@ export interface ToolSessionSummary {
   readonly snippet?: string;
 }
 
-function inTimeRange(summary: Readonly<ToolSessionSummary>, range?: SessionTimeRange): boolean {
+function inTimeRange(timestamp: number, range?: SessionTimeRange): boolean {
+  if (!range) return true;
   return (
-    (!range || range.since === undefined || summary.updatedAt >= range.since) &&
-    (!range || range.until === undefined || summary.updatedAt <= range.until)
+    (range.since === undefined || timestamp >= range.since) &&
+    (range.until === undefined || timestamp <= range.until)
+  );
+}
+
+function messageInTimeRange(timestamp: number, range?: SessionTimeRange): boolean {
+  return (
+    !range || (Number.isFinite(new Date(timestamp).getTime()) && inTimeRange(timestamp, range))
   );
 }
 
@@ -28,6 +35,8 @@ export interface ToolSummaryWindow {
 export interface ToolMessageWindow {
   readonly total: number;
   readonly messages: readonly Message[];
+  readonly indices: readonly number[];
+  readonly nextMessage?: number;
 }
 
 interface SnippetMessage {
@@ -121,7 +130,7 @@ export async function listSourceSessions(
 
   const sessions = [...summaries.values()]
     .map(finishSummary)
-    .filter((summary) => inTimeRange(summary, range))
+    .filter((summary) => inTimeRange(summary.updatedAt, range))
     .sort(
       (left, right) =>
         right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
@@ -135,7 +144,8 @@ export async function listSourceSessions(
  * @param source - Native harness source.
  * @param sessionId - Exact native session identifier.
  * @param offset - Message offset, starting at zero.
- * @param limit - Maximum messages to retain.
+ * @param limit - Maximum matching messages to retain.
+ * @param range - Optional inclusive message timestamp bounds.
  * @returns {Promise<ToolMessageWindow>} Bounded messages and the total message count.
  */
 export async function readSourceSession(
@@ -143,13 +153,23 @@ export async function readSourceSession(
   sessionId: string,
   offset: number,
   limit: number,
+  range?: SessionTimeRange,
 ): Promise<ToolMessageWindow> {
   const messages: Message[] = [];
+  const indices: number[] = [];
+  let nextMessage: number | undefined;
   let total = 0;
   for await (const message of source.read({ sessionId })) {
     if (message.sessionId !== sessionId) continue;
-    if (total >= offset && total < offset + limit) messages.push(message);
-    total += 1;
+    const index = total++;
+    if (index < offset || nextMessage !== undefined) continue;
+    if (!messageInTimeRange(message.timestamp, range)) continue;
+    if (messages.length < limit) {
+      messages.push(message);
+      indices.push(index);
+    } else {
+      nextMessage = index;
+    }
   }
-  return { total, messages };
+  return { total, messages, indices, nextMessage };
 }
