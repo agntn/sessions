@@ -57,7 +57,7 @@ if (source.available()) {
 
 `createSource()` accepts the same location overrides as `create()`. Continue a message read with `window.nextMessage` as the offset when it's defined.
 
-Both functions take a zero-based `offset`, a positive integer `limit`, and optional `{ since, until }` bounds in epoch milliseconds. Summary bounds filter last activity; message bounds filter individual timestamps. Both endpoints are inclusive. Summary `total` counts matching sessions. Message `total` counts the entire selected session, while `indices` and `nextMessage` retain its original positions, even across filtered gaps. Reuse the same bounds when continuing.
+Both functions take a zero-based `offset`, a positive integer `limit`, and optional `{ since, until }` bounds in epoch milliseconds. Summary bounds filter last activity; message bounds filter individual timestamps, excluding known file or session fallbacks. Both endpoints are inclusive. Summary `total` counts matching sessions. Message `total` counts the entire selected session, while `indices` and `nextMessage` retain its original positions, even across filtered gaps. Reuse the same bounds when continuing.
 
 Messages arrive in native read order, with complete blocks and no character truncation. The limit counts messages, not bytes: one large message can still be large. An empty time window keeps the session's total; a missing exact ID returns zero. These functions share the agent tools' projections and [scan limitations](#keep-reading-without-starting-over), not an index or snapshot. See the [window types](./src/tool-reader.ts) for the result shapes.
 
@@ -156,7 +156,9 @@ To read only messages from a period, pass `since` and/or `until` to `sessions_re
 }
 ```
 
-Reuse the same bounds with each returned `position`. `limit` caps matching messages (100 by default, up to 500); `offset` and continuation positions still refer to the original session, never a renumbered subset. Messages with invalid timestamps are excluded only when filtering. A period with no matches returns an empty window, not a missing-session error.
+Reuse the same bounds with each returned `position`. `limit` caps matching messages (100 by default, up to 500); `offset` and continuation positions still refer to the original session, never a renumbered subset. Messages with invalid or inferred timestamps are excluded only when filtering. Without bounds, their content stays readable and fallback times are labeled `inferred from file` or `inferred from session`. A period with no matches returns an empty window, not a missing-session error.
+
+File adapters expose `Message.timestampSource` as `message`, `session`, or `file`. Legacy Codex JSON uses session time plus item order, not individual message times. Other sources can leave provenance absent; filters then check the timestamp itself. Session activity listings still use fallback times.
 
 These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session: Claude Code, Codex, Gemini CLI, and OpenClaw name them after it, while Pi and OMP settle each one from its header. OpenCode answers both from SQLite. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
 

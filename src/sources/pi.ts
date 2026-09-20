@@ -140,6 +140,7 @@ export class PiSource implements Source {
       sessionId,
       role,
       timestamp,
+      timestampSource: Number.isFinite(nativeTimestamp) ? "message" : "file",
       date: new Date(timestamp).toISOString().split("T")[0],
       blocks,
       channel: { platform: "cli", name: this.name },

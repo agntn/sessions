@@ -33,6 +33,8 @@ export interface Message {
   sessionId: string;
   role: "user" | "assistant" | "tool";
   timestamp: number;
+  /** Native message time or its fallback origin; absent when provenance is not reported. */
+  timestampSource?: "message" | "session" | "file";
   date: string;
   blocks: Block[];
   context?: Record<string, string>;

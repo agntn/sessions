@@ -50,9 +50,14 @@ function inTimeRange(timestamp: number, range?: SessionTimeRange): boolean {
   );
 }
 
-function messageInTimeRange(timestamp: number, range?: SessionTimeRange): boolean {
+function messageInTimeRange(
+  message: Readonly<Pick<Message, "timestamp" | "timestampSource">>,
+  range?: SessionTimeRange,
+): boolean {
+  if (range?.since === undefined && range?.until === undefined) return true;
+  if (message.timestampSource === "file" || message.timestampSource === "session") return false;
   return (
-    !range || (Number.isFinite(new Date(timestamp).getTime()) && inTimeRange(timestamp, range))
+    Number.isFinite(new Date(message.timestamp).getTime()) && inTimeRange(message.timestamp, range)
   );
 }
 
@@ -196,7 +201,7 @@ export async function readSourceSession(
     if (message.sessionId !== sessionId) continue;
     const index = total++;
     if (index < offset || nextMessage !== undefined) continue;
-    if (!messageInTimeRange(message.timestamp, range)) continue;
+    if (!messageInTimeRange(message, range)) continue;
     if (messages.length < limit) {
       messages.push(message);
       indices.push(index);
