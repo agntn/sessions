@@ -48,7 +48,7 @@ export function create(name: string, options?: SourceOptionsInput): SessionReade
 }
 
 /**
- * Creates the native parser used by bounded internal read paths.
+ * Creates a native parser for streaming or bounded library reads.
  *
  * @param name - Registered harness source name.
  * @param options - Optional native data location overrides.

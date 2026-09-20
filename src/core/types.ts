@@ -55,7 +55,7 @@ export interface SourceSessionSummary {
   readonly snippetText?: string;
 }
 
-/** Inclusive bounds on a session's last activity, in epoch milliseconds. */
+/** Inclusive epoch millisecond bounds for session activity or message timestamps. */
 export interface SessionTimeRange {
   readonly since?: number;
   readonly until?: number;
@@ -67,7 +67,7 @@ export interface SourceSummaryWindow {
   readonly sessions: readonly SourceSessionSummary[];
 }
 
-/** Internal parser contract implemented by each harness adapter. */
+/** Native parser contract used by streaming and bounded reads. */
 export interface Source {
   readonly name: string;
   available(): boolean;
