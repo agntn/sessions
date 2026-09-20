@@ -145,6 +145,10 @@ Pi and OMP tool results retain the native `isError` boolean, including results w
 
 For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
 
+To avoid rereading known tool bodies, pass `knownToolResults: []`. This labels each tool-result body with its digest and original length, without omitting anything. After reading a complete body, put its 64-character lowercase digest in `knownToolResults` on a new read. Up to 100 digests are accepted. Matching bodies become explicit references with their original message/block position and a complete ordinary `sessions_read` request to recover the text. Timestamps, call IDs, and error flags remain visible.
+
+Digests use SHA-256 over the normalized text encoded as UTF-16LE. Lengths count UTF-16 code units, like `position.character`. Keep the same list while following a continuation, including an empty list: character positions address that rendered view. Start a new read at a message boundary when changing the list. A digest label doesn't mean the whole body fit on the page. The caller owns the list, and nothing is remembered between calls. Equal text isn't independent evidence or trusted provenance. Omit the option for the original full transcript. Library message records stay unchanged.
+
 To read only messages from a period, pass `since` and/or `until` to `sessions_read` too. These bounds apply to message timestamps, not session activity, and include both endpoints. For example:
 
 ```json
