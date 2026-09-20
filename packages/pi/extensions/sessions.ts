@@ -48,6 +48,36 @@ const sourceOptions = {
 const sourcesParameters = Type.Object({});
 const listParameters = Type.Object({
   ...sourceOptions,
+  source: Type.Optional(
+    Type.String({
+      description: "One harness. Omit source and sources for all available harnesses.",
+      minLength: 1,
+    }),
+  ),
+  sources: Type.Optional(
+    Type.Array(Type.String({ minLength: 1 }), {
+      description: "Selected harness names. Cannot be combined with source or path overrides.",
+      minItems: 1,
+      maxItems: 9,
+    }),
+  ),
+  since: Type.Optional(
+    Type.String({
+      description: "Inclusive last activity lower bound, ISO timestamp with timezone.",
+    }),
+  ),
+  until: Type.Optional(
+    Type.String({
+      description: "Inclusive last activity upper bound, ISO timestamp with timezone.",
+    }),
+  ),
+  lastHours: Type.Optional(
+    Type.Number({
+      description:
+        "Last activity within this many hours before now, for example 24. Cannot be combined with since/until.",
+      exclusiveMinimum: 0,
+    }),
+  ),
   offset: Type.Optional(
     Type.Integer({ description: "Zero-based session offset. Defaults to 0.", minimum: 0 }),
   ),
@@ -97,7 +127,11 @@ const readParameters = Type.Object({
 });
 
 interface ListParams {
-  readonly source: string;
+  readonly source?: string;
+  readonly sources?: readonly string[];
+  readonly since?: string;
+  readonly until?: string;
+  readonly lastHours?: number;
   readonly path?: string;
   readonly paths?: readonly string[];
   readonly offset?: number;
@@ -105,6 +139,7 @@ interface ListParams {
 }
 
 interface ReadParams extends ListParams {
+  readonly source: string;
   readonly sessionId: string;
   readonly maxChars?: number;
   readonly position?: SessionsTools.ReadPosition;
@@ -118,7 +153,7 @@ export default function sessionsExtension(pi: ExtensionAPI) {
     promptSnippet:
       "List supported session sources and whether their native data is available locally.",
     promptGuidelines: [
-      "Use before sessions_list when the source name or local availability is unknown.",
+      "Use to inspect availability. sessions_list can discover available sources itself.",
       "This tool reads local source availability only and does not persist or index sessions.",
     ],
     parameters: sourcesParameters,
@@ -135,18 +170,23 @@ export default function sessionsExtension(pi: ExtensionAPI) {
     name: "sessions_list",
     label: "List Sessions",
     description:
-      "Discover normalized native AI coding sessions for one harness. Each row carries bounded metadata and a snippet of the session's first text, preferring what the user typed. Newest first.",
-    promptSnippet: "List recent normalized coding sessions from a native harness source.",
+      "Discover sessions across selected or all available harnesses. Filter last activity with lastHours or since/until. Each row carries bounded metadata and a snippet of the session's first text, preferring what the user typed. Newest first.",
+    promptSnippet:
+      "List recent coding sessions across harnesses in one call, optionally within a time window.",
     promptGuidelines: [
-      "Choose one supported source; use sessions_sources if uncertain.",
-      "Use path or paths only to override the harness's native default location.",
-      "Sessions come newest first; page older ones with offset.",
+      "Omit source and sources to discover all available harnesses, or choose sources explicitly.",
+      "Use path or paths only with a single source. Use lastHours: 24 for the past day.",
+      "Sessions come newest first; page with offset and reuse returned since/until instead of lastHours.",
       "Triage on the snippet column before reading full message bodies.",
       "Use sessions_read with an exact returned session id to inspect messages.",
     ],
     parameters: listParameters,
     renderCall(args, theme) {
-      return new Text(theme.fg("toolTitle", `sessions_list ${args.source}`), 0, 0);
+      return new Text(
+        theme.fg("toolTitle", `sessions_list ${args.source ?? args.sources?.join(", ") ?? "all"}`),
+        0,
+        0,
+      );
     },
     async execute(
       _toolCallId,

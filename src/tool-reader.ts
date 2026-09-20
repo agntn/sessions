@@ -1,4 +1,4 @@
-import type { Message, Source, SourceSessionSummary } from "./core/types.ts";
+import type { Message, Source, SourceSessionSummary, SessionTimeRange } from "./core/types.ts";
 import { snippetLine } from "./tool-snippet.ts";
 
 /** Session metadata retained by the bounded agent tool read path. */
@@ -9,6 +9,13 @@ export interface ToolSessionSummary {
   readonly updatedAt: number;
   readonly messageCount: number;
   readonly snippet?: string;
+}
+
+function inTimeRange(summary: Readonly<ToolSessionSummary>, range?: SessionTimeRange): boolean {
+  return (
+    (!range || range.since === undefined || summary.updatedAt >= range.since) &&
+    (!range || range.until === undefined || summary.updatedAt <= range.until)
+  );
 }
 
 /** One bounded summary page and the complete source session count. */
@@ -75,15 +82,17 @@ function projectedSummary(summary: Readonly<SourceSessionSummary>): ToolSessionS
  * @param source - Native harness source.
  * @param offset - Session offset, starting at zero.
  * @param limit - Maximum summaries to return.
+ * @param range - Optional inclusive last activity bounds.
  * @returns {Promise<ToolSummaryWindow>} Bounded summaries and the total session count.
  */
 export async function listSourceSessions(
   source: Readonly<Source>,
   offset: number,
   limit: number,
+  range?: SessionTimeRange,
 ): Promise<ToolSummaryWindow> {
   if (source.summaryWindow) {
-    const projected = await source.summaryWindow(offset, limit);
+    const projected = await source.summaryWindow(offset, limit, range);
     return { total: projected.total, sessions: projected.sessions.map(projectedSummary) };
   }
 
@@ -112,6 +121,7 @@ export async function listSourceSessions(
 
   const sessions = [...summaries.values()]
     .map(finishSummary)
+    .filter((summary) => inTimeRange(summary, range))
     .sort(
       (left, right) =>
         right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),

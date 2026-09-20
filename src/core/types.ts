@@ -53,6 +53,12 @@ export interface SourceSessionSummary {
   readonly snippetText?: string;
 }
 
+/** Inclusive bounds on a session's last activity, in epoch milliseconds. */
+export interface SessionTimeRange {
+  readonly since?: number;
+  readonly until?: number;
+}
+
 /** A bounded native summary page plus the complete session count. */
 export interface SourceSummaryWindow {
   readonly total: number;
@@ -64,5 +70,9 @@ export interface Source {
   readonly name: string;
   available(): boolean;
   read(options?: SourceReadOptions): AsyncGenerator<Message>;
-  summaryWindow?(offset: number, limit: number): Promise<SourceSummaryWindow>;
+  summaryWindow?(
+    offset: number,
+    limit: number,
+    range?: SessionTimeRange,
+  ): Promise<SourceSummaryWindow>;
 }

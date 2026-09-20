@@ -147,6 +147,7 @@ describe("Pi extension", () => {
     expect(sessionsMock.create).toHaveBeenCalledWith("codex", { path: "/tmp/codex" });
     expect(result.details).toEqual({
       source: "codex",
+      sources: ["codex"],
       offset: 0,
       total: 2,
       sessions: [

@@ -82,7 +82,8 @@ describe("sessions MCP server", () => {
       "sessions_list",
       "sessions_read",
     ]);
-    expect(response.tools[1]?.inputSchema).toMatchObject({ type: "object", required: ["source"] });
+    expect(response.tools[1]?.inputSchema.required ?? []).not.toContain("source");
+    expect(response.tools[1]?.inputSchema.properties).toHaveProperty("lastHours");
     expect(response.tools[2]?.inputSchema).toMatchObject({
       properties: {
         maxChars: { minimum: 1_000, maximum: 100_000 },

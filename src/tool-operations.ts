@@ -9,6 +9,7 @@
  * API remains the path that returns complete archives to library consumers.
  */
 
+import type { SessionTimeRange } from "./core/types.ts";
 import { allSources } from "./index.ts";
 import type { SourceOptions } from "./index.ts";
 import { createSource } from "./sources/index.ts";
@@ -31,6 +32,9 @@ export interface SourcesDetails {
 /** The listed session window and the size of the archive it came from. */
 export interface ListDetails {
   source: string;
+  sources: string[];
+  since?: string;
+  until?: string;
   offset: number;
   total: number;
   sessions: SessionSummary[];
@@ -62,12 +66,21 @@ export interface SourceParams {
   paths?: string[];
 }
 
-export interface ListParams extends SourceParams {
+export interface ListParams {
+  source?: string;
+  sources?: string[];
+  path?: string;
+  paths?: string[];
+  since?: string;
+  until?: string;
+  lastHours?: number;
   offset?: number;
   limit?: number;
 }
 
-export interface ReadParams extends ListParams {
+export interface ReadParams extends SourceParams {
+  offset?: number;
+  limit?: number;
   sessionId: string;
   maxChars?: number;
   position?: ReadPosition;
@@ -79,12 +92,21 @@ interface SourceParamsInput {
   readonly paths?: readonly string[];
 }
 
-interface ListParamsInput extends SourceParamsInput {
+interface ListParamsInput {
+  readonly source?: string;
+  readonly sources?: readonly string[];
+  readonly path?: string;
+  readonly paths?: readonly string[];
+  readonly since?: string;
+  readonly until?: string;
+  readonly lastHours?: number;
   readonly offset?: number;
   readonly limit?: number;
 }
 
-interface ReadParamsInput extends ListParamsInput {
+interface ReadParamsInput extends SourceParamsInput {
+  readonly offset?: number;
+  readonly limit?: number;
   readonly sessionId: string;
   readonly maxChars?: number;
   readonly position?: Readonly<ReadPosition>;
@@ -495,35 +517,194 @@ export function listSessionSources(): ToolResult<SourcesDetails> {
   };
 }
 
+function timeBound(value: string | undefined, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.exec(
+    value,
+  );
+  const timestamp = Date.parse(value);
+  const local = match ? new Date(`${match[1]}T${match[2]}${match[3] ?? ""}Z`) : undefined;
+  if (
+    !match ||
+    !Number.isFinite(timestamp) ||
+    !local ||
+    !Number.isFinite(local.getTime()) ||
+    local.toISOString().slice(0, 19) !== `${match[1]}T${match[2]}`
+  ) {
+    throw new RangeError(`${name} must be an ISO timestamp with a timezone and a valid date`);
+  }
+  return timestamp;
+}
+
+function relativeTimeRange(hours: number): SessionTimeRange {
+  if (!Number.isFinite(hours) || hours <= 0) {
+    throw new RangeError("lastHours must be a positive finite number");
+  }
+  const until = Date.now();
+  const since = new Date(until - hours * 3_600_000).getTime();
+  if (!Number.isFinite(since)) throw new RangeError("lastHours is too large");
+  return { since, until };
+}
+
+function sessionTimeRange(params: ListParamsInput): SessionTimeRange | undefined {
+  if (params.lastHours !== undefined) {
+    if (params.since !== undefined || params.until !== undefined) {
+      throw new RangeError("Use lastHours or since/until, not both");
+    }
+    return relativeTimeRange(params.lastHours);
+  }
+  const since = timeBound(params.since, "since");
+  const until = timeBound(params.until, "until");
+  if (since !== undefined && until !== undefined && since > until) {
+    throw new RangeError("since must not be after until");
+  }
+  return since === undefined && until === undefined ? undefined : { since, until };
+}
+
+function selectedSources(params: ListParamsInput): string[] {
+  if (params.source !== undefined && params.sources !== undefined) {
+    throw new RangeError("Use source or sources, not both");
+  }
+  if ((params.path !== undefined || params.paths !== undefined) && params.source === undefined) {
+    throw new RangeError("Path overrides require a single source");
+  }
+  const names = params.source !== undefined ? [params.source] : params.sources;
+  if (names === undefined) {
+    return allSources()
+      .filter((source) => source.available())
+      .map((source) => source.name);
+  }
+  return uniqueSources(names);
+}
+
+function uniqueSources(names: readonly string[]): string[] {
+  if (names.length === 0 || names.length > 9 || names.some((name) => !name.trim())) {
+    throw new RangeError("Choose between 1 and 9 non-empty source names");
+  }
+  return [...new Set(names.map((name) => name.trim()))];
+}
+
+function compareSessions(left: Readonly<SessionSummary>, right: Readonly<SessionSummary>): number {
+  return (
+    right.updatedAt - left.updatedAt ||
+    left.source.localeCompare(right.source) ||
+    (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
+  );
+}
+
+function listPaging(params: PagingInput): { offset: number; limit: number } {
+  const { offset, limit } = paging(params, DEFAULT_SESSION_LIMIT);
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    !Number.isSafeInteger(offset + limit) ||
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > MAX_SESSION_LIMIT
+  ) {
+    throw new RangeError(
+      `Use a non-negative safe offset and a limit between 1 and ${MAX_SESSION_LIMIT}`,
+    );
+  }
+  return { offset, limit };
+}
+
+async function collectSessions(
+  params: ListParamsInput,
+  names: readonly string[],
+  range: SessionTimeRange | undefined,
+  offset: number,
+  limit: number,
+): Promise<{ sessions: SessionSummary[]; total: number }> {
+  const readers = names.map((source) => {
+    const input = { ...params, source };
+    const reader = createSource(source, optionsFrom(input));
+    if (!reader.available()) throw new Error(unavailable(source, input));
+    return reader;
+  });
+  const nativeOffset = names.length === 1 ? offset : 0;
+  const nativeLimit = names.length === 1 ? limit : offset + limit;
+  let sessions: SessionSummary[] = [];
+  let total = 0;
+  for (const reader of readers) {
+    const window = await listSourceSessions(reader, nativeOffset, nativeLimit, range).catch(
+      (cause: unknown) => {
+        throw new Error(`Unable to list ${reader.name} sessions`, { cause });
+      },
+    );
+    total += window.total;
+    sessions = [...sessions, ...window.sessions].sort(compareSessions).slice(0, nativeLimit);
+  }
+  if (names.length !== 1) sessions = sessions.slice(offset);
+  return { sessions, total };
+}
+
+function listHeader(
+  details: Readonly<Omit<ListDetails, "sources" | "sessions">> & {
+    readonly sources: readonly string[];
+  },
+): string {
+  let header = `Sources: ${details.sources.join(", ") || "none available"}.`;
+  if (details.since || details.until) {
+    const bounds = [
+      details.since && `since=${details.since}`,
+      details.until && `until=${details.until}`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    header += ` Last activity: ${bounds} (inclusive). Reuse these bounds instead of lastHours when paging.`;
+  }
+  return header;
+}
+
+function listText(
+  details: Readonly<Omit<ListDetails, "sources" | "sessions">> & {
+    readonly sources: readonly string[];
+    readonly sessions: readonly SessionSummary[];
+  },
+  includeSource: boolean,
+): string {
+  const { sessions, offset, source, total } = details;
+  const listed = sessions
+    .map((session) => `${includeSource ? `${session.source}\t` : ""}${formatSummary(session)}`)
+    .join("\n");
+  const notice = sessions.length ? windowNotice("session", offset, sessions.length, total) : "";
+  const header = includeSource || details.since || details.until ? `${listHeader(details)}\n` : "";
+  return `${header}${sessionWindowText(listed, notice, sessions.length, offset, source, total)}`;
+}
+
+function listedTimeBounds(range?: SessionTimeRange): { since?: string; until?: string } {
+  return {
+    since: range?.since === undefined ? undefined : new Date(range.since).toISOString(),
+    until: range?.until === undefined ? undefined : new Date(range.until).toISOString(),
+  };
+}
+
 /**
- * Lists bounded session metadata for one harness, newest first.
- *
- * @param params - Source, location, and paging options.
- * @returns {Promise<ToolResult<ListDetails>>} Text and structured metadata for the requested window.
+ * Lists one globally ordered page, optionally limited by last activity.
+ * @param params - Harness selection, time bounds, and paging options.
+ * @returns {Promise<ToolResult<ListDetails>>} Session summaries with their source and time bounds.
  */
 export async function listSessions(params: ListParamsInput): Promise<ToolResult<ListDetails>> {
-  const source = params.source.trim();
-  if (!source) throw new Error("Source cannot be empty");
-
-  const nativeSource = createSource(source, optionsFrom({ ...params, source }));
-  const { offset, limit } = paging(params, DEFAULT_SESSION_LIMIT);
-  if (!nativeSource.available()) throw new Error(unavailable(source, params));
-  const window = await listSourceSessions(nativeSource, offset, limit);
-  if (!window.total && overrideLabel(params)) throw new Error(unavailable(source, params));
-  const sessions = [...window.sessions];
-  const listed = sessions.map(formatSummary).join("\n");
-  const notice = sessions.length
-    ? windowNotice("session", offset, sessions.length, window.total)
-    : "";
-
+  const range = sessionTimeRange(params);
+  const names = selectedSources(params);
+  const { offset, limit } = listPaging(params);
+  const { sessions, total } = await collectSessions(params, names, range, offset, limit);
+  const source = params.source?.trim() ?? "all";
+  if (!total && !range && params.source && overrideLabel({ ...params, source })) {
+    throw new Error(unavailable(source, { ...params, source }));
+  }
+  const details: ListDetails = {
+    source,
+    sources: names,
+    offset,
+    total,
+    sessions,
+    ...listedTimeBounds(range),
+  };
   return {
-    content: [
-      {
-        type: "text",
-        text: sessionWindowText(listed, notice, sessions.length, offset, source, window.total),
-      },
-    ],
-    details: { source, offset, total: window.total, sessions },
+    content: [{ type: "text", text: listText(details, params.source === undefined) }],
+    details,
   };
 }
 

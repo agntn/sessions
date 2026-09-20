@@ -82,7 +82,13 @@ Same three read-only tools in MCP, [Pi](https://pi.dev), and [OMP](https://omp.s
 | `sessions_list`    | A page of session IDs, message counts, last activity, and opening snippets, newest first |
 | `sessions_read`    | A bounded message window from one exact session ID                                       |
 
-Start with `sessions_sources`, pick a source, then list its sessions. Snippets prefer the user's first text. Read the interesting conversation, not the whole haystack.
+Want the past day across every available harness? Call `sessions_list` once:
+
+```json
+{ "lastHours": 24 }
+```
+
+Pick a few with `"sources": ["codex", "pi"]`, or keep using `"source": "claude"` for one. The time filter uses each session's last activity, not its creation date. Snippets prefer the user's first text. Read the interesting conversation, not the whole haystack.
 
 ### MCP
 
@@ -112,7 +118,11 @@ The extensions and MCP use the [same executors](./src/tool-operations.ts). Exten
 
 ### Keep reading, without starting over
 
-Both reading tools accept `path`, or `paths` where supported. Page session listings with `offset`. For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
+Use `source` with `path`, or `paths` where supported, to override one harness's location. Listings across harnesses use native locations and label each row with its source. Explicitly selected unavailable sources return an error. With no selection, only available sources are read.
+
+Page session listings with `offset` and `limit` (up to 100). For a fixed period, pass `since` and/or `until` as ISO timestamps with a timezone. Both bounds are inclusive. Don't combine them with `lastHours`. Its response gives fixed bounds to reuse on later pages, so the time window doesn't move between calls. The archive itself isn't a snapshot.
+
+For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
 
 These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session: Claude Code, Codex, Gemini CLI, and OpenClaw name them after it, while Pi and OMP settle each one from its header. OpenCode answers both from SQLite. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
 

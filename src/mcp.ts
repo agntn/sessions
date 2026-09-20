@@ -70,7 +70,7 @@ const tools: ToolDefinition[] = [
     name: "sessions_sources",
     title: "Session Sources",
     description:
-      "List every supported AI coding harness and whether its native session data is readable on this machine. Use this before the other tools instead of guessing a source name.",
+      "List every supported AI coding harness and whether its native session data is readable on this machine. Use this to inspect availability; sessions_list can discover all available harnesses itself.",
     inputSchema: Type.Object({}),
     execute: () => listSessionSources(),
   },
@@ -78,9 +78,39 @@ const tools: ToolDefinition[] = [
     name: "sessions_list",
     title: "List Sessions",
     description:
-      "Discover normalized sessions for one harness, newest first. Each row carries the session id, message count, last activity, and a snippet of the session's first text, preferring what the user typed. Triage on the snippet before paying for sessions_read. Page older sessions with offset.",
+      "Discover sessions across selected or all available harnesses, newest first. Filter last activity with lastHours or since/until. Rows across harnesses include source names. Each row carries the session id, message count, last activity, and a snippet of the session's first text, preferring what the user typed. Triage on the snippet before paying for sessions_read. Page older sessions with offset.",
     inputSchema: Type.Object({
       ...sourceArguments,
+      source: Type.Optional(
+        Type.String({
+          description: "One harness. Omit source and sources for all available harnesses.",
+          minLength: 1,
+        }),
+      ),
+      sources: Type.Optional(
+        Type.Array(Type.String({ minLength: 1 }), {
+          description: "Selected harness names. Cannot be combined with source or path overrides.",
+          minItems: 1,
+          maxItems: 9,
+        }),
+      ),
+      since: Type.Optional(
+        Type.String({
+          description: "Inclusive last activity lower bound, ISO timestamp with timezone.",
+        }),
+      ),
+      until: Type.Optional(
+        Type.String({
+          description: "Inclusive last activity upper bound, ISO timestamp with timezone.",
+        }),
+      ),
+      lastHours: Type.Optional(
+        Type.Number({
+          description:
+            "Last activity within this many hours before now, for example 24. Cannot be combined with since/until.",
+          exclusiveMinimum: 0,
+        }),
+      ),
       offset: Type.Optional(
         Type.Integer({ description: "Zero-based session offset. Defaults to 0.", minimum: 0 }),
       ),
