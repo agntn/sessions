@@ -7,6 +7,8 @@ export interface Block {
   toolName?: string;
   toolInput?: string;
   toolCallId?: string;
+  /** Native tool result status; absent when the outcome is unknown. */
+  isError?: boolean;
 }
 
 /** Origin metadata retained when a harness exposes channels. */

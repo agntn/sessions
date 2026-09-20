@@ -54,6 +54,49 @@ describe("PiSource", () => {
     ]);
   });
 
+  it.each([
+    {
+      status: { isError: true },
+      content: [{ type: "text", text: "same payload" }],
+      expected: { text: "same payload", isError: true },
+    },
+    {
+      status: { isError: false },
+      content: [{ type: "text", text: "same payload" }],
+      expected: { text: "same payload", isError: false },
+    },
+    {
+      status: {},
+      content: [{ type: "text", text: "same payload" }],
+      expected: { text: "same payload" },
+    },
+    {
+      status: { isError: "false" },
+      content: [{ type: "text", text: "same payload" }],
+      expected: { text: "same payload" },
+    },
+    { status: { isError: true }, content: [], expected: { text: "", isError: true } },
+    { status: { isError: false }, content: [], expected: { text: "", isError: false } },
+    { status: { isError: true }, content: undefined, expected: { text: "", isError: true } },
+  ])("preserves native tool status: $status, $content", async ({ status, content, expected }) => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
+    writeFileSync(
+      join(directory, "session.jsonl"),
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-09-20T10:00:00.000Z",
+        message: { role: "toolResult", toolCallId: "call-1", content, ...status },
+      }),
+    );
+
+    const messages: Message[] = [];
+    for await (const message of new PiSource(directory).read()) messages.push(message);
+
+    expect(messages.map((message) => message.blocks)).toEqual([
+      [{ type: "tool_result", toolCallId: "call-1", ...expected }],
+    ]);
+  });
+
   it("settles a session filter from the header rather than the file name", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
     const transcript = (id: string | undefined, text: string): string =>
