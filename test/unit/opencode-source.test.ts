@@ -528,7 +528,13 @@ describe("OpenCodeSource", () => {
     expect(firstCall.sql).toContain(
       "partType IN ('text', 'reasoning') AND COALESCE(textValue, '') <> ''",
     );
-    expect(firstCall.args).toEqual([10, 20, ...INJECTED_PREFIXES.map((prefix) => `${prefix}*`)]);
+    expect(firstCall.args).toEqual([
+      -8640000000000000,
+      8640000000000000,
+      10,
+      20,
+      ...INJECTED_PREFIXES.map((prefix) => `${prefix}*`),
+    ]);
     expect(closeMock).toHaveBeenCalledTimes(1);
   });
 

@@ -48,6 +48,36 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
   const sourcesParameters = Type.Object({});
   const listParameters = Type.Object({
     ...sourceOptions,
+    source: Type.Optional(
+      Type.String({
+        description: "One harness. Omit source and sources for all available harnesses.",
+        minLength: 1,
+      }),
+    ),
+    sources: Type.Optional(
+      Type.Array(Type.String({ minLength: 1 }), {
+        description: "Selected harness names. Cannot be combined with source or path overrides.",
+        minItems: 1,
+        maxItems: 9,
+      }),
+    ),
+    since: Type.Optional(
+      Type.String({
+        description: "Inclusive last activity lower bound, ISO timestamp with timezone.",
+      }),
+    ),
+    until: Type.Optional(
+      Type.String({
+        description: "Inclusive last activity upper bound, ISO timestamp with timezone.",
+      }),
+    ),
+    lastHours: Type.Optional(
+      Type.Number({
+        description:
+          "Last activity within this many hours before now, for example 24. Cannot be combined with since/until.",
+        exclusiveMinimum: 0,
+      }),
+    ),
     offset: Type.Optional(
       Type.Integer({ description: "Zero-based session offset. Defaults to 0.", minimum: 0 }),
     ),
@@ -117,7 +147,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
     name: "sessions_list",
     label: "List Sessions",
     description:
-      "Discover normalized native AI coding sessions for one harness. Each row carries bounded metadata and a snippet of the session's first text, preferring what the user typed. Newest first.",
+      "Discover sessions across selected or all available harnesses. Filter last activity with lastHours or since/until. Each row carries bounded metadata and a snippet of the session's first text, preferring what the user typed. Newest first.",
     parameters: listParameters,
     approval: "read",
     async execute(_toolCallId, params) {

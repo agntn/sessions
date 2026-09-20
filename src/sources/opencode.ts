@@ -11,6 +11,7 @@ import type {
   Source,
   SourceReadOptions,
   SourceSummaryWindow,
+  SessionTimeRange,
 } from "../core/types.ts";
 import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
 
@@ -213,7 +214,11 @@ export class OpenCodeSource implements Source {
     };
   }
 
-  async summaryWindow(offset: number, limit: number): Promise<SourceSummaryWindow> {
+  async summaryWindow(
+    offset: number,
+    limit: number,
+    range?: SessionTimeRange,
+  ): Promise<SourceSummaryWindow> {
     const db = await openDatabase(this.dbPath);
     try {
       const result = await db.execute({
@@ -248,6 +253,7 @@ export class OpenCodeSource implements Source {
                 OR (partType IN ('text', 'reasoning') AND COALESCE(textValue, '') <> '')
               )
             GROUP BY sid
+            HAVING MAX(timestamp) >= ? AND MAX(timestamp) <= ?
           ),
           paged AS (
             SELECT *
@@ -296,7 +302,13 @@ export class OpenCodeSource implements Source {
           LEFT JOIN paged ON TRUE
           ORDER BY paged.updatedAt DESC, paged.sid ASC
         `,
-        args: [limit, offset, ...SNIPPET_FILTER_ARGS],
+        args: [
+          range?.since ?? -8640000000000000,
+          range?.until ?? 8640000000000000,
+          limit,
+          offset,
+          ...SNIPPET_FILTER_ARGS,
+        ],
       });
       const rows = result.rows as unknown as SummaryRow[];
       const total = Number(rows[0]?.total ?? 0);
