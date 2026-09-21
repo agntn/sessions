@@ -37,11 +37,19 @@ export function createSessionReader(source: Readonly<Source>): SessionReader {
       return [...sessions.entries()]
         .map(([id, messages]) => {
           messages.sort((left, right) => left.timestamp - right.timestamp);
+          const opened = messages[0];
           return {
             id,
             source: source.name,
-            createdAt: messages[0]?.timestamp ?? 0,
-            updatedAt: messages.at(-1)?.timestamp ?? 0,
+            createdAt: messages.reduce(
+              (earliest, message) =>
+                Math.min(earliest, message.sessionCreatedAt ?? message.timestamp),
+              opened?.sessionCreatedAt ?? opened?.timestamp ?? 0,
+            ),
+            updatedAt: messages.reduce(
+              (latest, message) => Math.max(latest, message.sessionUpdatedAt ?? message.timestamp),
+              opened?.sessionUpdatedAt ?? opened?.timestamp ?? 0,
+            ),
             messages,
           };
         })

@@ -35,6 +35,10 @@ export interface Message {
   timestamp: number;
   /** Native message time or its fallback origin; absent when provenance is not reported. */
   timestampSource?: "message" | "session" | "file";
+  /** Native session creation time when this message's clock is not that instant. */
+  sessionCreatedAt?: number;
+  /** Native session last activity when this message's clock is not that instant. */
+  sessionUpdatedAt?: number;
   date: string;
   blocks: Block[];
   context?: Record<string, string>;

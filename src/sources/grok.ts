@@ -266,6 +266,9 @@ export class GrokSource implements Source {
       role,
       timestamp: time.timestamp,
       timestampSource: time.timestampSource,
+      ...(clock.source === "session"
+        ? { sessionCreatedAt: clock.createdAt, sessionUpdatedAt: clock.updatedAt }
+        : {}),
       date: new Date(time.timestamp).toISOString().split("T")[0],
       blocks,
       channel: this.channel,

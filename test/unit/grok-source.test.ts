@@ -202,6 +202,34 @@ describe("GrokSource", () => {
     expect(filtered.messages).toEqual([]);
   });
 
+  it("keeps creation and last activity when a session has one message", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "solo",
+      [{ type: "user", content: [{ type: "text", text: "only" }] }],
+      {
+        created_at: "2026-09-01T00:00:00.000Z",
+        last_active_at: "2026-09-03T00:00:00.000Z",
+      },
+    );
+    const sessions = await create("grok", { path: directory }).list();
+    expect(sessions[0]).toMatchObject({
+      createdAt: Date.parse("2026-09-01T00:00:00.000Z"),
+      updatedAt: Date.parse("2026-09-03T00:00:00.000Z"),
+    });
+    expect(sessions[0]?.messages[0]).toMatchObject({
+      timestamp: Date.parse("2026-09-03T00:00:00.000Z"),
+      timestampSource: "session",
+    });
+    const page = await listSourceSessions(new GrokSource(directory), 0, 10);
+    expect(page.sessions[0]).toMatchObject({
+      createdAt: Date.parse("2026-09-01T00:00:00.000Z"),
+      updatedAt: Date.parse("2026-09-03T00:00:00.000Z"),
+    });
+  });
+
   it("keeps a tool result that completed without text", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     writeSession(

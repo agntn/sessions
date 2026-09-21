@@ -99,6 +99,20 @@ function firstSnippet(message: Readonly<SnippetMessage>): string | undefined {
   return undefined;
 }
 
+interface SessionClockMessage {
+  readonly timestamp: number;
+  readonly sessionCreatedAt?: number;
+  readonly sessionUpdatedAt?: number;
+}
+
+function openedAt(message: SessionClockMessage): number {
+  return message.sessionCreatedAt ?? message.timestamp;
+}
+
+function closedAt(message: SessionClockMessage): number {
+  return message.sessionUpdatedAt ?? message.timestamp;
+}
+
 function finishSummary(summary: Readonly<MutableSummary>): ToolSessionSummary {
   return {
     id: summary.id,
@@ -149,14 +163,14 @@ export async function listSourceSessions(
       summary = {
         id: message.sessionId,
         source: source.name,
-        createdAt: message.timestamp,
-        updatedAt: message.timestamp,
+        createdAt: openedAt(message),
+        updatedAt: closedAt(message),
         messageCount: 0,
       };
       summaries.set(message.sessionId, summary);
     }
-    summary.createdAt = Math.min(summary.createdAt, message.timestamp);
-    summary.updatedAt = Math.max(summary.updatedAt, message.timestamp);
+    summary.createdAt = Math.min(summary.createdAt, openedAt(message));
+    summary.updatedAt = Math.max(summary.updatedAt, closedAt(message));
     summary.messageCount += 1;
     if (summary.userSnippet) continue;
     const snippet = firstSnippet(message);
