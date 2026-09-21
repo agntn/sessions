@@ -84,6 +84,9 @@ describe("sessions MCP server", () => {
     ]);
     expect(response.tools[1]?.inputSchema.required ?? []).not.toContain("source");
     expect(response.tools[1]?.inputSchema.properties).toHaveProperty("lastHours");
+    expect(response.tools[1]?.inputSchema.properties).toMatchObject({
+      sources: { minItems: 1, maxItems: 10 },
+    });
     expect(response.tools[2]?.inputSchema).toMatchObject({
       properties: {
         since: { type: "string" },

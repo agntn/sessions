@@ -91,7 +91,7 @@ const tools: ToolDefinition[] = [
         Type.Array(Type.String({ minLength: 1 }), {
           description: "Selected harness names. Cannot be combined with source or path overrides.",
           minItems: 1,
-          maxItems: 9,
+          maxItems: 10,
         }),
       ),
       since: Type.Optional(

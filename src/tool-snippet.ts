@@ -4,6 +4,7 @@ export const INJECTED_PREFIXES = [
   "<environment_context>",
   "<user_instructions>",
   "<system-reminder>",
+  "<user_info>",
   "<local-command-stdout>",
   "Caveat: The messages below",
 ] as const;
