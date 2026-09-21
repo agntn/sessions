@@ -65,8 +65,11 @@ describe("OMP extension", () => {
     for (const tool of tools.values()) expect(tool.approval).toBe("read");
 
     const listSchema = requireTool(tools, "sessions_list").parameters as TypeBox.TSchema;
+    const names = Array.from({ length: 10 }, (_, index) => `source-${index}`);
     expect(listSchema.safeParse({ source: "codex", limit: 100 }).success).toBe(true);
     expect(listSchema.safeParse({ source: "codex", limit: 101 }).success).toBe(false);
+    expect(listSchema.safeParse({ sources: names }).success).toBe(true);
+    expect(listSchema.safeParse({ sources: [...names, "extra"] }).success).toBe(false);
   });
 
   it("reads a time interval through the registered tool", async () => {

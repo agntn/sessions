@@ -13,6 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMcpServer } from "../../src/mcp.ts";
+import { sources } from "../../src/index.ts";
 import { listSessions } from "../../src/tool-operations.ts";
 
 let directory: string;
@@ -44,6 +45,7 @@ function transcript(source: "pi" | "codex", id: string, times: readonly string[]
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "sessions-window-"));
   vi.stubEnv("HOME", directory);
+  vi.stubEnv("GROK_HOME", directory);
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-20T12:00:00Z"));
   transcript("pi", "same", ["2026-09-19T12:00:00Z"]);
   transcript("codex", "same", ["2026-09-20T12:00:00Z"]);
@@ -131,6 +133,14 @@ describe("session listing across harnesses", () => {
     { limit: 101 },
   ])("rejects invalid selection or time bounds: %j", async (params) => {
     await expect(listSessions(params)).rejects.toThrow();
+  });
+
+  it("accepts one name per harness and rejects one more", async () => {
+    const names = Array.from({ length: sources().length }, (_, index) => `missing-${index}`);
+    await expect(listSessions({ sources: names })).rejects.toThrow('Unknown source "missing-0"');
+    await expect(listSessions({ sources: [...names, "extra"] })).rejects.toThrow(
+      `Choose between 1 and ${sources().length} non-empty source names`,
+    );
   });
 
   it("does not silently skip an explicitly selected missing or unknown source", async () => {

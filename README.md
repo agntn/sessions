@@ -5,7 +5,7 @@
 [![license](https://npmx.dev/api/registry/badge/license/@agntn/sessions)](https://npmx.dev/package/@agntn/sessions)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/agntn/sessions)
 
-📚 Read conversations from nine AI coding harnesses through one TypeScript API. Your agent can read them too.
+📚 Read conversations from ten AI coding harnesses through one TypeScript API. Your agent can read them too.
 
 ## Why?
 
@@ -38,7 +38,7 @@ if (reader.available()) {
 }
 ```
 
-Readers use native data locations by default. Moved yours? Pass `create("claude", { path: "/custom/claude/projects" })`. Sessions come back newest first, with messages in chronological order. Text, thinking, tool calls, tool results, roles, timestamps, and source metadata are normalized where the harness exposes them.
+Readers use native data locations by default. Moved yours? Pass `create("claude", { path: "/custom/claude/projects" })`. Grok reads `$GROK_HOME/sessions` when that variable is set, and `~/.grok/sessions` otherwise. Sessions come back newest first, with messages in chronological order. Text, thinking, tool calls, tool results, roles, timestamps, and source metadata are normalized where the harness exposes them.
 
 **Mind the archive size.** Library `list()` loads the complete archive, including message payloads, into memory. For large archives, read a page instead:
 
@@ -71,6 +71,7 @@ Need more than one harness? `allSources()` creates every reader. Check each read
 | Claude Code | `claude`    |
 | Codex       | `codex`     |
 | Gemini CLI  | `gemini`    |
+| Grok        | `grok`      |
 | Mastra      | `mastra`    |
 | OMP         | `omp`       |
 | OpenClaw    | `openclaw`  |
@@ -86,7 +87,7 @@ node --input-type=module -e 'import { sources } from "@agntn/sessions"; console.
 Output:
 
 ```text
-aei, claude, codex, gemini, mastra, omp, openclaw, opencode, pi
+aei, claude, codex, gemini, grok, mastra, omp, openclaw, opencode, pi
 ```
 
 OpenClaw also accepts `paths` for multiple native locations. See the [source registry](./src/sources/index.ts) for supported overrides and links to each parser.
@@ -162,9 +163,9 @@ To read only messages from a period, pass `since` and/or `until` to `sessions_re
 
 Reuse the same bounds with each returned `position`. `limit` caps matching messages (100 by default, up to 500); `offset` and continuation positions still refer to the original session, never a renumbered subset. Messages with invalid or inferred timestamps are excluded only when filtering. Without bounds, their content stays readable and fallback times are labeled `inferred from file` or `inferred from session`. A period with no matches returns an empty window, not a missing-session error.
 
-File adapters expose `Message.timestampSource` as `message`, `session`, or `file`. Legacy Codex JSON uses session time plus item order, not individual message times. Other sources can leave provenance absent; filters then check the timestamp itself. Session activity listings still use fallback times.
+File adapters expose `Message.timestampSource` as `message`, `session`, or `file`. Legacy Codex JSON uses session time plus item order, not individual message times. Grok doesn't stamp each line. Creation and last activity come from `summary.json`, or from the file when that summary is missing. Other sources can leave provenance absent; filters then check the timestamp itself. Session activity listings still use fallback times.
 
-These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session: Claude Code, Codex, Gemini CLI, and OpenClaw name them after it, while Pi and OMP settle each one from its header. OpenCode answers both from SQLite. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
+These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session. Claude Code, Codex, Gemini CLI, and OpenClaw name the file after it. Grok names the session directory. Pi and OMP settle each one from its header. OpenCode answers both from SQLite. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
 
 Unknown sources, unreadable overrides, and missing session IDs return tool errors over MCP. See the [tool schemas](./src/mcp.ts) for all limits. Session text can contain private data. Only connect clients you trust with it.
 

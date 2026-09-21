@@ -690,8 +690,8 @@ function selectedSources(params: ListParamsInput): string[] {
 }
 
 function uniqueSources(names: readonly string[]): string[] {
-  if (names.length === 0 || names.length > 9 || names.some((name) => !name.trim())) {
-    throw new RangeError("Choose between 1 and 9 non-empty source names");
+  if (names.length === 0 || names.length > 10 || names.some((name) => !name.trim())) {
+    throw new RangeError("Choose between 1 and 10 non-empty source names");
   }
   return [...new Set(names.map((name) => name.trim()))];
 }
