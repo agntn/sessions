@@ -92,6 +92,7 @@ function stemHolds(stem: string, wanted: string): boolean {
 
 /**
  * A project filename carries the id or the shortened prefix OMP writes. Nested runs stay open for the header.
+ * The walk stores `join(root, name)`, so the root is compared as `join(root, ".")`.
  * @param root - Sessions directory.
  * @param path - Transcript path.
  * @param wanted - Exact session id, or every transcript when omitted.
@@ -99,7 +100,7 @@ function stemHolds(stem: string, wanted: string): boolean {
  */
 function selectedTranscript(root: string, path: string, wanted: string | undefined): boolean {
   if (!wanted || stemHolds(sessionIdFromPath(path), wanted)) return true;
-  return dirname(dirname(path)) !== root;
+  return dirname(dirname(path)) !== join(root, ".");
 }
 
 function settledSessionId(
