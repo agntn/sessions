@@ -138,4 +138,43 @@ describe("PiSource", () => {
       "parent: parent turn",
     ]);
   });
+
+  it("opens a project transcript by file name and still reads a nested run", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
+    const project = join(directory, "project");
+    mkdirSync(join(project, "2026-09-04T10-00-00-000Z_wanted", "run-0"), { recursive: true });
+    const line = (text: string): string =>
+      JSON.stringify({
+        type: "message",
+        id: "m1",
+        timestamp: "2026-09-04T10:00:01.000Z",
+        message: { role: "user", content: [{ type: "text", text }] },
+      });
+    const header = (id: string): string =>
+      JSON.stringify({ type: "session", version: 3, id, timestamp: "2026-09-04T10:00:00.000Z" });
+    writeFileSync(
+      join(project, "2026-09-04T10-00-00-000Z_wanted.jsonl"),
+      `${header("wanted")}\n${line("wanted turn")}\n`,
+    );
+    writeFileSync(
+      join(project, "2026-09-04T10-00-00-000Z_other.jsonl"),
+      `${header("other")}\n${line("sibling secret")}\n`,
+    );
+    writeFileSync(
+      join(project, "2026-09-04T10-00-00-000Z_wanted", "run-0", "session.jsonl"),
+      `${header("child")}\n${line("nested run")}\n`,
+    );
+    const source = new PiSource(directory);
+    const texts = async (sessionId?: string): Promise<string[]> => {
+      const found: string[] = [];
+      for await (const message of source.read({ sessionId })) {
+        found.push(message.blocks[0]?.text ?? "");
+      }
+      return found;
+    };
+
+    expect(await texts("wanted")).toEqual(["wanted turn"]);
+    expect(await texts("child")).toEqual(["nested run"]);
+    expect((await texts()).sort()).toEqual(["nested run", "sibling secret", "wanted turn"]);
+  });
 });

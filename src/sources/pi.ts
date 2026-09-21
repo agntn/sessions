@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Participant, Source, SourceReadOptions } from "../core/types.ts";
@@ -84,6 +84,18 @@ const PEEK_BYTES = 4096;
 
 function foreignSession(sessionId: string, wanted: string | undefined): boolean {
   return wanted !== undefined && sessionId !== wanted;
+}
+
+/**
+ * Project transcripts are named with their id, and nested runs stay open because the header names them.
+ * @param root - Sessions directory.
+ * @param path - Transcript path.
+ * @param wanted - Exact session id, or every transcript when omitted.
+ * @returns {boolean} Whether this read should open the file.
+ */
+function selectedTranscript(root: string, path: string, wanted: string | undefined): boolean {
+  if (!wanted || sessionIdFromPath(path) === wanted) return true;
+  return dirname(dirname(path)) !== root;
 }
 
 function settledSessionId(
@@ -179,13 +191,18 @@ export class PiSource implements Source {
     }
   }
 
-  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
-    const wanted = options?.sessionId || undefined;
+  private sessionFiles(wanted?: string): SessionFile[] {
     const files: SessionFile[] = [];
     for (const path of walkJsonl(this.sessionsDir)) {
+      if (!selectedTranscript(this.sessionsDir, path, wanted)) continue;
       files.push({ path, mtime: statSync(path).mtimeMs });
     }
     files.sort((left, right) => left.mtime - right.mtime);
-    for (const file of files) yield* this.readFile(file, wanted);
+    return files;
+  }
+
+  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
+    const wanted = options?.sessionId || undefined;
+    for (const file of this.sessionFiles(wanted)) yield* this.readFile(file, wanted);
   }
 }
