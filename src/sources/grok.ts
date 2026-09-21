@@ -125,15 +125,13 @@ function imageUrls(value: unknown): string[] {
 }
 
 function toolResultBlocks(entry: Readonly<Record<string, unknown>>): Block[] {
-  const text = [typeof entry.content === "string" ? entry.content : "", ...imageUrls(entry.images)]
-    .filter((part) => part.length > 0)
-    .join("\n");
-  if (!text) return [];
+  const content = typeof entry.content === "string" ? entry.content : "";
+  const images = imageUrls(entry.images);
   return [
     {
       type: "tool_result",
       toolCallId: scalarText(entry.tool_call_id) ?? "",
-      text,
+      text: (content.length > 0 ? [content, ...images] : images).join("\n"),
     },
   ];
 }

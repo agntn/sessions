@@ -202,6 +202,33 @@ describe("GrokSource", () => {
     expect(filtered.messages).toEqual([]);
   });
 
+  it("keeps a tool result that completed without text", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "empty-result",
+      [
+        {
+          type: "assistant",
+          content: "",
+          tool_calls: [{ id: "call-empty", name: "bash", arguments: "{}" }],
+        },
+        { type: "tool_result", tool_call_id: "call-empty", content: "" },
+      ],
+      {
+        created_at: "2026-09-01T00:00:00.000Z",
+        last_active_at: "2026-09-02T00:00:00.000Z",
+      },
+    );
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.map((message) => message.role)).toEqual(["assistant", "tool"]);
+    expect(messages[1]).toMatchObject({
+      timestamp: Date.parse("2026-09-02T00:00:00.000Z"),
+      blocks: [{ type: "tool_result", toolCallId: "call-empty", text: "" }],
+    });
+  });
+
   it("uses the file time when the summary is missing and ignores unsafe ids", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     const chat = writeSession(directory, "project", "real", [
