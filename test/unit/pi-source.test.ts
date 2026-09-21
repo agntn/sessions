@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Message } from "../../src/core/types.ts";
 import { OmpSource } from "../../src/sources/omp.ts";
@@ -137,5 +137,92 @@ describe("PiSource", () => {
       "headerless: no header",
       "parent: parent turn",
     ]);
+  });
+
+  it("opens a project transcript by file name and still reads a nested run", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
+    const project = join(directory, "project");
+    mkdirSync(join(project, "2026-09-04T10-00-00-000Z_wanted", "run-0"), { recursive: true });
+    const line = (text: string): string =>
+      JSON.stringify({
+        type: "message",
+        id: "m1",
+        timestamp: "2026-09-04T10:00:01.000Z",
+        message: { role: "user", content: [{ type: "text", text }] },
+      });
+    const header = (id: string): string =>
+      JSON.stringify({ type: "session", version: 3, id, timestamp: "2026-09-04T10:00:00.000Z" });
+    writeFileSync(
+      join(project, "2026-09-04T10-00-00-000Z_wanted.jsonl"),
+      `${header("wanted")}\n${line("wanted turn")}\n`,
+    );
+    writeFileSync(
+      join(project, "2026-09-04T10-00-00-000Z_other.jsonl"),
+      `${header("other")}\n${line("sibling secret")}\n`,
+    );
+    writeFileSync(
+      join(project, "2026-09-04T10-00-00-000Z_wanted", "run-0", "session.jsonl"),
+      `${header("child")}\n${line("nested run")}\n`,
+    );
+    const source = new PiSource(directory);
+    const texts = async (sessionId?: string): Promise<string[]> => {
+      const found: string[] = [];
+      for await (const message of source.read({ sessionId })) {
+        found.push(message.blocks[0]?.text ?? "");
+      }
+      return found;
+    };
+
+    expect(await texts("wanted")).toEqual(["wanted turn"]);
+    expect(await texts("child")).toEqual(["nested run"]);
+    expect((await texts()).sort()).toEqual(["nested run", "sibling secret", "wanted turn"]);
+  });
+
+  it.each<[string, (dir: string) => string]>([
+    ["trailing slash", (dir) => `${dir}/`],
+    ["leading dot", (dir) => `./${relative(process.cwd(), dir)}`],
+    ["parent segment", (dir) => `${dir}/../${basename(dir)}`],
+  ])("opens one project session when the root has a %s", async (_shape, sessionsRoot) => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
+    const project = join(directory, "project");
+    mkdirSync(join(project, "2026-09-04T10-00-00-000Z_wanted", "run-0"), { recursive: true });
+    const transcript = (id: string, text: string): string =>
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id,
+          timestamp: "2026-09-04T10:00:00.000Z",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "m1",
+          timestamp: "2026-09-04T10:00:01.000Z",
+          message: { role: "user", content: [{ type: "text", text }] },
+        }),
+      ].join("\n");
+    writeFileSync(
+      join(project, "2026-09-04T10-00-00-000Z_wanted.jsonl"),
+      transcript("wanted", "wanted turn"),
+    );
+    symlinkSync(
+      join(project, "missing.jsonl"),
+      join(project, "2026-09-04T10-00-00-000Z_other.jsonl"),
+    );
+    writeFileSync(
+      join(project, "2026-09-04T10-00-00-000Z_wanted", "run-0", "session.jsonl"),
+      transcript("child", "nested run"),
+    );
+    const source = new PiSource(sessionsRoot(directory));
+    const texts = async (sessionId: string): Promise<string[]> => {
+      const found: string[] = [];
+      for await (const message of source.read({ sessionId })) {
+        found.push(message.blocks[0]?.text ?? "");
+      }
+      return found;
+    };
+
+    expect(await texts("wanted")).toEqual(["wanted turn"]);
+    expect(await texts("child")).toEqual(["nested run"]);
   });
 });
