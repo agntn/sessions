@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Message } from "../../src/core/types.ts";
 import { create, listSourceSessions, readSourceSession } from "../../src/index.ts";
@@ -38,11 +38,21 @@ async function collect(source: Readonly<GrokSource>, sessionId?: string): Promis
 }
 
 describe("GrokSource", () => {
-  it("keeps the directory name when the path uses Windows separators", () => {
-    expect(sessionIdFromDirectory(String.raw`C:\Users\Ada\.grok\sessions\project\session-1`)).toBe(
-      "session-1",
+  it("keeps the directory name for this platform, including a backslash on POSIX", async () => {
+    expect(sessionIdFromDirectory(join("project", "session-1"))).toBe("session-1");
+    if (sep !== "/") return;
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    const id = String.raw`run\alpha`;
+    const sessionDir = join(directory, "project", id);
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(
+      join(sessionDir, "chat_history.jsonl"),
+      `${JSON.stringify({ type: "user", content: [{ type: "text", text: "kept" }] })}\r\n`,
     );
-    expect(sessionIdFromDirectory("/home/ada/.grok/sessions/project/session-1")).toBe("session-1");
+    const source = new GrokSource(directory);
+    const messages = await collect(source, id);
+    expect(messages.map((message) => message.sessionId)).toEqual([id]);
+    expect(messages[0]).toMatchObject({ blocks: [{ type: "text", text: "kept" }] });
   });
 
   it("normalizes chat history and skips injected openers in the snippet", async () => {

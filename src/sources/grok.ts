@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, join, win32 } from "node:path";
+import { basename, join, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { home, osUser } from "../core/env.ts";
 import type {
@@ -30,21 +30,22 @@ function defaultSessionsDir(): string {
 }
 
 /**
- * Session id is the directory name, including when the path uses Windows separators.
+ * Session id is the directory name on the running platform.
  * @param directory - Native session directory.
  * @returns {string} The session id.
  */
 export function sessionIdFromDirectory(directory: string): string {
-  return win32.basename(basename(directory));
+  return basename(directory);
 }
 
 function isSessionSegment(value: string): boolean {
   return (
+    value.length > 0 &&
     value !== "." &&
     value !== ".." &&
+    !value.includes("\0") &&
     !value.includes("/") &&
-    !value.includes("\\") &&
-    !value.includes("\0")
+    !value.includes(sep)
   );
 }
 
@@ -75,16 +76,10 @@ function readClock(directory: string, mtime: number): SessionClock {
 }
 
 function timestampAt(
-  index: number,
-  total: number,
   clock: SessionClock,
+  isLast: boolean,
 ): Pick<Message, "timestamp" | "timestampSource"> {
-  const timestamp =
-    clock.source === "file" || total <= 1
-      ? clock.updatedAt
-      : index === total - 1
-        ? clock.updatedAt
-        : clock.createdAt;
+  const timestamp = clock.source === "file" || isLast ? clock.updatedAt : clock.createdAt;
   return { timestamp, timestampSource: clock.source };
 }
 
@@ -224,12 +219,16 @@ function* transcripts(root: string, sessionId?: string): Generator<Transcript> {
   }
 }
 
+function isVisible(entry: Readonly<Record<string, unknown>>): boolean {
+  return roleFor(entry.type) !== undefined && blocksFor(entry).length > 0;
+}
+
 async function* records(path: string): AsyncGenerator<Readonly<Record<string, unknown>>> {
   const input = createReadStream(path);
   try {
     for await (const line of createInterface({ input, crlfDelay: Infinity })) {
       const entry = parseJsonRecord(line);
-      if (entry) yield entry;
+      if (entry && isVisible(entry)) yield entry;
     }
   } finally {
     input.destroy();
@@ -256,13 +255,12 @@ export class GrokSource implements Source {
     entry: Readonly<Record<string, unknown>>,
     sessionId: string,
     clock: SessionClock,
-    index: number,
-    total: number,
+    isLast: boolean,
   ): Message | undefined {
     const role = roleFor(entry.type);
     const blocks = blocksFor(entry);
     if (!role || blocks.length === 0) return undefined;
-    const time = timestampAt(index, total, clock);
+    const time = timestampAt(clock, isLast);
     const context = role === "user" ? userContext(entry) : undefined;
     return {
       source: this.name,
@@ -281,14 +279,17 @@ export class GrokSource implements Source {
   private async *readFile(file: Transcript): AsyncGenerator<Message> {
     const sessionId = sessionIdFromDirectory(file.directory);
     const clock = readClock(file.directory, file.mtime);
-    const entries: Array<Readonly<Record<string, unknown>>> = [];
+    let pending: Readonly<Record<string, unknown>> | undefined;
     for await (const entry of records(file.path)) {
-      if (roleFor(entry.type) && blocksFor(entry).length > 0) entries.push(entry);
+      if (pending) {
+        const message = this.messageFrom(pending, sessionId, clock, false);
+        if (message) yield message;
+      }
+      pending = entry;
     }
-    for (const [index, entry] of entries.entries()) {
-      const message = this.messageFrom(entry, sessionId, clock, index, entries.length);
-      if (message) yield message;
-    }
+    if (!pending) return;
+    const message = this.messageFrom(pending, sessionId, clock, true);
+    if (message) yield message;
   }
 
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
