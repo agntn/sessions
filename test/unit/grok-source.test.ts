@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Message } from "../../src/core/types.ts";
 import { create, listSourceSessions, readSourceSession } from "../../src/index.ts";
-import { GrokSource } from "../../src/sources/grok.ts";
+import { GrokSource, sessionIdFromDirectory } from "../../src/sources/grok.ts";
 
 let directory: string | undefined;
 afterEach(() => {
@@ -38,6 +38,13 @@ async function collect(source: Readonly<GrokSource>, sessionId?: string): Promis
 }
 
 describe("GrokSource", () => {
+  it("keeps the directory name when the path uses Windows separators", () => {
+    expect(sessionIdFromDirectory(String.raw`C:\Users\Ada\.grok\sessions\project\session-1`)).toBe(
+      "session-1",
+    );
+    expect(sessionIdFromDirectory("/home/ada/.grok/sessions/project/session-1")).toBe("session-1");
+  });
+
   it("normalizes chat history and skips injected openers in the snippet", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     const action = { type: "search", query: "pi" };

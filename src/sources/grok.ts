@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join, win32 } from "node:path";
 import { createInterface } from "node:readline";
 import { home, osUser } from "../core/env.ts";
 import type {
@@ -27,6 +27,15 @@ interface SessionClock {
 function defaultSessionsDir(): string {
   const override = process.env.GROK_HOME?.trim();
   return join(override || join(home(), ".grok"), "sessions");
+}
+
+/**
+ * Session id is the directory name, including when the path uses Windows separators.
+ * @param directory - Native session directory.
+ * @returns {string} The session id.
+ */
+export function sessionIdFromDirectory(directory: string): string {
+  return win32.basename(basename(directory));
 }
 
 function isSessionSegment(value: string): boolean {
@@ -270,18 +279,15 @@ export class GrokSource implements Source {
   }
 
   private async *readFile(file: Transcript): AsyncGenerator<Message> {
-    const sessionId = file.directory.split("/").pop() ?? "";
+    const sessionId = sessionIdFromDirectory(file.directory);
     const clock = readClock(file.directory, file.mtime);
-    let total = 0;
+    const entries: Array<Readonly<Record<string, unknown>>> = [];
     for await (const entry of records(file.path)) {
-      if (roleFor(entry.type) && blocksFor(entry).length > 0) total += 1;
+      if (roleFor(entry.type) && blocksFor(entry).length > 0) entries.push(entry);
     }
-    let index = 0;
-    for await (const entry of records(file.path)) {
-      const message = this.messageFrom(entry, sessionId, clock, index, total);
-      if (!message) continue;
-      index += 1;
-      yield message;
+    for (const [index, entry] of entries.entries()) {
+      const message = this.messageFrom(entry, sessionId, clock, index, entries.length);
+      if (message) yield message;
     }
   }
 
