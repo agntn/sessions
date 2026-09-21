@@ -86,15 +86,19 @@ function foreignSession(sessionId: string, wanted: string | undefined): boolean 
   return wanted !== undefined && sessionId !== wanted;
 }
 
+function stemHolds(stem: string, wanted: string): boolean {
+  return stem.length > 0 && (stem === wanted || wanted.startsWith(`${stem}-`));
+}
+
 /**
- * Project transcripts are named with their id, and nested runs stay open because the header names them.
+ * A project filename carries the id or the shortened prefix OMP writes. Nested runs stay open for the header.
  * @param root - Sessions directory.
  * @param path - Transcript path.
  * @param wanted - Exact session id, or every transcript when omitted.
  * @returns {boolean} Whether this read should open the file.
  */
 function selectedTranscript(root: string, path: string, wanted: string | undefined): boolean {
-  if (!wanted || sessionIdFromPath(path) === wanted) return true;
+  if (!wanted || stemHolds(sessionIdFromPath(path), wanted)) return true;
   return dirname(dirname(path)) !== root;
 }
 

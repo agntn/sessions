@@ -102,6 +102,40 @@ describe("OmpSource", () => {
     void path;
   });
 
+  it("reads a shortened filename by the full session id from its header", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-omp-"));
+    const fullId = "01a00c04-6116-7000-ae3d-c623f8a6977a";
+    writeSession("2026-08-16T19-20-08-726Z_01a00c04.jsonl", [
+      { type: "session", version: 3, id: fullId, timestamp: "2026-08-16T19:20:08.726Z" },
+      {
+        type: "message",
+        id: "m1",
+        timestamp: "2026-08-16T19:20:30.384Z",
+        message: { role: "user", content: [{ type: "text", text: "hello" }] },
+      },
+    ]);
+    writeSession("2026-08-16T19-20-09-000Z_01a00c05.jsonl", [
+      {
+        type: "session",
+        version: 3,
+        id: "01a00c05-6116-7000-ae3d-c623f8a6977a",
+        timestamp: "2026-08-16T19:20:09.000Z",
+      },
+      {
+        type: "message",
+        id: "m2",
+        timestamp: "2026-08-16T19:20:31.000Z",
+        message: { role: "user", content: [{ type: "text", text: "other" }] },
+      },
+    ]);
+
+    const texts: string[] = [];
+    for await (const message of new OmpSource(directory).read({ sessionId: fullId })) {
+      texts.push(message.blocks[0]?.text ?? "");
+    }
+    expect(texts).toEqual(["hello"]);
+  });
+
   it("skips harness bookkeeping entries and falls back to file mtime", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-omp-"));
     const entries = [
