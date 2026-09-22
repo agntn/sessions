@@ -1,4 +1,10 @@
-import type { Message, Source, SourceSessionSummary, SessionTimeRange } from "./core/types.ts";
+import type {
+  Message,
+  Source,
+  SourceReadOptions,
+  SourceSessionSummary,
+  SessionTimeRange,
+} from "./core/types.ts";
 import { snippetLine } from "./tool-snippet.ts";
 
 /** Session metadata shared by bounded library and agent reads. */
@@ -135,6 +141,10 @@ function projectedSummary(summary: Readonly<SourceSessionSummary>): ToolSessionS
   };
 }
 
+function activityOptions(range?: SessionTimeRange): SourceReadOptions | undefined {
+  return range?.since === undefined ? undefined : { activeSince: range.since };
+}
+
 /**
  * Lists bounded summaries while retaining at most one short text per session.
  *
@@ -157,7 +167,7 @@ export async function listSourceSessions(
   }
 
   const summaries = new Map<string, MutableSummary>();
-  for await (const message of source.read()) {
+  for await (const message of source.read(activityOptions(range))) {
     let summary = summaries.get(message.sessionId);
     if (!summary) {
       summary = {

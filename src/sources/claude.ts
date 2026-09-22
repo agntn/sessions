@@ -10,6 +10,7 @@ import type {
   Source,
   SourceReadOptions,
 } from "../core/types.ts";
+import { activeFiles } from "./activity.ts";
 import { isRecord, parseJson, scalarText } from "./parsing.ts";
 
 interface SessionFile {
@@ -163,6 +164,7 @@ export class ClaudeSource implements Source {
       files.push({ path, mtime: statSync(path).mtimeMs });
     }
     files.sort((left, right) => left.mtime - right.mtime);
-    for (const file of files) yield* this.readFile(file);
+    const active = activeFiles(files, (file) => sessionIdFromPath(file.path), options?.activeSince);
+    for (const file of active) yield* this.readFile(file);
   }
 }

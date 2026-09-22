@@ -1,8 +1,18 @@
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  existsSync,
+  openSync,
+  readdirSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Participant, Source, SourceReadOptions } from "../core/types.ts";
+import { activeFiles } from "./activity.ts";
 import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
 
 interface SessionFile {
@@ -111,6 +121,34 @@ function settledSessionId(
   return entry.type === "message" ? current : undefined;
 }
 
+/**
+ * Settles a transcript's session the way `readFile` does, reading only up to its first entry.
+ * @param path - Transcript path.
+ * @returns {string} The id its messages carry.
+ */
+function transcriptSession(path: string): string {
+  const stem = sessionIdFromPath(path);
+  const fd = openSync(path, "r");
+  try {
+    const chunk = Buffer.alloc(PEEK_BYTES);
+    const decoder = new StringDecoder("utf8");
+    let pending = "";
+    for (let read = readSync(fd, chunk); read > 0; read = readSync(fd, chunk)) {
+      const lines = (pending + decoder.write(chunk.subarray(0, read))).split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        const entry = parseJsonRecord(line);
+        const settled = entry && settledSessionId(entry, stem);
+        if (settled !== undefined) return settled;
+      }
+    }
+    const entry = parseJsonRecord(pending + decoder.end());
+    return (entry && settledSessionId(entry, stem)) ?? stem;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function* walkJsonl(dir: string): Generator<string> {
   if (!existsSync(dir)) return;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -208,6 +246,11 @@ export class PiSource implements Source {
 
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const wanted = options?.sessionId || undefined;
-    for (const file of this.sessionFiles(wanted)) yield* this.readFile(file, wanted);
+    const files = activeFiles(
+      this.sessionFiles(wanted),
+      (file) => transcriptSession(file.path),
+      options?.activeSince,
+    );
+    for (const file of files) yield* this.readFile(file, wanted);
   }
 }

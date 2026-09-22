@@ -140,7 +140,7 @@ The extensions and MCP use the [same executors](./src/tool-operations.ts). Exten
 
 Use `source` with `path`, or `paths` where supported, to override one harness's location. Listings across harnesses use native locations and label each row with its source. Explicitly selected unavailable sources return an error. With no selection, only available sources are read.
 
-Page session listings with `offset` and `limit` (up to 100). For a fixed period, pass `since` and/or `until` as ISO timestamps with a timezone. Both bounds are inclusive. Don't combine them with `lastHours`. Its response gives fixed bounds to reuse on later pages, so the time window doesn't move between calls. The archive itself isn't a snapshot.
+Page session listings with `offset` and `limit` (up to 100). For a fixed period, pass `since` and/or `until` as ISO timestamps with a timezone. Both bounds are inclusive. Don't combine them with `lastHours`. Its response gives fixed bounds to reuse on later pages, so the time window doesn't move between calls. The archive itself isn't a snapshot. With `since`, Claude, Codex, Pi and OMP skip a session whose files were all last written before it, so a transcript with a backdated modification time drops out of that listing.
 
 Pi and OMP tool results retain the native `isError` boolean, including results with no text. `sessions_read` prints it beside the tool call ID. An absent flag means unknown, not success.
 
