@@ -169,7 +169,9 @@ describe("session listing across harnesses", () => {
           ('recent', 'm', 100, '{"type":"text","text":"first"}'),
           ('recent', 'm', 200, '{"type":"text","text":"second"}'),
           ('older', 'm', 150, '{"type":"text","text":"older"}'),
-          ('future', 'm', 300, '{"type":"text","text":"future"}');
+          ('future', 'm', 300, '{"type":"text","text":"future"}'),
+          ('stepped', 'm', 100, '{"type":"text","text":"stepped"}'),
+          ('stepped', 'm', 180, '{"type":"step-start"}');
       `);
     } finally {
       db.close();

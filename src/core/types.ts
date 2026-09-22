@@ -49,6 +49,11 @@ export interface Message {
 /** Optional native filter for adapters that can avoid scanning unrelated sessions. */
 export interface SourceReadOptions {
   readonly sessionId?: string;
+  /**
+   * Epoch milliseconds a listing needs sessions to reach. An adapter may leave out a whole
+   * session it can prove ended earlier, but never a single message of a session it reads.
+   */
+  readonly activeSince?: number;
 }
 
 /** One session summary projected without retaining its message payloads. */

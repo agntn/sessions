@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Source, SourceReadOptions } from "../core/types.ts";
+import { activeFiles } from "./activity.ts";
 import { isRecord, parseJson, parseJsonRecord, scalarText } from "./parsing.ts";
 
 interface SessionFile {
@@ -385,7 +386,8 @@ export class CodexSource implements Source {
       files.push({ ...file, mtime: statSync(file.path).mtimeMs });
     }
     files.sort((left, right) => left.mtime - right.mtime);
-    for (const file of files) {
+    const active = activeFiles(files, (file) => sessionIdFromPath(file.path), options?.activeSince);
+    for (const file of active) {
       if (file.format === "json") yield* this.readJsonSession(file, sessionId);
       else yield* this.readJsonlSession(file);
     }

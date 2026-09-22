@@ -173,6 +173,24 @@ function partPage(
   };
 }
 
+/**
+ * Narrows a bounded listing to sessions with a part created at or after `since`. The raw part
+ * clock bounds the summary clock, which keeps only a subset of those parts, and one sequential
+ * pass over it leaves every part body unparsed.
+ * @param since - Inclusive lower bound on last activity, or no narrowing when omitted.
+ * @returns {{ sql: string, args: number[] }} The predicate joined to the part scan and its argument.
+ */
+function reachedSessions(since: number | undefined): {
+  readonly sql: string;
+  readonly args: number[];
+} {
+  if (since === undefined) return { sql: "", args: [] };
+  return {
+    sql: "AND p.session_id IN (SELECT session_id FROM part WHERE time_created >= ?)",
+    args: [since],
+  };
+}
+
 export class OpenCodeSource implements Source {
   name = "opencode";
   private dbPath: string;
@@ -219,6 +237,7 @@ export class OpenCodeSource implements Source {
     limit: number,
     range?: SessionTimeRange,
   ): Promise<SourceSummaryWindow> {
+    const reached = reachedSessions(range?.since);
     const db = await openDatabase(this.dbPath);
     try {
       const result = await db.execute({
@@ -239,6 +258,7 @@ export class OpenCodeSource implements Source {
             FROM part p
             JOIN message m ON p.message_id = m.id
             WHERE p.time_created BETWEEN -8640000000000000 AND 8640000000000000
+              ${reached.sql}
           ),
           summaries AS (
             SELECT
@@ -303,6 +323,7 @@ export class OpenCodeSource implements Source {
           ORDER BY paged.updatedAt DESC, paged.sid ASC
         `,
         args: [
+          ...reached.args,
           range?.since ?? -8640000000000000,
           range?.until ?? 8640000000000000,
           limit,
