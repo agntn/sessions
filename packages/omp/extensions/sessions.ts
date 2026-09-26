@@ -12,13 +12,16 @@ const DEFAULT_OUTPUT_CHARS = 20_000;
 const MIN_OUTPUT_CHARS = 1_000;
 const MAX_OUTPUT_CHARS = 100_000;
 
+const distributionModuleUrl = new URL("../../../dist/tool-operations.mjs", import.meta.url);
 const sourceModulePath = fileURLToPath(new URL("../../../src/tool-operations.ts", import.meta.url));
 let toolOperationsPromise: Promise<typeof SessionsTools> | undefined;
 
 /**
  * Loads the executors shared with MCP and Pi from source in a checkout or from
- * the built bundle in a published package. The literal import specifiers keep
- * both branches visible to OMP's loader.
+ * the built bundle in a published package. The source import stays literal so
+ * OMP's loader walks it and reloads edited source. The bundle goes through a URL
+ * because tsc would resolve a literal path to `dist/`, which a fresh checkout
+ * does not have.
  *
  * @returns {Promise<typeof SessionsTools>} The shared session tool operations.
  */
@@ -26,7 +29,7 @@ function loadToolOperations(): Promise<typeof SessionsTools> {
   toolOperationsPromise ??= (
     existsSync(sourceModulePath)
       ? import("../../../src/tool-operations.ts")
-      : import("../../../dist/tool-operations.mjs")
+      : import(distributionModuleUrl.href)
   ).catch((error: unknown) => {
     toolOperationsPromise = undefined;
     throw error;
