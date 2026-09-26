@@ -104,6 +104,7 @@ function currentToolResult(
       type: "tool_result",
       toolCallId,
       text: typeof state.output === "string" ? state.output : (JSON.stringify(state.output) ?? ""),
+      isError: false,
     };
   }
   if (state.status === "error" && state.error !== undefined) {
@@ -111,6 +112,7 @@ function currentToolResult(
       type: "tool_result",
       toolCallId,
       text: typeof state.error === "string" ? state.error : (JSON.stringify(state.error) ?? ""),
+      isError: true,
     };
   }
   return undefined;

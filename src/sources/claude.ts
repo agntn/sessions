@@ -48,11 +48,13 @@ function toolCallBlock(value: Readonly<Record<string, unknown>>): Block[] {
 }
 
 function toolResultBlock(value: Readonly<Record<string, unknown>>): Block[] {
+  const isError = typeof value.is_error === "boolean" ? value.is_error : undefined;
   return [
     {
       type: "tool_result",
       toolCallId: scalarText(value.tool_use_id) ?? "",
       text: toolResultText(value.content),
+      ...(isError === undefined ? {} : { isError }),
     },
   ];
 }
