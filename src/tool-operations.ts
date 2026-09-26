@@ -659,14 +659,14 @@ function relativeTimeRange(hours: number): SessionTimeRange {
 }
 
 function sessionTimeRange(params: ListParamsInput): SessionTimeRange | undefined {
+  const since = timeBound(params.since, "since");
+  const until = timeBound(params.until, "until");
   if (params.lastHours !== undefined) {
-    if (params.since !== undefined || params.until !== undefined) {
+    if (since !== undefined || until !== undefined) {
       throw new RangeError("Use lastHours or since/until, not both");
     }
     return relativeTimeRange(params.lastHours);
   }
-  const since = timeBound(params.since, "since");
-  const until = timeBound(params.until, "until");
   if (since !== undefined && until !== undefined && since > until) {
     throw new RangeError("since must not be after until");
   }

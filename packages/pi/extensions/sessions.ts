@@ -64,11 +64,13 @@ const listParameters = Type.Object({
   since: Type.Optional(
     Type.String({
       description: "Inclusive last activity lower bound, ISO timestamp with timezone.",
+      minLength: 1,
     }),
   ),
   until: Type.Optional(
     Type.String({
       description: "Inclusive last activity upper bound, ISO timestamp with timezone.",
+      minLength: 1,
     }),
   ),
   lastHours: Type.Optional(
@@ -121,12 +123,14 @@ const readParameters = Type.Object({
     Type.String({
       description:
         "Inclusive message timestamp lower bound, ISO timestamp with timezone. Reuse when continuing.",
+      minLength: 1,
     }),
   ),
   until: Type.Optional(
     Type.String({
       description:
         "Inclusive message timestamp upper bound, ISO timestamp with timezone. Reuse when continuing.",
+      minLength: 1,
     }),
   ),
   limit: Type.Optional(
