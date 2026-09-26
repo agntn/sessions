@@ -136,6 +136,53 @@ describe("GeminiSource", () => {
     });
   });
 
+  it.each([
+    { status: "success", response: { output: "4" }, expected: { text: "4", isError: false } },
+    {
+      status: "error",
+      response: { error: "params must have required property 'file_path'" },
+      expected: { text: "params must have required property 'file_path'", isError: true },
+    },
+    {
+      status: "cancelled",
+      response: { error: "[Operation Cancelled] Reason: User cancelled the operation." },
+      expected: {
+        text: "[Operation Cancelled] Reason: User cancelled the operation.",
+        isError: true,
+      },
+    },
+    { status: undefined, response: { output: "4" }, expected: { text: "4" } },
+    { status: "success", response: { output: "" }, expected: { text: "", isError: false } },
+    {
+      status: "error",
+      response: { output: "", error: "failed" },
+      expected: { text: "failed", isError: true },
+    },
+  ])("preserves native tool status: $status", async ({ status, response, expected }) => {
+    writeChat("project-status", "chat-status.json", {
+      messages: [
+        {
+          type: "gemini",
+          timestamp: "2026-03-10T10:00:00Z",
+          content: "",
+          toolCalls: [
+            {
+              name: "replace",
+              id: "tc-1",
+              args: {},
+              result: [{ functionResponse: { id: "tc-1", name: "replace", response } }],
+              status,
+            },
+          ],
+        },
+      ],
+    });
+
+    const msgs = await collect(new GeminiSource(tempDir));
+
+    expect(msgs[0].blocks[1]).toEqual({ type: "tool_result", toolCallId: "tc-1", ...expected });
+  });
+
   it("skips non-user/non-gemini types", async () => {
     writeChat("project-6", "chat-006.json", {
       messages: [

@@ -188,8 +188,42 @@ describe("OpenCodeSource", () => {
         type: "tool_result",
         toolCallId: "tc-current",
         text: "file contents here",
+        isError: false,
       },
     ]);
+  });
+
+  it.each([
+    {
+      state: { status: "completed", input: {}, output: "file contents here" },
+      expected: { text: "file contents here", isError: false },
+    },
+    {
+      state: { status: "error", input: {}, error: "File not found: /foo" },
+      expected: { text: "File not found: /foo", isError: true },
+    },
+  ])("preserves native tool status: $state.status", async ({ state, expected }) => {
+    executeMock
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            pdata: JSON.stringify({ type: "tool", callID: "tc-status", tool: "read", state }),
+            role: "assistant",
+            tc: 1700000003500,
+            sid: "s1",
+            rid: 5,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const msgs = await collect(new OpenCodeSource("/tmp/opencode.db"));
+
+    expect(msgs[0].blocks[1]).toEqual({
+      type: "tool_result",
+      toolCallId: "tc-status",
+      ...expected,
+    });
   });
 
   it("parses tool-result blocks", async () => {

@@ -113,6 +113,33 @@ describe("ClaudeSource", () => {
     });
   });
 
+  it.each([
+    { status: { is_error: true }, expected: { isError: true } },
+    { status: { is_error: false }, expected: { isError: false } },
+    { status: {}, expected: {} },
+    { status: { is_error: "true" }, expected: {} },
+  ])("preserves native tool status: $status", async ({ status, expected }) => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-claude-"));
+    const project = join(directory, "project");
+    mkdirSync(project);
+    writeFileSync(
+      join(project, "session.jsonl"),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-09-24T10:00:01.000Z",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "t1", content: "Exit code 1", ...status }],
+        },
+      }),
+    );
+
+    const messages = await collect(new ClaudeSource(directory));
+
+    expect(messages.map((message) => message.blocks)).toEqual([
+      [{ type: "tool_result", toolCallId: "t1", text: "Exit code 1", ...expected }],
+    ]);
+  });
+
   it("opens only the transcripts named after the requested session", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-claude-"));
     for (const project of ["project-a", "project-b"]) {

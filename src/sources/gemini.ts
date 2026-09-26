@@ -24,14 +24,30 @@ function thoughtBlock(value: unknown): Block[] {
   return text ? [{ type: "thinking", text }] : [];
 }
 
-function toolResultBlocks(toolCallId: string, results: unknown): Block[] {
+// Gemini CLI records a failed or cancelled call as `response.error` beside that status.
+function nativeToolError(status: unknown): boolean | undefined {
+  if (status === "success") return false;
+  if (status === "error" || status === "cancelled") return true;
+  return undefined;
+}
+
+function toolResultBlocks(toolCallId: string, results: unknown, status: unknown): Block[] {
   if (!Array.isArray(results)) return [];
+  const isError = nativeToolError(status);
   return results.flatMap((result) => {
     if (!isRecord(result) || !isRecord(result.functionResponse)) return [];
     const response = result.functionResponse.response;
     if (!isRecord(response)) return [];
-    const output = scalarText(response.output);
-    return output ? [{ type: "tool_result" as const, toolCallId, text: output }] : [];
+    const text = scalarText(response.output) || scalarText(response.error) || "";
+    if (!text && isError === undefined) return [];
+    return [
+      {
+        type: "tool_result" as const,
+        toolCallId,
+        text,
+        ...(isError === undefined ? {} : { isError }),
+      },
+    ];
   });
 }
 
@@ -45,7 +61,7 @@ function toolCallBlocks(value: unknown): Block[] {
       toolCallId,
       toolInput: typeof value.args === "string" ? value.args : (JSON.stringify(value.args) ?? ""),
     },
-    ...toolResultBlocks(toolCallId, value.result),
+    ...toolResultBlocks(toolCallId, value.result, value.status),
   ];
 }
 
