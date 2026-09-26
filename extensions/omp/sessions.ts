@@ -12,16 +12,15 @@ const DEFAULT_OUTPUT_CHARS = 20_000;
 const MIN_OUTPUT_CHARS = 1_000;
 const MAX_OUTPUT_CHARS = 100_000;
 
-const distributionModuleUrl = new URL("../../dist/tool-operations.mjs", import.meta.url);
 const sourceModulePath = fileURLToPath(new URL("../../src/tool-operations.ts", import.meta.url));
 let toolOperationsPromise: Promise<typeof SessionsTools> | undefined;
 
 /**
  * Loads the executors shared with MCP and Pi from source in a checkout or from
- * the built bundle in a published package. The source import stays literal so
- * OMP's loader walks it and reloads edited source. The bundle goes through a URL
- * because tsc would resolve a literal path to `dist/`, which a fresh checkout
- * does not have.
+ * the built bundle in a published package. Both specifiers stay literal: OMP
+ * rewrites bare imports such as `@libsql/client` only in modules it can see, so
+ * a bundle loaded through a URL fails on them. The package subpath keeps
+ * typecheck independent of `dist/`, since tsconfig maps it to source.
  *
  * @returns {Promise<typeof SessionsTools>} The shared session tool operations.
  */
@@ -29,7 +28,7 @@ function loadToolOperations(): Promise<typeof SessionsTools> {
   toolOperationsPromise ??= (
     existsSync(sourceModulePath)
       ? import("../../src/tool-operations.ts")
-      : import(distributionModuleUrl.href)
+      : import("@agntn/sessions/tool-operations")
   ).catch((error: unknown) => {
     toolOperationsPromise = undefined;
     throw error;

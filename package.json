@@ -42,6 +42,10 @@
     "./mcp": {
       "types": "./dist/mcp.d.mts",
       "import": "./dist/mcp.mjs"
+    },
+    "./tool-operations": {
+      "types": "./dist/tool-operations.d.mts",
+      "import": "./dist/tool-operations.mjs"
     }
   },
   "scripts": {

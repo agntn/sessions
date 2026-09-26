@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolResult } from "../../src/tool-operations.ts";
@@ -121,5 +121,22 @@ describe("OMP extension", () => {
         ],
       },
     });
+  });
+
+  it("loads the executors through literal specifiers the host can rewrite", () => {
+    const source = readFileSync(
+      new URL("../../extensions/omp/sessions.ts", import.meta.url),
+      "utf8",
+    );
+    const specifiers = [...source.matchAll(/\bimport\(\s*([^)]*?)\s*\)/g)].map((match) => match[1]);
+    const { exports } = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+    ) as { exports: Record<string, unknown> };
+
+    expect(specifiers).toEqual([
+      '"../../src/tool-operations.ts"',
+      '"@agntn/sessions/tool-operations"',
+    ]);
+    expect(exports).toHaveProperty("./tool-operations");
   });
 });
