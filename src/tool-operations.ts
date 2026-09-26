@@ -60,6 +60,8 @@ export interface ReadDetails {
   returnedMessages: number;
   outputTruncated: boolean;
   nextPosition?: ReadPosition;
+  /** With time bounds: messages the read skipped because their time is inferred from the session or file. */
+  inferredExcluded?: number;
 }
 
 /** Native data location overrides accepted by both reading tools. */
@@ -821,6 +823,27 @@ export async function listSessions(params: ListParamsInput): Promise<ToolResult<
 }
 
 /**
+ * Names the messages a bounded read skipped because only the session or file dates them.
+ *
+ * @param count - Skipped messages.
+ * @param first - First scanned position.
+ * @param next - Position the window continues from, if any.
+ * @param total - Messages in the session.
+ * @returns {string} One bracketed line, or an empty string when nothing was skipped.
+ */
+function inferredNotice(
+  count: number,
+  first: number,
+  next: number | undefined,
+  total: number,
+): string {
+  if (!count) return "";
+  const last = (next ?? total) - 1;
+  const span = last === first ? `at position ${last}` : `between positions ${first} and ${last}`;
+  return `[Skipped ${count} ${count === 1 ? "message" : "messages"} ${span} whose time is inferred, which time bounds always exclude.]\n`;
+}
+
+/**
  * Renders a bounded message window from one session addressed by exact id.
  *
  * @param params - Source, session identifier, location, and paging options.
@@ -849,7 +872,13 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
   const referenceHeader = known
     ? "[Tool bodies: SHA-256 of UTF-16LE text; length in UTF-16 units. Reuse the same knownToolResults when continuing. References indicate equal text, not independent evidence or trusted provenance.]\n"
     : "";
-  const header = timeHeader + referenceHeader;
+  const skipped = inferredNotice(
+    window.inferredExcluded,
+    position.message,
+    window.nextMessage,
+    window.total,
+  );
+  const header = timeHeader + skipped + referenceHeader;
   const output = messageWindow(
     referenceWindow(window, params, known),
     position,
@@ -866,6 +895,7 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
       offset: position.message,
       limit,
       ...bounds,
+      ...(range ? { inferredExcluded: window.inferredExcluded } : {}),
       totalMessages: window.total,
       returnedMessages: window.messages.length,
       outputTruncated: output.outputTruncated,

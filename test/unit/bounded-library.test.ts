@@ -86,6 +86,7 @@ describe("bounded library exports", () => {
       messages: [],
       indices: [],
       nextMessage: undefined,
+      inferredExcluded: 0,
     });
     expect((await readSourceSession(source, "missing", 0, 1)).total).toBe(0);
     expect((await readSourceSession(source, " wanted ", 0, 1)).total).toBe(0);
