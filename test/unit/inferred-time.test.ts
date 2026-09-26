@@ -119,6 +119,51 @@ describe("inferred message times", () => {
     },
   );
 
+  it("counts messages the bounds skip for an inferred time", async () => {
+    const { file, params } = fixture("pi");
+    utimesSync(file, new Date(instant), new Date(instant));
+    const first = await readSession({ ...params, ...bounds, limit: 1 });
+    expect(first.details.inferredExcluded).toBe(2);
+    expect(first.content[0]?.text).toContain(
+      "[Skipped 2 messages between positions 0 and 3 whose time is inferred, which time bounds always exclude.]",
+    );
+    const last = await readSession({ ...params, ...bounds, position: first.details.nextPosition });
+    expect(last.details.inferredExcluded).toBe(0);
+    expect(last.content[0]?.text).not.toContain("Skipped");
+    const all = await readSession(params);
+    expect(all.details).not.toHaveProperty("inferredExcluded");
+    const source = createSource("pi", { path: params.path });
+    expect(
+      (await readSourceSession(source, "proof", 0, 10, { since: epoch })).inferredExcluded,
+    ).toBe(2);
+    expect((await readSourceSession(source, "proof", 0, 10)).inferredExcluded).toBe(0);
+  });
+
+  it("tells a session with only inferred times from a quiet one", async () => {
+    const quiet = fixture("pi");
+    const inferred = fixture("openclaw", instant);
+    writeFileSync(
+      inferred.file,
+      [
+        { type: "session", id: "proof", timestamp: instant },
+        { type: "message", message: { role: "user", content: [{ type: "text", text: "a" }] } },
+      ]
+        .map((row) => JSON.stringify(row))
+        .join("\n"),
+    );
+    const window = { since: "2030-01-01T00:00:00.000Z", until: "2030-01-02T00:00:00.000Z" };
+    const none = await readSession({ ...quiet.params, ...window, offset: 4 });
+    const skipped = await readSession({ ...inferred.params, ...bounds });
+    expect(none.details.returnedMessages).toBe(0);
+    expect(skipped.details.returnedMessages).toBe(0);
+    expect(none.details.inferredExcluded).toBe(0);
+    expect(skipped.details.inferredExcluded).toBe(1);
+    expect(skipped.content[0]?.text).toContain(
+      "[Skipped 1 message at position 0 whose time is inferred, which time bounds always exclude.]",
+    );
+    expect(none.content[0]?.text).not.toContain("Skipped");
+  });
+
   it("tracks Codex response timestamps independently of user events", async () => {
     const { file, params } = fixture("codex", undefined, true);
     utimesSync(file, new Date(instant), new Date(instant));

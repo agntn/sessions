@@ -56,12 +56,20 @@ function inTimeRange(timestamp: number, range?: SessionTimeRange): boolean {
   );
 }
 
+function hasBounds(range?: SessionTimeRange): boolean {
+  return range?.since !== undefined || range?.until !== undefined;
+}
+
+function hasInferredTime(message: Readonly<Pick<Message, "timestampSource">>): boolean {
+  return message.timestampSource === "file" || message.timestampSource === "session";
+}
+
 function messageInTimeRange(
   message: Readonly<Pick<Message, "timestamp" | "timestampSource">>,
   range?: SessionTimeRange,
 ): boolean {
-  if (range?.since === undefined && range?.until === undefined) return true;
-  if (message.timestampSource === "file" || message.timestampSource === "session") return false;
+  if (!hasBounds(range)) return true;
+  if (hasInferredTime(message)) return false;
   return (
     Number.isFinite(new Date(message.timestamp).getTime()) && inTimeRange(message.timestamp, range)
   );
@@ -79,6 +87,8 @@ export interface ToolMessageWindow {
   readonly messages: readonly Message[];
   readonly indices: readonly number[];
   readonly nextMessage?: number;
+  /** Messages from `offset` up to `nextMessage` or the end that the bounds skipped because their time is inferred. */
+  readonly inferredExcluded: number;
 }
 
 interface SnippetMessage {
@@ -207,7 +217,7 @@ export async function listSourceSessions(
  * @param offset - Message offset, starting at zero.
  * @param limit - Maximum matching messages to retain.
  * @param range - Optional inclusive message timestamp bounds.
- * @returns {Promise<ToolMessageWindow>} Bounded messages and the total message count.
+ * @returns {Promise<ToolMessageWindow>} Bounded messages, the total message count, and how many inferred times the bounds skipped.
  */
 export async function readSourceSession(
   source: Readonly<Source>,
@@ -221,10 +231,16 @@ export async function readSourceSession(
   const indices: number[] = [];
   let nextMessage: number | undefined;
   let total = 0;
+  let inferredExcluded = 0;
+  const bounded = hasBounds(range);
   for await (const message of source.read({ sessionId })) {
     if (message.sessionId !== sessionId) continue;
     const index = total++;
     if (index < offset || nextMessage !== undefined) continue;
+    if (bounded && hasInferredTime(message)) {
+      inferredExcluded += 1;
+      continue;
+    }
     if (!messageInTimeRange(message, range)) continue;
     if (messages.length < limit) {
       messages.push(message);
@@ -233,5 +249,5 @@ export async function readSourceSession(
       nextMessage = index;
     }
   }
-  return { total, messages, indices, nextMessage };
+  return { total, messages, indices, nextMessage, inferredExcluded };
 }

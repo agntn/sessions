@@ -57,7 +57,7 @@ if (source.available()) {
 
 `createSource()` accepts the same location overrides as `create()`. Continue a message read with `window.nextMessage` as the offset when it's defined.
 
-Both functions take a zero-based `offset`, a positive integer `limit`, and optional `{ since, until }` bounds in epoch milliseconds. Summary bounds filter last activity; message bounds filter individual timestamps, excluding known file or session fallbacks. Both endpoints are inclusive. Summary `total` counts matching sessions. Message `total` counts the entire selected session, while `indices` and `nextMessage` retain its original positions, even across filtered gaps. Reuse the same bounds when continuing.
+Both functions take a zero-based `offset`, a positive integer `limit`, and optional `{ since, until }` bounds in epoch milliseconds. Summary bounds filter last activity; message bounds filter individual timestamps, excluding known file or session fallbacks. Both endpoints are inclusive. Summary `total` counts matching sessions. Message `total` counts the entire selected session, while `indices` and `nextMessage` retain its original positions, even across filtered gaps. `inferredExcluded` counts the messages from `offset` up to `nextMessage` (or the end) that the bounds skipped because their time is inferred, so a period with no matches can be told from a session that has no message times at all. Reuse the same bounds when continuing.
 
 Messages arrive in native read order, with complete blocks and no character truncation. The limit counts messages, not bytes: one large message can still be large. An empty time window keeps the session's total; a missing exact ID returns zero. These functions share the agent tools' projections and [scan limitations](#keep-reading-without-starting-over), not an index or snapshot. See the [window types](./src/tool-reader.ts) for the result shapes.
 
@@ -161,7 +161,7 @@ To read only messages from a period, pass `since` and/or `until` to `sessions_re
 }
 ```
 
-Reuse the same bounds with each returned `position`. `limit` caps matching messages (100 by default, up to 500); `offset` and continuation positions still refer to the original session, never a renumbered subset. Messages with invalid or inferred timestamps are excluded only when filtering. Without bounds, their content stays readable and fallback times are labeled `inferred from file` or `inferred from session`. A period with no matches returns an empty window, not a missing-session error.
+Reuse the same bounds with each returned `position`. `limit` caps matching messages (100 by default, up to 500); `offset` and continuation positions still refer to the original session, never a renumbered subset. Messages with invalid or inferred timestamps are excluded only when filtering. A bounded read counts the inferred ones it skipped in `details.inferredExcluded` and names them in a `[Skipped ...]` line. Without bounds, their content stays readable and fallback times are labeled `inferred from file` or `inferred from session`. A period with no matches returns an empty window, not a missing-session error.
 
 File adapters expose `Message.timestampSource` as `message`, `session`, or `file`. Legacy Codex JSON uses session time plus item order, not individual message times. Grok doesn't stamp each line. Creation and last activity come from `summary.json`, or from the file when that summary is missing. Other sources can leave provenance absent; filters then check the timestamp itself. Session activity listings still use fallback times.
 
