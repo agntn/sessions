@@ -135,6 +135,12 @@ describe("session listing across harnesses", () => {
     await expect(listSessions(params)).rejects.toThrow();
   });
 
+  it.each(["since", "until"])("names an empty %s beside lastHours", async (name) => {
+    await expect(listSessions({ lastHours: 1, [name]: "" })).rejects.toThrow(
+      `${name} must be an ISO timestamp`,
+    );
+  });
+
   it("accepts one name per harness and rejects one more", async () => {
     const names = Array.from({ length: sources().length }, (_, index) => `missing-${index}`);
     await expect(listSessions({ sources: names })).rejects.toThrow('Unknown source "missing-0"');
@@ -224,6 +230,29 @@ describe("session listing across harnesses", () => {
       details: { total: 3, sessions: [{ source: "codex", id: "same" }] },
     });
     expect(JSON.stringify(result)).toContain("offset=1");
+  });
+
+  it("rejects empty time bounds through MCP with the field name", async () => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMcpServer();
+    const client = new Client({ name: "window-test", version: "1" });
+    try {
+      await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+      const result = await client.callTool({
+        name: "sessions_list",
+        arguments: { lastHours: 1, since: "", until: "", limit: 1 },
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("Invalid arguments at /since");
+      const read = await client.callTool({
+        name: "sessions_read",
+        arguments: { source: "pi", sessionId: "same", until: "" },
+      });
+      expect(read.isError).toBe(true);
+      expect(JSON.stringify(read.content)).toContain("Invalid arguments at /until");
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
   });
 
   it("serves a real filtered fixture through MCP without a source-discovery call", async () => {

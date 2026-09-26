@@ -64,11 +64,13 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
     since: Type.Optional(
       Type.String({
         description: "Inclusive last activity lower bound, ISO timestamp with timezone.",
+        minLength: 1,
       }),
     ),
     until: Type.Optional(
       Type.String({
         description: "Inclusive last activity upper bound, ISO timestamp with timezone.",
+        minLength: 1,
       }),
     ),
     lastHours: Type.Optional(
@@ -124,12 +126,14 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
       Type.String({
         description:
           "Inclusive message timestamp lower bound, ISO timestamp with timezone. Reuse when continuing.",
+        minLength: 1,
       }),
     ),
     until: Type.Optional(
       Type.String({
         description:
           "Inclusive message timestamp upper bound, ISO timestamp with timezone. Reuse when continuing.",
+        minLength: 1,
       }),
     ),
     limit: Type.Optional(
