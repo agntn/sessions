@@ -183,6 +183,8 @@ pnpm build
 node dist/cli.mjs --help
 ```
 
+After that first build, an MCP client running `node <checkout>/dist/cli.mjs mcp` serves `src/`. An edit needs a server restart, not another `pnpm build`. Only a change to `src/cli.ts` itself needs one. Set `SESSIONS_DIST=1` to test the bundle instead.
+
 Run the library examples from the repository root after building.
 
 ```bash
