@@ -17,6 +17,7 @@
 - No agent surface reimplements an operation. Schemas are declared per surface because pi registers tools synchronously, the executors are not.
 - An MCP client reads `content` and never `details`, so tool text has to carry whatever the next call needs.
 - Agent reads stay bounded without persistence, caching, or indexes owned by this package. Stream summaries and requested message windows; use a native projection when the source store can answer more narrowly.
+- Inside a checkout, `dist/cli.mjs` loads the `mcp` command from `src/commands/mcp.ts`, so a local server takes edits on restart. The npm package, copies under `node_modules` and `SESSIONS_DIST=1` keep the bundle. `test/unit/bin.test.ts` runs `mcp` in each layout.
 - MCP is built on the low-level `Server`, deprecated in the SDK, because `McpServer.registerTool` takes Standard Schema only and `typebox` 1.x is not one.
 - Linting and formatting consume the shared `@agntn/ox` policy; repository-local config owns only ignore patterns.
 
