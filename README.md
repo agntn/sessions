@@ -13,7 +13,7 @@ The conversation you need is in another harness. Of course it is. `@agntn/sessio
 
 ## 📦 Start here
 
-You'll need Node.js 24 or later.
+You'll need Node.js 26 or later.
 
 ```bash
 pnpm add @agntn/sessions
