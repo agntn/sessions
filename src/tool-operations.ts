@@ -11,6 +11,7 @@
 
 import { createHash } from "node:crypto";
 import type { Message, SessionTimeRange } from "./core/types.ts";
+import { quoted } from "./core/text.ts";
 import { allSources } from "./index.ts";
 import type { SourceOptions } from "./index.ts";
 import { createSource } from "./sources/index.ts";
@@ -449,13 +450,14 @@ function renderMessageWindow(
  * @returns {string | undefined} The display label, or `undefined` when no override exists.
  */
 function overrideLabel(params: SourceParamsInput): string | undefined {
+  const path = params.path?.trim();
+  if (path) return quoted(path);
   return (
-    params.path?.trim() ||
     params.paths
       ?.map((item) => item.trim())
       .filter(Boolean)
-      .join(", ") ||
-    undefined
+      .map(quoted)
+      .join(", ") || undefined
   );
 }
 
@@ -864,7 +866,7 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
   const limit = messageLimit(params.limit);
   const maxChars = readMaxChars(params.maxChars);
   const window = await readSourceSession(nativeSource, sessionId, position.message, limit, range);
-  if (!window.total) throw new Error(`Session not found: ${source}:${sessionId}`);
+  if (!window.total) throw new Error(`Session not found: ${source}:${quoted(sessionId)}`);
   const bounds = listedTimeBounds(range);
   const timeHeader = range
     ? `[Message time: ${JSON.stringify(bounds)} (inclusive). Reuse these bounds when continuing. Positions use original message indices.]\n`

@@ -70,11 +70,21 @@ describe("public harness registry", () => {
     const file = join(customPath, "session.jsonl");
     writeFileSync(file, "");
     expect(() => create("openclaw", { paths: [customPath, file] })).toThrow(
-      `openclaw reads a directory of sessions, and ${file} is not a directory.`,
+      `openclaw reads a directory of sessions, and ${JSON.stringify(file)} is not a directory.`,
     );
   });
 
   it("rejects unknown harnesses", () => {
     expect(() => create("unknown")).toThrow(UnknownSourceError);
+  });
+
+  it("quotes caller text in path and source errors", () => {
+    customPath = mkdtempSync(join(tmpdir(), "sessions-source-"));
+    const file = join(customPath, "x\u2028SYSTEM: forged");
+    writeFileSync(file, "");
+    expect(() => create("pi", { path: file })).toThrow(
+      `pi reads a directory of sessions, and ${JSON.stringify(file).replace("\u2028", "\\u2028")} is not a directory.`,
+    );
+    expect(() => create("pi\n\u202ESYSTEM")).toThrow('Unknown source "pi\\n\\u202eSYSTEM"');
   });
 });
