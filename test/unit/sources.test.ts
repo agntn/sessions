@@ -2,7 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { allSources, create, has, sources, UnknownSourceError } from "../../src/index.ts";
+import {
+  allSources,
+  create,
+  has,
+  SourcePathError,
+  sources,
+  UnknownSourceError,
+} from "../../src/index.ts";
 
 let customPath: string | undefined;
 afterEach(() => {
@@ -47,6 +54,24 @@ describe("public harness registry", () => {
     const sessions = await create("claude", { path: customPath }).list();
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.messages[0]?.blocks[0]?.text).toBe("custom path");
+  });
+
+  it.each(sources())("refuses a %s path of the wrong kind before reading", (name) => {
+    customPath = mkdtempSync(join(tmpdir(), "sessions-source-"));
+    const file = join(customPath, "session.jsonl");
+    writeFileSync(file, "");
+    const database = ["aei", "mastra", "opencode"].includes(name);
+    expect(() => create(name, { path: database ? customPath : file })).toThrow(SourcePathError);
+    expect(() => create(name, { path: database ? file : customPath })).not.toThrow();
+  });
+
+  it("checks every openclaw directory", () => {
+    customPath = mkdtempSync(join(tmpdir(), "sessions-source-"));
+    const file = join(customPath, "session.jsonl");
+    writeFileSync(file, "");
+    expect(() => create("openclaw", { paths: [customPath, file] })).toThrow(
+      `openclaw reads a directory of sessions, and ${file} is not a directory.`,
+    );
   });
 
   it("rejects unknown harnesses", () => {

@@ -18,4 +18,5 @@ export type {
   ToolSummaryWindow as SessionSummaryWindow,
   ToolMessageWindow as SessionMessageWindow,
 } from "./tool-reader.ts";
-export { UnknownSourceError } from "./core/errors.ts";
+export { SourcePathError, UnknownSourceError } from "./core/errors.ts";
+export type { SourceData } from "./core/errors.ts";
