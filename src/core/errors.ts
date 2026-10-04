@@ -1,3 +1,5 @@
+import { quoted } from "./text.ts";
+
 /** Base error for session reader failures. */
 export class SessionsError extends Error {
   constructor(message: string, options?: Readonly<ErrorOptions>) {
@@ -11,7 +13,7 @@ export class UnknownSourceError extends SessionsError {
   readonly source: string;
 
   constructor(source: string) {
-    super(`Unknown source "${source}"`);
+    super(`Unknown source ${quoted(source)}`);
     this.name = "UnknownSourceError";
     this.source = source;
   }
@@ -29,8 +31,8 @@ export class SourcePathError extends SessionsError {
   constructor(source: string, path: string, expected: SourceData) {
     super(
       expected === "directory"
-        ? `${source} reads a directory of sessions, and ${path} is not a directory. Point path at the sessions directory, not at one session file.`
-        : `${source} reads a database file, and ${path} is not a file. Point path at the database itself.`,
+        ? `${source} reads a directory of sessions, and ${quoted(path)} is not a directory. Point path at the sessions directory, not at one session file.`
+        : `${source} reads a database file, and ${quoted(path)} is not a file. Point path at the database itself.`,
     );
     this.name = "SourcePathError";
     this.source = source;

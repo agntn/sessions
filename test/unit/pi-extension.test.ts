@@ -656,6 +656,6 @@ describe("Pi extension", () => {
         undefined,
         {} as ExtensionContext,
       ),
-    ).rejects.toThrow("Session not found: codex:missing");
+    ).rejects.toThrow('Session not found: codex:"missing"');
   });
 });

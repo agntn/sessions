@@ -165,14 +165,14 @@ describe("session listing across harnesses", () => {
 
   it("asks for the directory when path is one session file", async () => {
     const path = join(directory, ".pi/agent/sessions/same.jsonl");
-    const hint = `pi reads a directory of sessions, and ${path} is not a directory.`;
+    const hint = `pi reads a directory of sessions, and ${JSON.stringify(path)} is not a directory.`;
     await expect(readSession({ source: "pi", sessionId: "same", path })).rejects.toThrow(hint);
     await expect(listSessions({ source: "pi", path })).rejects.toThrow(hint);
   });
 
   it("asks for the database file when path is a directory", async () => {
     await expect(listSessions({ source: "opencode", path: directory })).rejects.toThrow(
-      `opencode reads a database file, and ${directory} is not a file.`,
+      `opencode reads a database file, and ${JSON.stringify(directory)} is not a file.`,
     );
   });
 
