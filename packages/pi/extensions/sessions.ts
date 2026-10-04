@@ -37,7 +37,12 @@ function loadToolOperations(): Promise<typeof SessionsTools> {
 
 const sourceOptions = {
   source: Type.String({ description: "Harness source name, for example codex or claude." }),
-  path: Type.Optional(Type.String({ description: "Override the source's native data path." })),
+  path: Type.Optional(
+    Type.String({
+      description:
+        "Native data path for the single source: the sessions directory for claude, codex, gemini, grok, omp, openclaw and pi, the database file for aei, mastra and opencode.",
+    }),
+  ),
   paths: Type.Optional(
     Type.Array(Type.String(), {
       description: "Override multiple native data paths for sources that support them.",

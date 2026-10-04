@@ -38,7 +38,7 @@ if (reader.available()) {
 }
 ```
 
-Readers use native data locations by default. Moved yours? Pass `create("claude", { path: "/custom/claude/projects" })`. Grok reads `$GROK_HOME/sessions` when that variable is set, and `~/.grok/sessions` otherwise. Sessions come back newest first, with messages in chronological order. Text, thinking, tool calls, tool results, roles, timestamps, and source metadata are normalized where the harness exposes them.
+Readers use native data locations by default. Moved yours? Pass `create("claude", { path: "/custom/claude/projects" })`. That's the directory, not one session in it. A file there throws `SourcePathError` before anything gets read. Grok reads `$GROK_HOME/sessions` when that variable is set, and `~/.grok/sessions` otherwise. Sessions come back newest first, with messages in chronological order. Text, thinking, tool calls, tool results, roles, timestamps, and source metadata are normalized where the harness exposes them.
 
 **Mind the archive size.** Library `list()` loads the complete archive, including message payloads, into memory. For large archives, read a page instead:
 
@@ -138,7 +138,7 @@ The extensions and MCP use the [same executors](./src/tool-operations.ts). Exten
 
 ### Keep reading, without starting over
 
-Use `source` with `path`, or `paths` where supported, to override one harness's location. Listings across harnesses use native locations and label each row with its source. Explicitly selected unavailable sources return an error. With no selection, only available sources are read.
+Use `source` with `path`, or `paths` where supported, to override one harness's location. `path` is a directory for most harnesses and the database file for aei, mastra and opencode. Got the exact `.jsonl` in hand? For Claude, Codex, OpenClaw, Pi and OMP, pass the directory it sits in and let `sessionId` do the picking. Hand over the file itself and the tools say so, instead of choking on `ENOTDIR`. Listings across harnesses use native locations and label each row with its source. Explicitly selected unavailable sources return an error. With no selection, only available sources are read.
 
 Page session listings with `offset` and `limit` (up to 100). For a fixed period, pass `since` and/or `until` as ISO timestamps with a timezone. Both bounds are inclusive. Don't combine them with `lastHours`. Its response gives fixed bounds to reuse on later pages, so the time window doesn't move between calls. The archive itself isn't a snapshot. With `since`, Claude, Codex, Pi and OMP skip a session whose files were all last written before it, so a transcript with a backdated modification time drops out of that listing.
 

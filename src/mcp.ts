@@ -41,7 +41,11 @@ const sourceArguments = {
     maxLength: 64,
   }),
   path: Type.Optional(
-    Type.String({ description: "Override the source's native data path", minLength: 1 }),
+    Type.String({
+      description:
+        "Native data path for the single source: the sessions directory for claude, codex, gemini, grok, omp, openclaw and pi, the database file for aei, mastra and opencode",
+      minLength: 1,
+    }),
   ),
   paths: Type.Optional(
     Type.Array(Type.String({ minLength: 1 }), {

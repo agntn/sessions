@@ -1,7 +1,9 @@
 import type { Source } from "../core/types.ts";
 import type { SessionReader } from "../core/session.ts";
 import { createSessionReader } from "../core/session.ts";
-import { UnknownSourceError } from "../core/errors.ts";
+import { statSync } from "node:fs";
+import type { SourceData } from "../core/errors.ts";
+import { SourcePathError, UnknownSourceError } from "../core/errors.ts";
 import { AeiSource } from "./aei.ts";
 import { ClaudeSource } from "./claude.ts";
 import { CodexSource } from "./codex.ts";
@@ -38,6 +40,40 @@ const adapters: Record<string, AdapterFactory> = {
   pi: (options) => new PiSource(options?.path),
 };
 
+/** Sources whose path is one database file; the rest read a directory of session files. */
+const databaseSources = new Set(["aei", "mastra", "opencode"]);
+
+function overridePaths(
+  name: string,
+  options?: SourceOptionsInput,
+): readonly (string | undefined)[] {
+  return name === "openclaw" && options?.paths ? options.paths : [options?.path];
+}
+
+function holds(path: string, expected: SourceData): boolean {
+  try {
+    const stats = statSync(path, { throwIfNoEntry: false });
+    if (!stats) return true;
+    return expected === "directory" ? stats.isDirectory() : stats.isFile();
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Refuses an existing override of the wrong kind; a missing or unreadable one stays with `available()`.
+ *
+ * @param name - Registered harness source name.
+ * @param options - Optional native data location overrides.
+ * @throws {SourcePathError} When an existing override is the wrong kind of entry.
+ */
+function assertPathKind(name: string, options?: SourceOptionsInput): void {
+  const expected: SourceData = databaseSources.has(name) ? "database file" : "directory";
+  for (const path of overridePaths(name, options)) {
+    if (path && !holds(path, expected)) throw new SourcePathError(name, path, expected);
+  }
+}
+
 /**
  * Creates a session reader for a supported harness.
  *
@@ -60,6 +96,7 @@ export function createSource(name: string, options?: SourceOptionsInput): Source
   if (!Object.hasOwn(adapters, name)) throw new UnknownSourceError(name);
   const factory = adapters[name];
   if (!factory) throw new UnknownSourceError(name);
+  assertPathKind(name, options);
   return factory(options);
 }
 

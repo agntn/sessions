@@ -14,7 +14,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMcpServer } from "../../src/mcp.ts";
 import { sources } from "../../src/index.ts";
-import { listSessions } from "../../src/tool-operations.ts";
+import { listSessions, readSession } from "../../src/tool-operations.ts";
 
 let directory: string;
 
@@ -160,6 +160,19 @@ describe("session listing across harnesses", () => {
     writeFileSync(join(path, "opencode.db"), "not a database");
     await expect(listSessions({ sources: ["pi", "opencode"] })).rejects.toThrow(
       "Unable to list opencode sessions",
+    );
+  });
+
+  it("asks for the directory when path is one session file", async () => {
+    const path = join(directory, ".pi/agent/sessions/same.jsonl");
+    const hint = `pi reads a directory of sessions, and ${path} is not a directory.`;
+    await expect(readSession({ source: "pi", sessionId: "same", path })).rejects.toThrow(hint);
+    await expect(listSessions({ source: "pi", path })).rejects.toThrow(hint);
+  });
+
+  it("asks for the database file when path is a directory", async () => {
+    await expect(listSessions({ source: "opencode", path: directory })).rejects.toThrow(
+      `opencode reads a database file, and ${directory} is not a file.`,
     );
   });
 
