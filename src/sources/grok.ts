@@ -27,6 +27,12 @@ interface SessionClock {
 type Entry = Readonly<Record<string, unknown>>;
 type Time = Readonly<Pick<Message, "timestamp" | "timestampSource">>;
 
+interface EntryKey {
+  readonly kind?: ChunkKind;
+  readonly text: string;
+  readonly anchor?: number;
+}
+
 type ChunkKind = "user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk";
 
 interface ChunkRun {
@@ -221,6 +227,16 @@ function roleFor(type: unknown): Message["role"] | undefined {
   return undefined;
 }
 
+/**
+ * A copy, not a slice: V8 keeps a sliced string's whole parent alive.
+ *
+ * @param text - Chunk or entry text.
+ * @returns {string} Its first `RUN_PREFIX` characters as a string of their own.
+ */
+function prefixOf(text: string): string {
+  return Array.from(text.slice(0, RUN_PREFIX)).join("");
+}
+
 function isChunkKind(kind: string): kind is ChunkKind {
   return CHUNK_KINDS.includes(kind);
 }
@@ -310,11 +326,6 @@ class MessageTimes {
     agent_message_chunk: [],
     agent_thought_chunk: [],
   };
-  private readonly cursors: Record<ChunkKind, number> = {
-    user_message_chunk: 0,
-    agent_message_chunk: 0,
-    agent_thought_chunk: 0,
-  };
   private previousKind: string | undefined;
   private runCount = 0;
   private known: number | undefined;
@@ -350,45 +361,37 @@ class MessageTimes {
   }
 
   /**
-   * Text waits for the next tool anchor and matches backwards from it, so a run a rewind dropped
-   * loses to the run the history kept.
+   * Matches the whole transcript backwards, so a run a rewind dropped loses to the run the history
+   * kept. Each entry leaves a short key, never its payload.
    *
-   * @param batch - Chat entries in file order, ending at a tool anchor or the transcript end.
-   * @param clock - Session clock for entries the updates don't date.
-   * @param endsTranscript - Whether the batch holds the last entry of the transcript.
-   * @returns {Time[]} One time per entry.
+   * @param path - The session's `chat_history.jsonl`.
+   * @returns {Promise<(number | undefined)[]>} One time per visible entry, empty without runs.
    */
-  date(batch: readonly Entry[], clock: SessionClock, endsTranscript: boolean): Time[] {
-    const anchors = batch.map((entry) => this.anchorOf(entry));
-    const upper = anchors.at(-1);
-    const said = this.matchBackward(batch, upper ?? Number.POSITIVE_INFINITY);
-    const lastIndex = endsTranscript ? batch.length - 1 : -1;
-    return batch.map((_entry, index) =>
-      this.settle(said[index] ?? anchors[index], clock, index === lastIndex),
-    );
+  async dateTranscript(path: string): Promise<(number | undefined)[]> {
+    const keys: EntryKey[] = [];
+    if (this.runCount === 0 && this.tools.size === 0) return [];
+    for await (const entry of records(path)) keys.push(this.keyOf(entry));
+    return this.matchKeys(keys);
   }
 
-  /**
-   * A batch closes at a tool anchor, or after every entry when there are no runs to match.
-   *
-   * @param batch - Entries waiting to be dated.
-   * @returns {boolean} Whether the batch is ready to date.
-   */
-  closes(batch: readonly Entry[]): boolean {
-    const last = batch.at(-1);
-    return last !== undefined && (this.runCount === 0 || this.anchorOf(last) !== undefined);
-  }
-
-  /**
-   * Exact time from a tool call id, which a rewind can't repeat.
-   *
-   * @param entry - Chat history entry.
-   * @returns {number | undefined} Completion time for a result, start time for a call.
-   */
-  anchorOf(entry: Entry): number | undefined {
-    if (entry.type === "tool_result") return this.toolTime(scalarText(entry.tool_call_id), "last");
-    const call = blocksFor(entry).find((block) => block.type === "tool_call");
-    return this.toolTime(call?.toolCallId, "first");
+  private matchKeys(keys: readonly EntryKey[]): (number | undefined)[] {
+    const said = keys.map((key) => key.anchor);
+    const ceilings: Record<ChunkKind, number> = {
+      user_message_chunk: this.runs.user_message_chunk.length - 1,
+      agent_message_chunk: this.runs.agent_message_chunk.length - 1,
+      agent_thought_chunk: this.runs.agent_thought_chunk.length - 1,
+    };
+    let upper = Number.POSITIVE_INFINITY;
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index];
+      upper = key?.anchor ?? upper;
+      if (key?.kind === undefined) continue;
+      const found = this.lastMatch(key.kind, key.text, this.ceiling(key.kind, upper, ceilings));
+      if (found === -1) continue;
+      said[index] = this.runs[key.kind][found]?.at;
+      ceilings[key.kind] = found - 1;
+    }
+    return said;
   }
 
   private add(kind: string, head: string, at: number | undefined, run: string | undefined): void {
@@ -408,7 +411,7 @@ class MessageTimes {
 
   private addRun(kind: ChunkKind, text: string, at: number): void {
     if (text.length === 0) return;
-    this.runs[kind].push({ text: text.slice(0, RUN_PREFIX), at });
+    this.runs[kind].push({ text: prefixOf(text), at });
     this.runCount += 1;
   }
 
@@ -424,7 +427,7 @@ class MessageTimes {
    * @param isLast - Whether this is the last entry of the transcript.
    * @returns {Time} The time and where it came from.
    */
-  private settle(at: number | undefined, clock: SessionClock, isLast: boolean): Time {
+  settle(at: number | undefined, clock: SessionClock, isLast: boolean): Time {
     if (at !== undefined) {
       this.known = at;
       return { timestamp: at, timestampSource: "message" };
@@ -433,36 +436,34 @@ class MessageTimes {
     return isLast || this.known === undefined ? inferred : { ...inferred, timestamp: this.known };
   }
 
-  private matchBackward(batch: readonly Entry[], upper: number): (number | undefined)[] {
-    const ceilings: Record<ChunkKind, number> = {
-      user_message_chunk: this.ceiling("user_message_chunk", upper),
-      agent_message_chunk: this.ceiling("agent_message_chunk", upper),
-      agent_thought_chunk: this.ceiling("agent_thought_chunk", upper),
-    };
-    const next = { ...this.cursors };
-    const said = batch.map(() => undefined as number | undefined);
-    for (let index = batch.length - 1; index >= 0; index -= 1) {
-      const key = chunkRunFor(batch[index] ?? {});
-      const found = key === undefined ? -1 : this.lastMatch(key.kind, key.text, ceilings[key.kind]);
-      if (key === undefined || found === -1) continue;
-      said[index] = this.runs[key.kind][found]?.at;
-      ceilings[key.kind] = found - 1;
-      next[key.kind] = Math.max(next[key.kind], found + 1);
-    }
-    Object.assign(this.cursors, next);
-    return said;
+  private keyOf(entry: Entry): EntryKey {
+    const run = chunkRunFor(entry);
+    const anchor = this.anchorOf(entry);
+    return run === undefined
+      ? { text: "", anchor }
+      : { kind: run.kind, text: prefixOf(run.text), anchor };
   }
 
-  private ceiling(kind: ChunkKind, upper: number): number {
+  private anchorOf(entry: Entry): number | undefined {
+    if (entry.type === "tool_result") return this.toolTime(scalarText(entry.tool_call_id), "last");
+    const call = blocksFor(entry).find((block) => block.type === "tool_call");
+    return this.toolTime(call?.toolCallId, "first");
+  }
+
+  private ceiling(
+    kind: ChunkKind,
+    upper: number,
+    ceilings: Readonly<Record<ChunkKind, number>>,
+  ): number {
     const runs = this.runs[kind];
-    let index = runs.length - 1;
-    while (index >= this.cursors[kind] && (runs[index]?.at ?? upper) > upper) index -= 1;
+    let index = ceilings[kind];
+    while (index >= 0 && (runs[index]?.at ?? upper) > upper) index -= 1;
     return index;
   }
 
   private lastMatch(kind: ChunkKind, text: string, from: number): number {
     const runs = this.runs[kind];
-    for (let index = from; index >= this.cursors[kind]; index -= 1) {
+    for (let index = from; index >= 0; index -= 1) {
       const run = runs[index];
       if (run !== undefined && text.startsWith(run.text)) return index;
     }
@@ -560,28 +561,22 @@ export class GrokSource implements Source {
     const sessionId = sessionIdFromDirectory(file.directory);
     const clock = readClock(file.directory, file.mtime);
     const times = await MessageTimes.read(file.directory);
-    let batch: Entry[] = [];
+    const dates = await times.dateTranscript(file.path);
+    let index = 0;
+    let pending: Entry | undefined;
     for await (const entry of records(file.path)) {
-      if (times.closes(batch)) {
-        yield* this.messagesFrom(batch, sessionId, clock, times.date(batch, clock, false));
-        batch = [];
+      if (pending) {
+        const time = times.settle(dates[index], clock, false);
+        const message = this.messageFrom(pending, sessionId, clock, time);
+        if (message) yield message;
+        index += 1;
       }
-      batch.push(entry);
+      pending = entry;
     }
-    yield* this.messagesFrom(batch, sessionId, clock, times.date(batch, clock, true));
-  }
-
-  private *messagesFrom(
-    batch: readonly Entry[],
-    sessionId: string,
-    clock: SessionClock,
-    times: readonly Time[],
-  ): Generator<Message> {
-    for (const [index, entry] of batch.entries()) {
-      const time = times[index];
-      const message = time && this.messageFrom(entry, sessionId, clock, time);
-      if (message) yield message;
-    }
+    if (!pending) return;
+    const time = times.settle(dates[index], clock, true);
+    const message = this.messageFrom(pending, sessionId, clock, time);
+    if (message) yield message;
   }
 
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
