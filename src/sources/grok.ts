@@ -35,6 +35,8 @@ interface RunPick {
   readonly text: string;
   readonly found: number;
   readonly ceiling: number;
+  /** Time of the nearest tool anchor before the entry; a run older than that can't be its twin. */
+  readonly floor: number;
 }
 
 interface EntryKey {
@@ -253,12 +255,30 @@ function prefixOf(text: string): string {
 
 /** Unclaimed runs of one kind: earliest index by exact prefix, and the lengths that occur. */
 interface UnclaimedRuns {
-  readonly first: Map<string, number>;
+  readonly byText: Map<string, number[]>;
   readonly lengths: number[];
 }
 
 function noRuns(): UnclaimedRuns {
-  return { first: new Map(), lengths: [] };
+  return { byText: new Map(), lengths: [] };
+}
+
+/**
+ * Binary search over rising run indexes.
+ *
+ * @param indexes - Run indexes in rising order.
+ * @param ceiling - Highest index allowed.
+ * @returns {number | undefined} The highest index at or below the ceiling.
+ */
+function lastAtMost(indexes: readonly number[], ceiling: number): number | undefined {
+  let low = 0;
+  let high = indexes.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if ((indexes[middle] ?? Number.POSITIVE_INFINITY) <= ceiling) low = middle + 1;
+    else high = middle - 1;
+  }
+  return high >= 0 ? indexes[high] : undefined;
 }
 
 function isChunkKind(kind: string): kind is ChunkKind {
@@ -487,6 +507,7 @@ class MessageTimes {
       agent_message_chunk: this.runs.agent_message_chunk.length - 1,
       agent_thought_chunk: this.runs.agent_thought_chunk.length - 1,
     };
+    const floors = this.floorsOf(keys);
     let upper = Number.POSITIVE_INFINITY;
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index];
@@ -495,10 +516,20 @@ class MessageTimes {
       const ceiling = this.ceiling(key.kind, upper, ceilings);
       const found = this.lastMatch(key.kind, key.text, ceiling);
       if (found === -1) continue;
-      picks.push({ index, kind: key.kind, text: key.text, found, ceiling });
+      const floor = floors[index] ?? Number.NEGATIVE_INFINITY;
+      picks.push({ index, kind: key.kind, text: key.text, found, ceiling, floor });
       ceilings[key.kind] = found - 1;
     }
     return this.settlePicks(keys, picks);
+  }
+
+  private floorsOf(keys: readonly EntryKey[]): number[] {
+    let floor = Number.NEGATIVE_INFINITY;
+    return keys.map((key) => {
+      const before = floor;
+      floor = key.anchor ?? floor;
+      return before;
+    });
   }
 
   /**
@@ -536,17 +567,20 @@ class MessageTimes {
       if (!isChunkKind(kind)) continue;
       const free = noRuns();
       for (const [index, run] of this.runs[kind].entries()) {
-        if (Object.hasOwn(claimed, `${kind}:${index}`) || free.first.has(run.text)) continue;
-        free.first.set(run.text, index);
+        if (Object.hasOwn(claimed, `${kind}:${index}`)) continue;
+        const same = free.byText.get(run.text);
+        if (same) same.push(index);
+        else free.byText.set(run.text, [index]);
       }
-      free.lengths.push(...new Set([...free.first.keys()].map((text) => text.length)));
+      free.lengths.push(...new Set([...free.byText.keys()].map((text) => text.length)));
       free.lengths.sort((left, right) => left - right);
       this.unclaimed[kind] = free;
     }
   }
 
   /**
-   * Indexes go in rising order, so the index stored for a text is the earliest run with it.
+   * A twin is the latest unclaimed run with a prefix of the pick's text that the pick's ceiling
+   * reaches, and only if it's no older than the tool anchor before the pick.
    *
    * @param pick - A match found walking backwards.
    * @returns {boolean} Whether an unclaimed run in its reach says the same thing.
@@ -555,8 +589,10 @@ class MessageTimes {
     const free = this.unclaimed[pick.kind];
     for (const length of free.lengths) {
       if (length > pick.text.length) return false;
-      const index = free.first.get(pick.text.slice(0, length));
-      if (index !== undefined && index <= pick.ceiling) return true;
+      const same = free.byText.get(pick.text.slice(0, length));
+      const index = same && lastAtMost(same, pick.ceiling);
+      const run = index === undefined ? undefined : this.runs[pick.kind][index];
+      if (run !== undefined && run.at >= pick.floor) return true;
     }
     return false;
   }
