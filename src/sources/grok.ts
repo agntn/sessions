@@ -55,6 +55,10 @@ interface ToolTimes {
 
 /** Kind, tool call id and write time all sit in the first few hundred bytes of an update. */
 const HEAD_BYTES = 1024;
+/** A longer update line keeps only its ends: a chunk that size dates nothing, a tool still does. */
+const LINE_HEAD = 1 << 16;
+/** `_meta` closes every update, a few hundred bytes from its end. */
+const LINE_TAIL = 4096;
 /** Only a prefix is kept per chunk run, so a pasted prompt isn't held in memory twice. */
 const RUN_PREFIX = 200;
 const QUERY_OPEN = "<user_query>\n";
@@ -299,28 +303,87 @@ function chunkRunFor(
   }
 }
 
+/** What a line keeps: its start, its end, and whether the start is all of it. */
+interface LineView {
+  readonly head: Buffer;
+  readonly tail: Buffer;
+  readonly whole: boolean;
+}
+
+/** Keeps at most `LINE_HEAD` bytes from the start of a line and `LINE_TAIL` from its end. */
+class LineSplitter {
+  /** The read chunk `drain()` works through next. */
+  chunk: Buffer = Buffer.alloc(0);
+  private head: Buffer[] = [];
+  private headSize = 0;
+  private tail: Buffer = Buffer.alloc(0);
+  private size = 0;
+
+  /**
+   * Splits the current chunk and hands back the lines it finished.
+   *
+   * @returns {LineView[]} Lines that ended inside this chunk.
+   */
+  drain(): LineView[] {
+    const done: LineView[] = [];
+    let start = 0;
+    for (let end = this.chunk.indexOf(10); end !== -1; end = this.chunk.indexOf(10, start)) {
+      this.take(start, end);
+      done.push(this.finish());
+      start = end + 1;
+    }
+    if (start < this.chunk.length) this.take(start, this.chunk.length);
+    return done;
+  }
+
+  /**
+   * Finishes the last line when the file doesn't end with a newline.
+   *
+   * @returns {LineView[]} The last line, if any bytes are left.
+   */
+  end(): LineView[] {
+    return this.size > 0 ? [this.finish()] : [];
+  }
+
+  private take(start: number, end: number): void {
+    if (this.headSize < LINE_HEAD) {
+      const stop = Math.min(end, start + LINE_HEAD - this.headSize);
+      this.head.push(Buffer.from(this.chunk.subarray(start, stop)));
+      this.headSize += stop - start;
+    }
+    const from = Math.max(start, end - LINE_TAIL);
+    const joined = Buffer.concat([this.tail, this.chunk.subarray(from, end)]);
+    this.tail = Buffer.from(joined.subarray(Math.max(0, joined.length - LINE_TAIL)));
+    this.size += end - start;
+  }
+
+  private finish(): LineView {
+    const line = { head: Buffer.concat(this.head), tail: this.tail, whole: this.size <= LINE_HEAD };
+    this.head = [];
+    this.headSize = 0;
+    this.tail = Buffer.alloc(0);
+    this.size = 0;
+    return line;
+  }
+}
+
 /**
- * Splits on bytes, so a megabyte of tool output is never decoded just to find its id.
+ * Splits on bytes and keeps only the ends of a long line, so a megabyte of tool output is never
+ * held or decoded just to find its id.
  *
  * @param path - JSONL file to read.
- * @yields {Buffer} One line without its newline.
+ * @yields {LineView} One line, cut down to its ends when it's long.
  */
-async function* lineBuffers(path: string): AsyncGenerator<Buffer> {
+async function* lineViews(path: string): AsyncGenerator<LineView> {
   const input = createReadStream(path, { highWaterMark: 1 << 20 });
   const chunks: AsyncIterable<Buffer> = input;
-  let pending: Buffer[] = [];
+  const splitter = new LineSplitter();
   try {
     for await (const chunk of chunks) {
-      let start = 0;
-      for (let end = chunk.indexOf(10); end !== -1; end = chunk.indexOf(10, start)) {
-        const piece = chunk.subarray(start, end);
-        yield pending.length > 0 ? Buffer.concat([...pending, piece]) : piece;
-        pending = [];
-        start = end + 1;
-      }
-      if (start < chunk.length) pending.push(chunk.subarray(start));
+      splitter.chunk = chunk;
+      yield* splitter.drain();
     }
-    if (pending.length > 0) yield Buffer.concat(pending);
+    yield* splitter.end();
   } finally {
     input.destroy();
   }
@@ -356,14 +419,14 @@ class MessageTimes {
 
   private static async scan(path: string): Promise<MessageTimes> {
     const times = new MessageTimes();
-    for await (const line of lineBuffers(path)) {
-      const head = line.toString("utf8", 0, HEAD_BYTES);
+    for await (const line of lineViews(path)) {
+      const head = line.head.toString("utf8", 0, HEAD_BYTES);
       const kind = UPDATE_KIND.exec(head)?.[1];
       if (kind === undefined) continue;
-      const metaAt = line.lastIndexOf(META_KEY);
-      const at = updateTime(head, metaAt === -1 ? "" : line.toString("utf8", metaAt));
+      const metaAt = line.tail.lastIndexOf(META_KEY);
+      const at = updateTime(head, metaAt === -1 ? "" : line.tail.toString("utf8", metaAt));
       const opensRun = isChunkKind(kind) && kind !== times.previousKind;
-      times.add(kind, head, at, opensRun ? line.toString("utf8") : undefined);
+      times.add(kind, head, at, opensRun && line.whole ? line.head.toString("utf8") : undefined);
     }
     return times;
   }
@@ -418,22 +481,33 @@ class MessageTimes {
     let kept = picks;
     for (let size = -1; size !== kept.length;) {
       size = kept.length;
-      const claimed = Object.fromEntries(kept.map((pick) => [`${pick.kind}:${pick.found}`, true]));
-      kept = kept.filter((pick) => !this.hasTwin(pick, claimed));
+      const free = this.unclaimed(kept);
+      kept = kept.filter((pick) => !this.hasTwin(pick, free[pick.kind]));
     }
     const said = keys.map((key) => key.anchor);
     for (const pick of kept) said[pick.index] = this.runs[pick.kind][pick.found]?.at;
     return said;
   }
 
-  private hasTwin(pick: RunPick, claimed: Readonly<Record<string, boolean>>): boolean {
+  private unclaimed(picks: readonly RunPick[]): Record<ChunkKind, number[]> {
+    const claimed = Object.fromEntries(picks.map((pick) => [`${pick.kind}:${pick.found}`, true]));
+    const free = (kind: ChunkKind): number[] =>
+      this.runs[kind].flatMap((_run, index) =>
+        Object.hasOwn(claimed, `${kind}:${index}`) ? [] : [index],
+      );
+    return {
+      user_message_chunk: free("user_message_chunk"),
+      agent_message_chunk: free("agent_message_chunk"),
+      agent_thought_chunk: free("agent_thought_chunk"),
+    };
+  }
+
+  private hasTwin(pick: RunPick, free: readonly number[]): boolean {
     const runs = this.runs[pick.kind];
-    for (let index = pick.ceiling; index >= 0; index -= 1) {
+    return free.some((index) => {
       const run = runs[index];
-      if (run === undefined || Object.hasOwn(claimed, `${pick.kind}:${index}`)) continue;
-      if (pick.text.startsWith(run.text)) return true;
-    }
-    return false;
+      return index <= pick.ceiling && run !== undefined && pick.text.startsWith(run.text);
+    });
   }
 
   private add(kind: string, head: string, at: number | undefined, run: string | undefined): void {

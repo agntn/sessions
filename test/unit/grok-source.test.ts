@@ -440,6 +440,37 @@ describe("GrokSource", () => {
     ]);
   });
 
+  it("skips a chunk too long to keep and still dates the next one", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    const long = `${"y".repeat(70_000)}.`;
+    writeSession(
+      directory,
+      "project",
+      "long-chunk",
+      [
+        { type: "assistant", content: long },
+        { type: "assistant", content: "short." },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "long-chunk", [
+      { at: "2026-09-30T08:01:00.000Z", update: chunk("agent_message_chunk", long) },
+      { at: "2026-09-30T08:01:30.000Z", update: { sessionUpdate: "turn_completed" } },
+      { at: "2026-09-30T08:02:00.000Z", update: chunk("agent_message_chunk", "short.") },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(
+      messages.map((message) => [
+        new Date(message.timestamp).toISOString(),
+        message.timestampSource,
+      ]),
+    ).toEqual([
+      ["2026-09-30T08:00:00.000Z", "session"],
+      ["2026-09-30T08:02:00.000Z", "message"],
+    ]);
+  });
+
   it("frees the run of a match it drops for being ambiguous", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     writeSession(
