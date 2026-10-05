@@ -1,6 +1,8 @@
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, read, readdirSync, readFileSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
-import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
+import { promisify } from "node:util";
 import { home, osUser } from "../core/env.ts";
 import type {
   Block,
@@ -453,13 +455,13 @@ class MessageTimes {
    * Matches the whole transcript backwards from tool anchors. Each entry leaves a short key, never
    * its payload.
    *
-   * @param path - The session's `chat_history.jsonl`.
+   * @param file - The session's `chat_history.jsonl`, opened once for both passes.
    * @returns {Promise<(number | undefined)[]>} One time per visible entry, empty without runs.
    */
-  async dateTranscript(path: string): Promise<(number | undefined)[]> {
+  async dateTranscript(file: Snapshot): Promise<(number | undefined)[]> {
     const keys: EntryKey[] = [];
     if (this.runCount === 0 && this.tools.size === 0) return [];
-    for await (const entry of records(path)) keys.push(this.keyOf(entry));
+    for await (const entry of records(file)) keys.push(this.keyOf(entry));
     return this.matchKeys(keys);
   }
 
@@ -636,15 +638,41 @@ function isVisible(entry: Readonly<Record<string, unknown>>): boolean {
   return roleFor(entry.type) !== undefined && blocksFor(entry).length > 0;
 }
 
-async function* records(path: string): AsyncGenerator<Readonly<Record<string, unknown>>> {
-  const input = createReadStream(path);
-  try {
-    for await (const line of createInterface({ input, crlfDelay: Infinity })) {
-      const entry = parseJsonRecord(line);
-      if (entry && isVisible(entry)) yield entry;
-    }
-  } finally {
-    input.destroy();
+/** One open transcript and the size it had then, so both passes read the same bytes. */
+interface Snapshot {
+  readonly fd: number;
+  readonly size: number;
+}
+
+const readAt = promisify(read);
+
+/**
+ * Reads lines by position from an open file, so a second pass sees the same bytes as the first.
+ *
+ * @param file - Open transcript and its size when opened.
+ * @yields {string} One line without its newline.
+ */
+async function* textLines(file: Snapshot): AsyncGenerator<string> {
+  const chunk = Buffer.alloc(1 << 20);
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  for (let position = 0; position < file.size;) {
+    const length = Math.min(chunk.length, file.size - position);
+    const { bytesRead } = await readAt(file.fd, chunk, 0, length, position);
+    if (bytesRead === 0) break;
+    position += bytesRead;
+    const lines = (pending + decoder.write(chunk.subarray(0, bytesRead))).split("\n");
+    pending = lines.pop() ?? "";
+    yield* lines;
+  }
+  pending += decoder.end();
+  if (pending.length > 0) yield pending;
+}
+
+async function* records(file: Snapshot): AsyncGenerator<Readonly<Record<string, unknown>>> {
+  for await (const line of textLines(file)) {
+    const entry = parseJsonRecord(line);
+    if (entry && isVisible(entry)) yield entry;
   }
 }
 
@@ -695,22 +723,28 @@ export class GrokSource implements Source {
     const sessionId = sessionIdFromDirectory(file.directory);
     const clock = readClock(file.directory, file.mtime);
     const times = await MessageTimes.read(file.directory);
-    const dates = await times.dateTranscript(file.path);
-    let index = 0;
-    let pending: Entry | undefined;
-    for await (const entry of records(file.path)) {
-      if (pending) {
-        const time = times.settle(dates[index], clock, false);
-        const message = this.messageFrom(pending, sessionId, clock, time);
-        if (message) yield message;
-        index += 1;
+    const handle = await open(file.path);
+    try {
+      const snapshot = { fd: handle.fd, size: (await handle.stat()).size };
+      const dates = await times.dateTranscript(snapshot);
+      let index = 0;
+      let pending: Entry | undefined;
+      for await (const entry of records(snapshot)) {
+        if (pending) {
+          const time = times.settle(dates[index], clock, false);
+          const message = this.messageFrom(pending, sessionId, clock, time);
+          if (message) yield message;
+          index += 1;
+        }
+        pending = entry;
       }
-      pending = entry;
+      if (!pending) return;
+      const time = times.settle(dates[index], clock, true);
+      const message = this.messageFrom(pending, sessionId, clock, time);
+      if (message) yield message;
+    } finally {
+      await handle.close();
     }
-    if (!pending) return;
-    const time = times.settle(dates[index], clock, true);
-    const message = this.messageFrom(pending, sessionId, clock, time);
-    if (message) yield message;
   }
 
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
