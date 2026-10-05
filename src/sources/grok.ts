@@ -404,8 +404,8 @@ class MessageTimes {
   }
 
   /**
-   * A pick stays only when no run left unclaimed in its reach says the same thing. Grok logs no
-   * rewind, so such runs can't be told apart and the entry keeps its anchor or none.
+   * A pick stays only when no run left unclaimed in its reach says the same thing, rechecked until
+   * nothing changes. Grok logs no rewind, so such runs can't be told apart.
    *
    * @param keys - One key per visible entry.
    * @param picks - Matches found walking backwards.
@@ -415,12 +415,14 @@ class MessageTimes {
     keys: readonly EntryKey[],
     picks: readonly RunPick[],
   ): (number | undefined)[] {
-    const said = keys.map((key) => key.anchor);
-    const claimed = Object.fromEntries(picks.map((pick) => [`${pick.kind}:${pick.found}`, true]));
-    for (const pick of picks) {
-      if (this.hasTwin(pick, claimed)) continue;
-      said[pick.index] = this.runs[pick.kind][pick.found]?.at;
+    let kept = picks;
+    for (let size = -1; size !== kept.length;) {
+      size = kept.length;
+      const claimed = Object.fromEntries(kept.map((pick) => [`${pick.kind}:${pick.found}`, true]));
+      kept = kept.filter((pick) => !this.hasTwin(pick, claimed));
     }
+    const said = keys.map((key) => key.anchor);
+    for (const pick of kept) said[pick.index] = this.runs[pick.kind][pick.found]?.at;
     return said;
   }
 

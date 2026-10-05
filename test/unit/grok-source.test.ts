@@ -440,6 +440,32 @@ describe("GrokSource", () => {
     ]);
   });
 
+  it("frees the run of a match it drops for being ambiguous", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "overlap",
+      [
+        { type: "assistant", content: "abc" },
+        { type: "assistant", content: "abx" },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(
+      directory,
+      "project",
+      "overlap",
+      ["abc", "ab", "abx"].flatMap((text, index) => [
+        { at: "2026-09-30T08:00:30.000Z", update: { sessionUpdate: "turn_completed" } },
+        { at: `2026-09-30T08:0${index + 1}:00.000Z`, update: chunk("agent_message_chunk", text) },
+      ]),
+    );
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.map((message) => message.timestampSource)).toEqual(["session", "session"]);
+  });
+
   it("keeps a rewind from spreading over a long stretch without tools", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     const replies = Array.from({ length: 300 }, (_, index) => `reply ${index}.`);
