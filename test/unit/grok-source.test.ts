@@ -645,6 +645,19 @@ describe("GrokSource", () => {
     expect(new GrokSource(join(directory, "missing")).available()).toBe(false);
   });
 
+  it("keeps a line whose text holds a line separator", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(directory, "project", "separator", [
+      { type: "tool_result", tool_call_id: "call-ls", content: "before\u2028after" },
+      { type: "assistant", content: "done" },
+    ]);
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.map((message) => message.blocks[0]?.text)).toEqual([
+      "before\u2028after",
+      "done",
+    ]);
+  });
+
   it("reads $GROK_HOME/sessions when no path is passed", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-home-"));
     writeSession(join(directory, "sessions"), "project", "home-id", [
