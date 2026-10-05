@@ -39,6 +39,7 @@ function loadToolOperations(): Promise<typeof SessionsTools> {
 
 interface PlaceholderSourceParams {
   readonly source?: string;
+  readonly limit?: number;
   readonly path?: string;
   readonly paths?: readonly string[];
   readonly since?: string;
@@ -53,6 +54,7 @@ interface PlaceholderListParams extends PlaceholderSourceParams {
 interface PlaceholderReadParams extends PlaceholderSourceParams {
   readonly source: string;
   readonly offset?: number;
+  readonly maxChars?: number;
   readonly position?: Readonly<{ message: number; block: number; character: number }>;
 }
 
@@ -64,6 +66,16 @@ interface PlaceholderReadParams extends PlaceholderSourceParams {
  */
 function text(value: string | undefined): string | undefined {
   return value?.trim() ? value : undefined;
+}
+
+/**
+ * A zero limit can't mean anything, so it's the same placeholder as a blank string.
+ *
+ * @param {number | undefined} value - Limit as OMP sent it.
+ * @returns {number | undefined} The limit, or undefined when it's zero.
+ */
+function count(value: number | undefined): number | undefined {
+  return value === 0 ? undefined : value;
 }
 
 /**
@@ -108,7 +120,8 @@ function listParams<T extends Readonly<PlaceholderListParams>>(params: T): T {
     ...harnesses({ ...set, sources: list(params.sources) }),
     since,
     until,
-    lastHours: bounded || params.lastHours === 0 ? undefined : params.lastHours,
+    lastHours: bounded ? undefined : count(params.lastHours),
+    limit: count(params.limit),
   };
 }
 
@@ -131,6 +144,8 @@ function readParams<T extends Readonly<PlaceholderReadParams>>(params: T): T {
     paths: list(params.paths),
     since: text(params.since),
     until: text(params.until),
+    limit: count(params.limit),
+    maxChars: count(params.maxChars),
     ...(position !== undefined && offset === 0 ? { offset: undefined } : {}),
     ...(origin && offset !== undefined && offset !== 0 ? { position: undefined } : {}),
   };

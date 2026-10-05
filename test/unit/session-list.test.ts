@@ -306,7 +306,7 @@ describe("session listing across harnesses", () => {
       }),
     ).resolves.toMatchObject({ details: { total: 2, since: "2026-09-20T12:00:00.000Z" } });
     await expect(
-      list("omp", { ...blank, source: "pi", sources: ["pi"], lastHours: 0 }),
+      list("omp", { ...blank, source: "pi", sources: ["pi"], lastHours: 0, limit: 0 }),
     ).resolves.toMatchObject({ details: { total: 3 } });
     await expect(
       list("omp", { ...blank, source: "claude", sources: ["pi"], lastHours: 24 }),
@@ -314,7 +314,7 @@ describe("session listing across harnesses", () => {
 
     const readBlank = { ...blank, source: "pi", sessionId: "updated", knownToolResults: [] };
     const origin = { message: 0, block: 0, character: 0 };
-    const first = await read("omp", { ...readBlank, position: origin });
+    const first = await read("omp", { ...readBlank, position: origin, limit: 0, maxChars: 0 });
     expect(first).toMatchObject({ details: { returnedMessages: 2 } });
     expect(JSON.stringify(first)).toContain("[Tool bodies:");
     await expect(read("omp", { ...readBlank, offset: 1, position: origin })).resolves.toMatchObject(
