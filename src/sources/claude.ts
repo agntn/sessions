@@ -1,6 +1,5 @@
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { home, osUser } from "../core/env.ts";
 import type {
   Block,
@@ -11,7 +10,7 @@ import type {
   SourceReadOptions,
 } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
-import { isRecord, parseJson, scalarText } from "./parsing.ts";
+import { isRecord, jsonlLines, parseJson, scalarText } from "./parsing.ts";
 
 interface SessionFile {
   readonly path: string;
@@ -147,7 +146,7 @@ export class ClaudeSource implements Source {
 
   private async *readFile(file: SessionFile): AsyncGenerator<Message> {
     const sessionId = sessionIdFromPath(file.path);
-    const lines = createInterface({ input: createReadStream(file.path), crlfDelay: Infinity });
+    const lines = jsonlLines(file.path);
     for await (const line of lines) {
       try {
         const entry = parseJson(line);

@@ -44,6 +44,20 @@ describe("ClaudeSource", () => {
     expect(messages[0]?.blocks[0]?.text).toBe(text);
   });
 
+  it("keeps a record whose text holds U+2028 and U+2029", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-claude-"));
+    const project = join(directory, "project");
+    mkdirSync(project);
+    writeFileSync(
+      join(project, "session.jsonl"),
+      `${userLine("one two three")}${userLine("after")}`,
+    );
+
+    const messages = await collect(new ClaudeSource(directory));
+
+    expect(messages.map((message) => message.blocks[0]?.text)).toEqual(["one two three", "after"]);
+  });
+
   it("normalizes native roles, thinking, tool calls, tool results, and mtime fallback", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-claude-"));
     const project = join(directory, "project");

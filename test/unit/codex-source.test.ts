@@ -52,6 +52,24 @@ describe("CodexSource JSONL", () => {
     expect(msgs[0].source).toBe("codex");
   });
 
+  it("keeps a record whose text holds U+2028 and U+2029", async () => {
+    writeJsonl("session-1.jsonl", [
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "user_message", message: "one two three" },
+      },
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:01Z",
+        payload: { type: "user_message", message: "after" },
+      },
+    ]);
+    const msgs = await collect(new CodexSource(tempDir));
+
+    expect(msgs.map((m) => m.blocks[0].text)).toEqual(["one two three", "after"]);
+  });
+
   it("parses assistant response_item message", async () => {
     writeJsonl("session-1.jsonl", [
       {

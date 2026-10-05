@@ -1,3 +1,6 @@
+import { createReadStream } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
+
 /**
  * Parses untrusted JSON without leaking `any` into adapter code.
  *
@@ -44,5 +47,33 @@ export function parseJsonRecord(text: string): Readonly<Record<string, unknown>>
     return isRecord(parsed) ? parsed : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Streams JSONL split on `\n` alone, since readline also cuts at the U+2028 JSON leaves raw.
+ *
+ * @param path - JSONL file to read.
+ * @param highWaterMark - Smaller reads for a caller that may stop after the header.
+ * @yields {string} Each line without its `\n`; an empty last line is skipped.
+ */
+export async function* jsonlLines(path: string, highWaterMark?: number): AsyncGenerator<string> {
+  const input = createReadStream(path, highWaterMark === undefined ? {} : { highWaterMark });
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  try {
+    for await (const chunk of input as AsyncIterable<Buffer>) {
+      const parts = decoder.write(chunk).split("\n");
+      const tail = parts.pop() ?? "";
+      for (const part of parts) {
+        yield pending + part;
+        pending = "";
+      }
+      pending += tail;
+    }
+    const last = pending + decoder.end();
+    if (last) yield last;
+  } finally {
+    input.destroy();
   }
 }
