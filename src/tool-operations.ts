@@ -132,6 +132,7 @@ interface RenderableBlock {
   readonly toolInput?: string;
   readonly toolCallId?: string;
   readonly isError?: boolean;
+  readonly stopReason?: string;
 }
 
 interface RenderableMessage {
@@ -208,17 +209,23 @@ function toolResultStatus(block: RenderableBlock): string {
   return block.isError === undefined ? "" : ` isError=${block.isError}`;
 }
 
+function body(text: string | undefined): string {
+  return text ? ` ${text}` : "";
+}
+
+function stopParts(block: RenderableBlock): readonly string[] {
+  return [`[stop${body(block.stopReason)}]`, body(block.text)];
+}
+
 function blockParts(block: RenderableBlock): readonly string[] {
-  const callId = block.toolCallId ? ` ${block.toolCallId}` : "";
+  const callId = body(block.toolCallId);
   if (block.type === "tool_call") {
-    return [
-      `[tool_call ${block.toolName || "unknown"}${callId}]`,
-      block.toolInput ? ` ${block.toolInput}` : "",
-    ];
+    return [`[tool_call ${block.toolName || "unknown"}${callId}]`, body(block.toolInput)];
   }
   if (block.type === "tool_result") {
-    return [`[tool_result${callId}${toolResultStatus(block)}]`, block.text ? ` ${block.text}` : ""];
+    return [`[tool_result${callId}${toolResultStatus(block)}]`, body(block.text)];
   }
+  if (block.type === "stop") return stopParts(block);
 
   const label = block.type === "text" ? "" : `[${block.type}] `;
   return block.text ? [label, block.text] : [`[${block.type}]`];
