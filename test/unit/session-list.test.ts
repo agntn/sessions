@@ -65,19 +65,27 @@ describe("session listing across harnesses", () => {
     const result = await listSessions({ lastHours: 24 });
     expect(result.details.sources).toEqual(["codex", "pi"]);
     expect(result.details.sessions.map(({ source, id }) => [source, id])).toEqual([
+      ["codex", "future"],
       ["codex", "same"],
       ["pi", "updated"],
       ["pi", "same"],
     ]);
-    expect(result.details.total).toBe(3);
+    expect(result.details.total).toBe(4);
     expect(result.content[0]?.text).toContain("codex\tsame\t1 messages");
     expect(result.content[0]?.text).toContain("since=2026-09-19T12:00:00.000Z");
   });
 
+  it("keeps a session that writes while lastHours lists", async () => {
+    const result = await listSessions({ source: "codex", lastHours: 1 });
+    expect(result.details.sessions.map(({ id }) => id)).toEqual(["future", "same"]);
+    expect(result.details.until).toBeUndefined();
+    expect(result.content[0]?.text).not.toContain("until=");
+  });
+
   it("paginates globally after filtering and carries fixed bounds into the next call", async () => {
     const first = await listSessions({ sources: ["pi", "codex", "pi"], lastHours: 24, limit: 1 });
-    expect(first.details.total).toBe(3);
-    expect(first.details.sessions[0]?.source).toBe("codex");
+    expect(first.details.total).toBe(4);
+    expect(first.details.sessions[0]?.id).toBe("future");
     expect(first.content[0]?.text).toContain("offset=1");
     const next = await listSessions({
       sources: ["codex", "pi"],
@@ -86,7 +94,10 @@ describe("session listing across harnesses", () => {
       offset: 1,
       limit: 2,
     });
-    expect(next.details.sessions.map(({ id }) => id)).toEqual(["updated", "same"]);
+    expect(next.details.sessions.map(({ source, id }) => `${source}:${id}`)).toEqual([
+      "codex:same",
+      "pi:updated",
+    ]);
   });
 
   it("accepts timezone offsets and keeps distinct sessions with the same id", async () => {
@@ -112,6 +123,7 @@ describe("session listing across harnesses", () => {
     transcript("pi", "zzz", ["2026-09-20T12:00:00Z"]);
     const result = await listSessions({ sources: ["pi", "codex"], lastHours: 1 });
     expect(result.details.sessions.map(({ source, id }) => `${source}:${id}`)).toEqual([
+      "codex:future",
       "codex:same",
       "pi:aaa",
       "pi:zzz",
@@ -240,7 +252,7 @@ describe("session listing across harnesses", () => {
       .get("sessions_list")
       ?.execute("fixture", { lastHours: 24, sources: ["pi", "codex"], limit: 1 });
     expect(result).toMatchObject({
-      details: { total: 3, sessions: [{ source: "codex", id: "same" }] },
+      details: { total: 4, sessions: [{ source: "codex", id: "future" }] },
     });
     expect(JSON.stringify(result)).toContain("offset=1");
   });
@@ -279,7 +291,7 @@ describe("session listing across harnesses", () => {
         arguments: { lastHours: 24, limit: 1 },
       });
       expect(result.isError).not.toBe(true);
-      expect(JSON.stringify(result.content)).toContain("codex\\tsame\\t1 messages");
+      expect(JSON.stringify(result.content)).toContain("codex\\tfuture\\t1 messages");
       expect(JSON.stringify(result.content)).toContain("offset=1");
     } finally {
       await Promise.all([client.close(), server.close()]);
