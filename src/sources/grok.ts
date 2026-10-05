@@ -251,13 +251,14 @@ function prefixOf(text: string): string {
   return Array.from(text.slice(0, RUN_PREFIX)).join("");
 }
 
-interface TrieNode {
-  readonly next: Map<string, TrieNode>;
-  readonly ends: number[];
+/** Unclaimed runs of one kind: earliest index by exact prefix, and the lengths that occur. */
+interface UnclaimedRuns {
+  readonly first: Map<string, number>;
+  readonly lengths: number[];
 }
 
-function newNode(): TrieNode {
-  return { next: new Map(), ends: [] };
+function noRuns(): UnclaimedRuns {
+  return { first: new Map(), lengths: [] };
 }
 
 function isChunkKind(kind: string): kind is ChunkKind {
@@ -428,10 +429,10 @@ class MessageTimes {
   };
   private previousKind: string | undefined;
   private runCount = 0;
-  private readonly unclaimed: Record<ChunkKind, TrieNode> = {
-    user_message_chunk: newNode(),
-    agent_message_chunk: newNode(),
-    agent_thought_chunk: newNode(),
+  private readonly unclaimed: Record<ChunkKind, UnclaimedRuns> = {
+    user_message_chunk: noRuns(),
+    agent_message_chunk: noRuns(),
+    agent_thought_chunk: noRuns(),
   };
   private known: number | undefined;
 
@@ -524,7 +525,8 @@ class MessageTimes {
   }
 
   /**
-   * Builds a prefix tree of the runs no pick claims, so a pick finds its twins in one walk.
+   * Indexes the runs no pick claims by exact text, one entry per run, so a pick only looks up the
+   * prefix lengths that some unclaimed run has.
    *
    * @param picks - Picks still standing.
    */
@@ -532,46 +534,29 @@ class MessageTimes {
     const claimed = Object.fromEntries(picks.map((pick) => [`${pick.kind}:${pick.found}`, true]));
     for (const kind of CHUNK_KINDS) {
       if (!isChunkKind(kind)) continue;
-      this.unclaimed[kind] = newNode();
+      const free = noRuns();
       for (const [index, run] of this.runs[kind].entries()) {
-        if (!Object.hasOwn(claimed, `${kind}:${index}`)) this.insertRun(kind, run.text, index);
+        if (Object.hasOwn(claimed, `${kind}:${index}`) || free.first.has(run.text)) continue;
+        free.first.set(run.text, index);
       }
+      free.lengths.push(...new Set([...free.first.keys()].map((text) => text.length)));
+      free.lengths.sort((left, right) => left - right);
+      this.unclaimed[kind] = free;
     }
   }
 
   /**
-   * Adds a run to its kind's tree, one code point per level, the same way `hasTwin` walks it.
-   *
-   * @param kind - Chunk kind.
-   * @param text - Run prefix.
-   * @param index - Run index, called in rising order.
-   */
-  private insertRun(kind: ChunkKind, text: string, index: number): void {
-    let node = this.unclaimed[kind];
-    for (const unit of text) {
-      let child = node.next.get(unit);
-      if (child === undefined) {
-        child = newNode();
-        node.next.set(unit, child);
-      }
-      node = child;
-    }
-    node.ends.push(index);
-  }
-
-  /**
-   * Indexes go in rising order, so the first run ending at a node is the earliest one there.
+   * Indexes go in rising order, so the index stored for a text is the earliest run with it.
    *
    * @param pick - A match found walking backwards.
    * @returns {boolean} Whether an unclaimed run in its reach says the same thing.
    */
   private hasTwin(pick: RunPick): boolean {
-    let node: TrieNode | undefined = this.unclaimed[pick.kind];
-    for (const unit of pick.text) {
-      node = node?.next.get(unit);
-      if (node === undefined) return false;
-      const first = node.ends[0];
-      if (first !== undefined && first <= pick.ceiling) return true;
+    const free = this.unclaimed[pick.kind];
+    for (const length of free.lengths) {
+      if (length > pick.text.length) return false;
+      const index = free.first.get(pick.text.slice(0, length));
+      if (index !== undefined && index <= pick.ceiling) return true;
     }
     return false;
   }
