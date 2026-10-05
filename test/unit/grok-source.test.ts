@@ -374,6 +374,86 @@ describe("GrokSource", () => {
     ]);
   });
 
+  it("dates the turn a rewind kept, not the one it dropped", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "rewound",
+      [
+        { type: "user", prompt_index: 0, content: [{ type: "text", text: "fix the build" }] },
+        {
+          type: "assistant",
+          content: "On it.",
+          tool_calls: [{ id: "call-kept", name: "bash", arguments: "{}" }],
+        },
+        { type: "tool_result", tool_call_id: "call-kept", content: "ok" },
+        { type: "user", prompt_index: 1, content: [{ type: "text", text: "thanks" }] },
+        { type: "assistant", content: "Anytime." },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    const turn = (at: string, prompt: string, reply: string): Update[] => [
+      { at: `2026-09-30T${at}:00.000Z`, update: chunk("user_message_chunk", prompt) },
+      { at: `2026-09-30T${at}:05.000Z`, update: chunk("agent_message_chunk", reply) },
+    ];
+    writeUpdates(directory, "project", "rewound", [
+      ...turn("08:01", "fix the build", "On it."),
+      {
+        at: "2026-09-30T08:01:06.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "call-dropped", title: "bash" },
+      },
+      ...turn("08:05", "fix the build", "On it."),
+      {
+        at: "2026-09-30T08:05:06.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "call-kept", title: "bash" },
+      },
+      {
+        at: "2026-09-30T08:05:09.000Z",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-kept", status: "completed" },
+      },
+      ...turn("08:06", "thanks", "Anytime."),
+      ...turn("08:08", "thanks", "Anytime."),
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.map((message) => new Date(message.timestamp).toISOString())).toEqual([
+      "2026-09-30T08:05:00.000Z",
+      "2026-09-30T08:05:05.000Z",
+      "2026-09-30T08:05:09.000Z",
+      "2026-09-30T08:08:00.000Z",
+      "2026-09-30T08:08:05.000Z",
+    ]);
+  });
+
+  it("keeps dating a long stretch without tools", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    const replies = Array.from({ length: 300 }, (_, index) => `reply ${index}.`);
+    writeSession(
+      directory,
+      "project",
+      "chatty",
+      replies.map((content) => ({ type: "assistant", content })),
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(
+      directory,
+      "project",
+      "chatty",
+      replies.flatMap((reply, index) => [
+        {
+          at: new Date(Date.parse("2026-09-30T08:00:00.000Z") + index * 1000).toISOString(),
+          update: chunk("agent_message_chunk", reply),
+        },
+        { at: "2026-09-30T08:59:00.000Z", update: { sessionUpdate: "turn_completed" } },
+      ]),
+    );
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.filter((message) => message.timestampSource === "message")).toHaveLength(300);
+    expect(messages.at(-1)?.timestamp).toBe(Date.parse("2026-09-30T08:04:59.000Z"));
+  });
+
   it("finds the call id and time around a large tool output", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     writeSession(
