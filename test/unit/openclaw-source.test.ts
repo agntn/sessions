@@ -58,6 +58,25 @@ describe("OpenClawSource basic parsing", () => {
     expect(msgs[0].sessionId).toBe("session-1");
   });
 
+  it("keeps a record whose text holds U+2028 and U+2029", async () => {
+    writeJsonl("session-1.jsonl", [
+      { type: "session", timestamp: "2026-03-10T10:00:00Z" },
+      {
+        type: "message",
+        timestamp: "2026-03-10T10:00:01Z",
+        message: { role: "user", content: [{ type: "text", text: "one two three" }] },
+      },
+      {
+        type: "message",
+        timestamp: "2026-03-10T10:00:02Z",
+        message: { role: "assistant", content: [{ type: "text", text: "after" }] },
+      },
+    ]);
+    const msgs = await collect(new OpenClawSource([tempDir]));
+
+    expect(msgs.map((m) => m.blocks[0].text)).toEqual(["one two three", "after"]);
+  });
+
   it("parses toolCall block", async () => {
     writeJsonl("session-tc.jsonl", [
       {

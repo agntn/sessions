@@ -1,6 +1,5 @@
-import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { home } from "../core/env.ts";
 import type {
   Block,
@@ -10,7 +9,7 @@ import type {
   Source,
   SourceReadOptions,
 } from "../core/types.ts";
-import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
+import { isRecord, jsonlLines, parseJsonRecord, scalarText } from "./parsing.ts";
 
 const RE_DISCORD_DM = /^\[Discord (\S+) user id:(\d+)/;
 const RE_DISCORD_GUILD = /^\[Discord Guild #(\S+) channel id:(\d+)[^\]]*\] (.+?)(?:: | \()/;
@@ -264,7 +263,7 @@ export class OpenClawSource implements Source {
 
   private async *readFile(file: SessionFile): AsyncGenerator<Message> {
     const sessionId = sessionIdFromPath(file.path);
-    const lines = createInterface({ input: createReadStream(file.path), crlfDelay: Infinity });
+    const lines = jsonlLines(file.path);
     let sessionTimestamp = "";
     let sessionContext: StringContext | undefined;
 

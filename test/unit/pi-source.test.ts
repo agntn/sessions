@@ -54,6 +54,29 @@ describe("PiSource", () => {
     ]);
   });
 
+  it("keeps a record whose text holds U+2028 and U+2029", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
+    const entries = [
+      { type: "session", id: "session-pi", timestamp: "2026-09-04T10:00:00.000Z" },
+      ...["one two three", "after"].map((text) => ({
+        type: "message",
+        timestamp: "2026-09-04T10:00:01.000Z",
+        message: { role: "assistant", content: [{ type: "text", text }] },
+      })),
+    ];
+    writeFileSync(
+      join(directory, "2026-09-04T10-00-00-000Z_session-pi.jsonl"),
+      `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    );
+
+    const texts: (string | undefined)[] = [];
+    for await (const message of new PiSource(directory).read({ sessionId: "session-pi" })) {
+      texts.push(message.blocks[0]?.text);
+    }
+
+    expect(texts).toEqual(["one two three", "after"]);
+  });
+
   it.each([
     {
       status: { isError: true },

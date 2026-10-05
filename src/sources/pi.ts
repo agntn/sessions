@@ -1,19 +1,10 @@
-import {
-  closeSync,
-  createReadStream,
-  existsSync,
-  openSync,
-  readdirSync,
-  readSync,
-  statSync,
-} from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Participant, Source, SourceReadOptions } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
-import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
+import { isRecord, jsonlLines, parseJsonRecord, scalarText } from "./parsing.ts";
 
 interface SessionFile {
   readonly path: string;
@@ -228,24 +219,16 @@ export class PiSource implements Source {
      * transcripts.
      */
     let sessionId = sessionIdFromPath(file.path);
-    const input = createReadStream(
-      file.path,
-      wanted === undefined ? {} : { highWaterMark: PEEK_BYTES },
-    );
-    try {
-      for await (const line of createInterface({ input, crlfDelay: Infinity })) {
-        const entry = parseJsonRecord(line);
-        if (!entry) continue;
-        const settled = settledSessionId(entry, sessionId);
-        if (settled === undefined) continue;
-        sessionId = settled;
-        if (foreignSession(sessionId, wanted)) return;
-        if (entry.type === "session") continue;
-        const message = this.messageFromEntry(entry, sessionId, file.mtime);
-        if (message) yield message;
-      }
-    } finally {
-      input.destroy();
+    for await (const line of jsonlLines(file.path, wanted === undefined ? undefined : PEEK_BYTES)) {
+      const entry = parseJsonRecord(line);
+      if (!entry) continue;
+      const settled = settledSessionId(entry, sessionId);
+      if (settled === undefined) continue;
+      sessionId = settled;
+      if (foreignSession(sessionId, wanted)) return;
+      if (entry.type === "session") continue;
+      const message = this.messageFromEntry(entry, sessionId, file.mtime);
+      if (message) yield message;
     }
   }
 

@@ -1,10 +1,9 @@
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Source, SourceReadOptions } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
-import { isRecord, parseJson, parseJsonRecord, scalarText } from "./parsing.ts";
+import { isRecord, jsonlLines, parseJson, parseJsonRecord, scalarText } from "./parsing.ts";
 
 interface SessionFile {
   readonly path: string;
@@ -370,7 +369,7 @@ export class CodexSource implements Source {
       file.mtime,
       this.userName,
     );
-    const lines = createInterface({ input: createReadStream(file.path), crlfDelay: Infinity });
+    const lines = jsonlLines(file.path);
     for await (const line of lines) {
       const entry = parseJsonRecord(line);
       if (!entry) continue;
