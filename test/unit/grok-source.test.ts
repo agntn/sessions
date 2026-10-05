@@ -426,7 +426,7 @@ describe("GrokSource", () => {
     ]);
   });
 
-  it("keeps dating a long stretch without tools", async () => {
+  it("keeps a rewind apart over a long stretch without tools", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     const replies = Array.from({ length: 300 }, (_, index) => `reply ${index}.`);
     writeSession(
@@ -436,21 +436,20 @@ describe("GrokSource", () => {
       replies.map((content) => ({ type: "assistant", content })),
       { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
     );
-    writeUpdates(
-      directory,
-      "project",
-      "chatty",
-      replies.flatMap((reply, index) => [
+    writeUpdates(directory, "project", "chatty", [
+      { at: "2026-09-30T07:59:00.000Z", update: chunk("agent_message_chunk", "reply 0.") },
+      ...replies.flatMap((reply, index) => [
+        { at: "2026-09-30T08:59:00.000Z", update: { sessionUpdate: "turn_completed" } },
         {
           at: new Date(Date.parse("2026-09-30T08:00:00.000Z") + index * 1000).toISOString(),
           update: chunk("agent_message_chunk", reply),
         },
-        { at: "2026-09-30T08:59:00.000Z", update: { sessionUpdate: "turn_completed" } },
       ]),
-    );
+    ]);
 
     const messages = await collect(new GrokSource(directory));
     expect(messages.filter((message) => message.timestampSource === "message")).toHaveLength(300);
+    expect(messages[0]?.timestamp).toBe(Date.parse("2026-09-30T08:00:00.000Z"));
     expect(messages.at(-1)?.timestamp).toBe(Date.parse("2026-09-30T08:04:59.000Z"));
   });
 

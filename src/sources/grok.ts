@@ -41,8 +41,6 @@ interface ToolTimes {
 
 /** Kind, tool call id and write time all sit in the first few hundred bytes of an update. */
 const HEAD_BYTES = 1024;
-/** Entries held for a tool anchor before text falls back to matching forwards. */
-const MAX_BATCH = 256;
 /** Only a prefix is kept per chunk run, so a pasted prompt isn't held in memory twice. */
 const RUN_PREFIX = 200;
 const QUERY_OPEN = "<user_query>\n";
@@ -318,6 +316,7 @@ class MessageTimes {
     agent_thought_chunk: 0,
   };
   private previousKind: string | undefined;
+  private runCount = 0;
   private known: number | undefined;
 
   /**
@@ -352,7 +351,7 @@ class MessageTimes {
 
   /**
    * Text waits for the next tool anchor and matches backwards from it, so a run a rewind dropped
-   * loses to the run the history kept. A batch cut short by size matches forwards instead.
+   * loses to the run the history kept.
    *
    * @param batch - Chat entries in file order, ending at a tool anchor or the transcript end.
    * @param clock - Session clock for entries the updates don't date.
@@ -362,10 +361,7 @@ class MessageTimes {
   date(batch: readonly Entry[], clock: SessionClock, endsTranscript: boolean): Time[] {
     const anchors = batch.map((entry) => this.anchorOf(entry));
     const upper = anchors.at(-1);
-    const said =
-      upper === undefined && !endsTranscript
-        ? batch.map((entry) => this.matchForward(entry))
-        : this.matchBackward(batch, upper ?? Number.POSITIVE_INFINITY);
+    const said = this.matchBackward(batch, upper ?? Number.POSITIVE_INFINITY);
     const lastIndex = endsTranscript ? batch.length - 1 : -1;
     return batch.map((_entry, index) =>
       this.settle(said[index] ?? anchors[index], clock, index === lastIndex),
@@ -373,15 +369,14 @@ class MessageTimes {
   }
 
   /**
-   * A batch closes once its last entry has an anchor, or once it holds `limit` entries.
+   * A batch closes at a tool anchor, or after every entry when there are no runs to match.
    *
    * @param batch - Entries waiting to be dated.
-   * @param limit - Most entries to hold.
    * @returns {boolean} Whether the batch is ready to date.
    */
-  closes(batch: readonly Entry[], limit: number): boolean {
+  closes(batch: readonly Entry[]): boolean {
     const last = batch.at(-1);
-    return last !== undefined && (batch.length >= limit || this.anchorOf(last) !== undefined);
+    return last !== undefined && (this.runCount === 0 || this.anchorOf(last) !== undefined);
   }
 
   /**
@@ -412,7 +407,9 @@ class MessageTimes {
   }
 
   private addRun(kind: ChunkKind, text: string, at: number): void {
-    if (text.length > 0) this.runs[kind].push({ text: text.slice(0, RUN_PREFIX), at });
+    if (text.length === 0) return;
+    this.runs[kind].push({ text: text.slice(0, RUN_PREFIX), at });
+    this.runCount += 1;
   }
 
   private toolTime(id: string | undefined, edge: "first" | "last"): number | undefined {
@@ -434,19 +431,6 @@ class MessageTimes {
     }
     const inferred = timestampAt(clock, isLast);
     return isLast || this.known === undefined ? inferred : { ...inferred, timestamp: this.known };
-  }
-
-  private matchForward(entry: Entry): number | undefined {
-    const key = chunkRunFor(entry);
-    if (key === undefined) return undefined;
-    const runs = this.runs[key.kind];
-    for (let index = this.cursors[key.kind]; index < runs.length; index += 1) {
-      const run = runs[index];
-      if (run === undefined || !key.text.startsWith(run.text)) continue;
-      this.cursors[key.kind] = index + 1;
-      return run.at;
-    }
-    return undefined;
   }
 
   private matchBackward(batch: readonly Entry[], upper: number): (number | undefined)[] {
@@ -578,7 +562,7 @@ export class GrokSource implements Source {
     const times = await MessageTimes.read(file.directory);
     let batch: Entry[] = [];
     for await (const entry of records(file.path)) {
-      if (times.closes(batch, MAX_BATCH)) {
+      if (times.closes(batch)) {
         yield* this.messagesFrom(batch, sessionId, clock, times.date(batch, clock, false));
         batch = [];
       }
