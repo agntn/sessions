@@ -61,6 +61,8 @@ const HEAD_BYTES = 1024;
 const LINE_HEAD = 1 << 16;
 /** `_meta` closes every update, a few hundred bytes from its end. */
 const LINE_TAIL = 4096;
+/** Characters a run and an entry must share before their full prefixes get compared. */
+const BUCKET_CHARS = 16;
 /** Only a prefix is kept per chunk run, so a pasted prompt isn't held in memory twice. */
 const RUN_PREFIX = 200;
 const QUERY_OPEN = "<user_query>\n";
@@ -249,6 +251,19 @@ function roleFor(type: unknown): Message["role"] | undefined {
  */
 function prefixOf(text: string): string {
   return Array.from(text.slice(0, RUN_PREFIX)).join("");
+}
+
+/**
+ * Bucket key for the unclaimed run index. A run shorter than `BUCKET_CHARS` can prefix anything,
+ * so all of them share the kind's short bucket.
+ *
+ * @param kind - Chunk kind.
+ * @param text - Run or entry text.
+ * @param short - Whether to name the short bucket.
+ * @returns {string} The bucket key.
+ */
+function bucketOf(kind: string, text: string, short: boolean): string {
+  return short ? `${kind}:` : `${kind}:${text.slice(0, BUCKET_CHARS)}+`;
 }
 
 function isChunkKind(kind: string): kind is ChunkKind {
@@ -502,29 +517,37 @@ class MessageTimes {
     for (let size = -1; size !== kept.length;) {
       size = kept.length;
       const free = this.unclaimed(kept);
-      kept = kept.filter((pick) => !this.hasTwin(pick, free[pick.kind]));
+      kept = kept.filter((pick) => !this.hasTwin(pick, free));
     }
     const said = keys.map((key) => key.anchor);
     for (const pick of kept) said[pick.index] = this.runs[pick.kind][pick.found]?.at;
     return said;
   }
 
-  private unclaimed(picks: readonly RunPick[]): Record<ChunkKind, number[]> {
+  /**
+   * Unclaimed runs bucketed by kind and opening characters, shorter runs in one bucket per kind.
+   *
+   * @param picks - Picks still standing.
+   * @returns {Readonly<Record<string, readonly number[]>>} Run indexes by bucket key.
+   */
+  private unclaimed(picks: readonly RunPick[]): Readonly<Record<string, readonly number[]>> {
     const claimed = Object.fromEntries(picks.map((pick) => [`${pick.kind}:${pick.found}`, true]));
-    const free = (kind: ChunkKind): number[] =>
-      this.runs[kind].flatMap((_run, index) =>
-        Object.hasOwn(claimed, `${kind}:${index}`) ? [] : [index],
-      );
-    return {
-      user_message_chunk: free("user_message_chunk"),
-      agent_message_chunk: free("agent_message_chunk"),
-      agent_thought_chunk: free("agent_thought_chunk"),
-    };
+    const free: Record<string, number[]> = Object.create(null) as Record<string, number[]>;
+    for (const kind of CHUNK_KINDS) {
+      for (const [index, run] of (this.runs[kind as ChunkKind] ?? []).entries()) {
+        if (Object.hasOwn(claimed, `${kind}:${index}`)) continue;
+        const key = bucketOf(kind, run.text, run.text.length < BUCKET_CHARS);
+        (free[key] ??= []).push(index);
+      }
+    }
+    return free;
   }
 
-  private hasTwin(pick: RunPick, free: readonly number[]): boolean {
+  private hasTwin(pick: RunPick, free: Readonly<Record<string, readonly number[]>>): boolean {
     const runs = this.runs[pick.kind];
-    return free.some((index) => {
+    const near = free[bucketOf(pick.kind, pick.text, false)] ?? [];
+    const short = free[bucketOf(pick.kind, pick.text, true)] ?? [];
+    return [...near, ...short].some((index) => {
       const run = runs[index];
       return index <= pick.ceiling && run !== undefined && pick.text.startsWith(run.text);
     });
