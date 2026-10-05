@@ -499,7 +499,10 @@ describe("GrokSource", () => {
 
   it("keeps a rewind from spreading over a long stretch without tools", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
-    const replies = Array.from({ length: 300 }, (_, index) => `reply ${index}.`);
+    const replies = Array.from(
+      { length: 300 },
+      (_, index) => `reply ${index} from a long stretch.`,
+    );
     writeSession(
       directory,
       "project",
@@ -508,7 +511,10 @@ describe("GrokSource", () => {
       { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
     );
     writeUpdates(directory, "project", "chatty", [
-      { at: "2026-09-30T07:59:00.000Z", update: chunk("agent_message_chunk", "reply 0.") },
+      {
+        at: "2026-09-30T07:59:00.000Z",
+        update: chunk("agent_message_chunk", "reply 0 from a long stretch."),
+      },
       ...replies.flatMap((reply, index) => [
         { at: "2026-09-30T08:59:00.000Z", update: { sessionUpdate: "turn_completed" } },
         {
