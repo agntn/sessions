@@ -35,7 +35,7 @@ interface RunPick {
   readonly text: string;
   readonly found: number;
   readonly ceiling: number;
-  /** Time of the last tool result before the entry; no run older than that can be its own. */
+  /** First run written after the last tool result before the entry; nothing earlier is its own. */
   readonly floor: number;
 }
 
@@ -43,8 +43,10 @@ interface EntryKey {
   readonly kind?: ChunkKind;
   readonly text: string;
   readonly anchor?: number;
-  /** Set on a tool result: the model speaks again only after it, so later text can't be older. */
-  readonly result?: number;
+  /** Runs written by the anchor's update: this entry and every earlier one sit below it. */
+  readonly upper?: Cut;
+  /** Set on a tool result: the model speaks again only after it, so later text sits above it. */
+  readonly floor?: Cut;
 }
 
 type ChunkKind = "user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk";
@@ -56,9 +58,14 @@ interface ChunkRun {
   readonly opaque?: true;
 }
 
+/** How many runs of each kind the stream had written at some point. */
+type Cut = Readonly<Record<ChunkKind, number>>;
+
 interface ToolTimes {
   readonly first: number;
+  readonly firstCut: Cut;
   last: number;
+  lastCut: Cut;
 }
 
 /** Kind, tool call id and write time all sit in the first few hundred bytes of an update. */
@@ -258,14 +265,14 @@ function prefixOf(text: string): string {
   return Array.from(text.slice(0, RUN_PREFIX)).join("");
 }
 
-/** Unclaimed runs of one kind: earliest index by exact prefix, and the lengths that occur. */
-interface UnclaimedRuns {
+/** Runs of one kind: earliest index by exact prefix, and the lengths that occur. */
+interface RunIndex {
   readonly byText: Map<string, number[]>;
   readonly lengths: number[];
   readonly opaque: number[];
 }
 
-function noRuns(): UnclaimedRuns {
+function noRuns(): RunIndex {
   return { byText: new Map(), lengths: [], opaque: [] };
 }
 
@@ -303,6 +310,14 @@ function headText(head: string): string | undefined {
     if (typeof text === "string") return text;
   }
   return undefined;
+}
+
+function noIndex(): Record<ChunkKind, RunIndex> {
+  return {
+    user_message_chunk: noRuns(),
+    agent_message_chunk: noRuns(),
+    agent_thought_chunk: noRuns(),
+  };
 }
 
 function isChunkKind(kind: string): kind is ChunkKind {
@@ -487,11 +502,8 @@ class MessageTimes {
   };
   private previousKind: string | undefined;
   private runCount = 0;
-  private readonly unclaimed: Record<ChunkKind, UnclaimedRuns> = {
-    user_message_chunk: noRuns(),
-    agent_message_chunk: noRuns(),
-    agent_thought_chunk: noRuns(),
-  };
+  private every: Record<ChunkKind, RunIndex> = noIndex();
+  private unclaimed: Record<ChunkKind, RunIndex> = noIndex();
   private known: number | undefined;
 
   /**
@@ -544,48 +556,40 @@ class MessageTimes {
   }
 
   private matchKeys(keys: readonly EntryKey[]): (number | undefined)[] {
+    this.every = this.indexRuns({});
     const picks: RunPick[] = [];
-    const ceilings: Record<ChunkKind, number> = {
-      user_message_chunk: this.runs.user_message_chunk.length - 1,
-      agent_message_chunk: this.runs.agent_message_chunk.length - 1,
-      agent_thought_chunk: this.runs.agent_thought_chunk.length - 1,
-    };
+    const taken = this.cut();
     const floors = this.floorsOf(keys);
-    let upper = Number.POSITIVE_INFINITY;
+    let bound = taken;
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index];
-      upper = key?.anchor ?? upper;
+      bound = key?.upper ?? bound;
       if (key?.kind === undefined) continue;
-      const floor = floors[index] ?? Number.NEGATIVE_INFINITY;
-      const ceiling = this.ceiling(key.kind, upper, ceilings);
-      const pick = this.pickFor(index, key.kind, key.text, ceiling, floor);
-      if (pick === undefined) continue;
-      picks.push(pick);
-      ceilings[key.kind] = pick.found - 1;
+      const ceiling = Math.min(taken[key.kind], bound[key.kind]) - 1;
+      const floor = floors[index]?.[key.kind] ?? 0;
+      const found = this.lastMatch(key.kind, key.text, ceiling, floor);
+      if (found === -1) continue;
+      picks.push({ index, kind: key.kind, text: key.text, found, ceiling, floor });
+      taken[key.kind] = found;
     }
     return this.settlePicks(keys, picks);
   }
 
-  private pickFor(
-    index: number,
-    kind: ChunkKind,
-    text: string,
-    ceiling: number,
-    floor: number,
-  ): RunPick | undefined {
-    const found = this.lastMatch(kind, text, ceiling);
-    const run = this.runs[kind][found];
-    if (run === undefined || run.at < floor) return undefined;
-    return { index, kind, text, found, ceiling, floor };
-  }
-
-  private floorsOf(keys: readonly EntryKey[]): number[] {
-    let floor = Number.NEGATIVE_INFINITY;
+  private floorsOf(keys: readonly EntryKey[]): (Cut | undefined)[] {
+    let floor: Cut | undefined;
     return keys.map((key) => {
       const before = floor;
-      floor = key.result ?? floor;
+      floor = key.floor ?? floor;
       return before;
     });
+  }
+
+  private cut(): Record<ChunkKind, number> {
+    return {
+      user_message_chunk: this.runs.user_message_chunk.length,
+      agent_message_chunk: this.runs.agent_message_chunk.length,
+      agent_thought_chunk: this.runs.agent_thought_chunk.length,
+    };
   }
 
   /**
@@ -603,7 +607,9 @@ class MessageTimes {
     let kept = picks;
     for (let size = -1; size !== kept.length;) {
       size = kept.length;
-      this.indexUnclaimed(kept);
+      this.unclaimed = this.indexRuns(
+        Object.fromEntries(kept.map((pick) => [`${pick.kind}:${pick.found}`, true])),
+      );
       kept = kept.filter((pick) => !this.hasTwin(pick));
     }
     const said = keys.map((key) => key.anchor);
@@ -612,35 +618,61 @@ class MessageTimes {
   }
 
   /**
-   * Indexes the runs no pick claims by exact text, one entry per run, so a pick only looks up the
-   * prefix lengths that some unclaimed run has.
+   * Indexes runs by exact text, one entry per run, so a lookup only tries the prefix lengths that
+   * some run has.
    *
-   * @param picks - Picks still standing.
+   * @param claimed - Runs to leave out, keyed `kind:index`.
+   * @returns {Record<ChunkKind, RunIndex>} One index per kind.
    */
-  private indexUnclaimed(picks: readonly RunPick[]): void {
-    const claimed = Object.fromEntries(picks.map((pick) => [`${pick.kind}:${pick.found}`, true]));
+  private indexRuns(claimed: Readonly<Record<string, boolean>>): Record<ChunkKind, RunIndex> {
+    const index = noIndex();
     for (const kind of CHUNK_KINDS) {
-      if (!isChunkKind(kind)) continue;
-      const free = noRuns();
-      for (const [index, run] of this.runs[kind].entries()) {
-        if (Object.hasOwn(claimed, `${kind}:${index}`)) continue;
-        if (run.opaque === true) {
-          free.opaque.push(index);
-          continue;
-        }
-        const same = free.byText.get(run.text);
-        if (same) same.push(index);
-        else free.byText.set(run.text, [index]);
-      }
-      free.lengths.push(...new Set([...free.byText.keys()].map((text) => text.length)));
-      free.lengths.sort((left, right) => left - right);
-      this.unclaimed[kind] = free;
+      if (isChunkKind(kind)) index[kind] = this.indexKind(kind, claimed);
     }
+    return index;
+  }
+
+  private indexKind(kind: ChunkKind, claimed: Readonly<Record<string, boolean>>): RunIndex {
+    const into = noRuns();
+    for (const [position, run] of this.runs[kind].entries()) {
+      if (Object.hasOwn(claimed, `${kind}:${position}`)) continue;
+      if (run.opaque === true) into.opaque.push(position);
+      else if (into.byText.has(run.text)) into.byText.get(run.text)?.push(position);
+      else into.byText.set(run.text, [position]);
+    }
+    into.lengths.push(...new Set([...into.byText.keys()].map((text) => text.length)));
+    into.lengths.sort((left, right) => left - right);
+    return into;
   }
 
   /**
-   * A twin is the latest unclaimed run with a prefix of the pick's text that the pick's ceiling
-   * reaches, and only if it's no older than the tool result before the pick.
+   * The latest run at or below `ceiling` whose text opens `text`, found through an index.
+   *
+   * @param which - All runs, or only the unclaimed ones.
+   * @param kind - Chunk kind.
+   * @param text - Entry prefix.
+   * @param ceiling - Highest run allowed.
+   * @returns {number} The run, or -1.
+   */
+  private latestPrefix(
+    which: "every" | "unclaimed",
+    kind: ChunkKind,
+    text: string,
+    ceiling: number,
+  ): number {
+    const index = this[which][kind];
+    let best = -1;
+    for (const length of index.lengths) {
+      if (length > text.length) break;
+      const same = index.byText.get(text.slice(0, length)) ?? [];
+      best = Math.max(best, lastAtMost(same, ceiling) ?? -1);
+    }
+    return best;
+  }
+
+  /**
+   * A twin is an unclaimed run between the pick's floor and ceiling whose text opens the pick's,
+   * or an unreadable run there.
    *
    * @param pick - A match found walking backwards.
    * @returns {boolean} Whether an unclaimed run in its reach says the same thing.
@@ -648,17 +680,11 @@ class MessageTimes {
   private hasTwin(pick: RunPick): boolean {
     const free = this.unclaimed[pick.kind];
     if (this.inReach(pick, lastAtMost(free.opaque, pick.ceiling))) return true;
-    for (const length of free.lengths) {
-      if (length > pick.text.length) return false;
-      const same = free.byText.get(pick.text.slice(0, length));
-      if (same && this.inReach(pick, lastAtMost(same, pick.ceiling))) return true;
-    }
-    return false;
+    return this.latestPrefix("unclaimed", pick.kind, pick.text, pick.ceiling) >= pick.floor;
   }
 
   private inReach(pick: RunPick, index: number | undefined): boolean {
-    const run = index === undefined ? undefined : this.runs[pick.kind][index];
-    return run !== undefined && run.at >= pick.floor;
+    return index !== undefined && index >= pick.floor;
   }
 
   private add(kind: string, head: string, at: number | undefined, run: RunText): void {
@@ -672,8 +698,11 @@ class MessageTimes {
     const id = TOOL_CALL_ID.exec(head)?.[1];
     if (id === undefined) return;
     const times = this.tools.get(id);
-    if (times) times.last = Math.max(times.last, at);
-    else this.tools.set(id, { first: at, last: at });
+    const now = this.cut();
+    if (times) {
+      times.last = Math.max(times.last, at);
+      times.lastCut = now;
+    } else this.tools.set(id, { first: at, firstCut: now, last: at, lastCut: now });
   }
 
   private addRun(kind: ChunkKind, text: string | null, at: number): void {
@@ -684,8 +713,8 @@ class MessageTimes {
     this.runCount += 1;
   }
 
-  private toolTime(id: string | undefined, edge: "first" | "last"): number | undefined {
-    return id === undefined ? undefined : this.tools.get(id)?.[edge];
+  private toolOf(id: string | undefined): ToolTimes | undefined {
+    return id === undefined ? undefined : this.tools.get(id);
   }
 
   /**
@@ -708,36 +737,23 @@ class MessageTimes {
   private keyOf(entry: Entry): EntryKey {
     const run = chunkRunFor(entry);
     const anchor = this.anchorOf(entry);
-    const result = entry.type === "tool_result" ? anchor : undefined;
-    return run === undefined
-      ? { text: "", anchor, result }
-      : { kind: run.kind, text: prefixOf(run.text), anchor, result };
+    const text = run === undefined ? "" : prefixOf(run.text);
+    return { ...anchor, kind: run?.kind, text };
   }
 
-  private anchorOf(entry: Entry): number | undefined {
-    if (entry.type === "tool_result") return this.toolTime(scalarText(entry.tool_call_id), "last");
-    const call = blocksFor(entry).find((block) => block.type === "tool_call");
-    return this.toolTime(call?.toolCallId, "first");
-  }
-
-  private ceiling(
-    kind: ChunkKind,
-    upper: number,
-    ceilings: Readonly<Record<ChunkKind, number>>,
-  ): number {
-    const runs = this.runs[kind];
-    let index = ceilings[kind];
-    while (index >= 0 && (runs[index]?.at ?? upper) > upper) index -= 1;
-    return index;
-  }
-
-  private lastMatch(kind: ChunkKind, text: string, from: number): number {
-    const runs = this.runs[kind];
-    for (let index = from; index >= 0; index -= 1) {
-      const run = runs[index];
-      if (run !== undefined && run.opaque !== true && text.startsWith(run.text)) return index;
+  private anchorOf(entry: Entry): Pick<EntryKey, "anchor" | "upper" | "floor"> {
+    if (entry.type === "tool_result") {
+      const tool = this.toolOf(scalarText(entry.tool_call_id));
+      return tool ? { anchor: tool.last, upper: tool.lastCut, floor: tool.lastCut } : {};
     }
-    return -1;
+    const call = blocksFor(entry).find((block) => block.type === "tool_call");
+    const tool = this.toolOf(call?.toolCallId);
+    return tool ? { anchor: tool.first, upper: tool.firstCut } : {};
+  }
+
+  private lastMatch(kind: ChunkKind, text: string, ceiling: number, floor: number): number {
+    const found = this.latestPrefix("every", kind, text, ceiling);
+    return found >= floor ? found : -1;
   }
 }
 
