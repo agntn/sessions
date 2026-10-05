@@ -656,10 +656,9 @@ function relativeTimeRange(hours: number): SessionTimeRange {
   if (!Number.isFinite(hours) || hours <= 0) {
     throw new RangeError("lastHours must be a positive finite number");
   }
-  const until = Date.now();
-  const since = new Date(until - hours * 3_600_000).getTime();
+  const since = new Date(Date.now() - hours * 3_600_000).getTime();
   if (!Number.isFinite(since)) throw new RangeError("lastHours is too large");
-  return { since, until };
+  return { since };
 }
 
 function sessionTimeRange(params: ListParamsInput): SessionTimeRange | undefined {
