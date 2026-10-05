@@ -328,8 +328,11 @@ class LineSplitter {
     const done: LineView[] = [];
     let start = 0;
     for (let end = this.chunk.indexOf(10); end !== -1; end = this.chunk.indexOf(10, start)) {
-      this.take(start, end);
-      done.push(this.finish());
+      if (this.size === 0) done.push(this.view(start, end));
+      else {
+        this.take(start, end);
+        done.push(this.finish());
+      }
       start = end + 1;
     }
     if (start < this.chunk.length) this.take(start, this.chunk.length);
@@ -343,6 +346,21 @@ class LineSplitter {
    */
   end(): LineView[] {
     return this.size > 0 ? [this.finish()] : [];
+  }
+
+  /**
+   * A line inside one chunk needs no copy: the caller decodes it before the next read.
+   *
+   * @param start - First byte of the line in the chunk.
+   * @param end - Byte offset of its newline.
+   * @returns {LineView} Views into the chunk.
+   */
+  private view(start: number, end: number): LineView {
+    return {
+      head: this.chunk.subarray(start, Math.min(end, start + LINE_HEAD)),
+      tail: this.chunk.subarray(Math.max(start, end - LINE_TAIL), end),
+      whole: end - start <= LINE_HEAD,
+    };
   }
 
   private take(start: number, end: number): void {
