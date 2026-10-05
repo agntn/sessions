@@ -52,6 +52,8 @@ type ChunkKind = "user_message_chunk" | "agent_message_chunk" | "agent_thought_c
 interface ChunkRun {
   readonly text: string;
   readonly at: number;
+  /** A run whose text couldn't be read: it matches nothing but still makes its reach ambiguous. */
+  readonly opaque?: true;
 }
 
 interface ToolTimes {
@@ -73,6 +75,7 @@ const UPDATE_KIND = /"sessionUpdate":"([a-z_]+)"/u;
 const TOOL_CALL_ID = /"toolCallId":"([^"]+)"/u;
 const AGENT_MS = /"agentTimestampMs":(\d+)/u;
 const WRITE_SECONDS = /"timestamp":(\d+)/u;
+const TEXT_START = /"content":\{"type":"text","text":"/u;
 const CHUNK_KINDS: readonly string[] = [
   "user_message_chunk",
   "agent_message_chunk",
@@ -259,10 +262,11 @@ function prefixOf(text: string): string {
 interface UnclaimedRuns {
   readonly byText: Map<string, number[]>;
   readonly lengths: number[];
+  readonly opaque: number[];
 }
 
 function noRuns(): UnclaimedRuns {
-  return { byText: new Map(), lengths: [] };
+  return { byText: new Map(), lengths: [], opaque: [] };
 }
 
 /**
@@ -281,6 +285,24 @@ function lastAtMost(indexes: readonly number[], ceiling: number): number | undef
     else high = middle - 1;
   }
   return high >= 0 ? indexes[high] : undefined;
+}
+
+/**
+ * Reads the opening of a chunk's text from the start of a line too long to keep whole.
+ *
+ * @param head - The kept start of the line.
+ * @returns {string | undefined} The text's opening, or nothing when it can't be decoded.
+ */
+function headText(head: string): string | undefined {
+  const match = TEXT_START.exec(head);
+  if (!match) return undefined;
+  const start = match.index + match[0].length;
+  const literal = head.slice(start, start + RUN_PREFIX * 6);
+  for (let cut = 0; cut <= 6; cut += 1) {
+    const text = parseJson(`"${literal.slice(0, literal.length - cut)}"`);
+    if (typeof text === "string") return text;
+  }
+  return undefined;
 }
 
 function isChunkKind(kind: string): kind is ChunkKind {
@@ -335,6 +357,20 @@ function chunkRunFor(
     default:
       return undefined;
   }
+}
+
+/** A run's text: read in full, read from the line's start, `null` when unreadable. */
+type RunText = string | null | undefined;
+
+/**
+ * Text that opens a run, read whole from a short line and from the kept start of a long one.
+ *
+ * @param head - The kept start of the line, all of it when `whole`.
+ * @param whole - Whether the line fit.
+ * @returns {RunText} The text, or `null` when a long line's start doesn't decode.
+ */
+function runText(head: string, whole: boolean): RunText {
+  return whole ? chunkText(head) : (headText(head) ?? null);
 }
 
 /** What a line keeps: its start, its end, and whether the start is all of it. */
@@ -483,7 +519,12 @@ class MessageTimes {
       const metaAt = line.tail.lastIndexOf(META_KEY);
       const at = updateTime(head, metaAt === -1 ? "" : line.tail.toString("utf8", metaAt));
       const opensRun = isChunkKind(kind) && kind !== times.previousKind;
-      times.add(kind, head, at, opensRun && line.whole ? line.head.toString("utf8") : undefined);
+      times.add(
+        kind,
+        head,
+        at,
+        opensRun ? runText(line.head.toString("utf8"), line.whole) : undefined,
+      );
     }
     return times;
   }
@@ -583,6 +624,10 @@ class MessageTimes {
       const free = noRuns();
       for (const [index, run] of this.runs[kind].entries()) {
         if (Object.hasOwn(claimed, `${kind}:${index}`)) continue;
+        if (run.opaque === true) {
+          free.opaque.push(index);
+          continue;
+        }
         const same = free.byText.get(run.text);
         if (same) same.push(index);
         else free.byText.set(run.text, [index]);
@@ -602,21 +647,25 @@ class MessageTimes {
    */
   private hasTwin(pick: RunPick): boolean {
     const free = this.unclaimed[pick.kind];
+    if (this.inReach(pick, lastAtMost(free.opaque, pick.ceiling))) return true;
     for (const length of free.lengths) {
       if (length > pick.text.length) return false;
       const same = free.byText.get(pick.text.slice(0, length));
-      const index = same && lastAtMost(same, pick.ceiling);
-      const run = index === undefined ? undefined : this.runs[pick.kind][index];
-      if (run !== undefined && run.at >= pick.floor) return true;
+      if (same && this.inReach(pick, lastAtMost(same, pick.ceiling))) return true;
     }
     return false;
   }
 
-  private add(kind: string, head: string, at: number | undefined, run: string | undefined): void {
+  private inReach(pick: RunPick, index: number | undefined): boolean {
+    const run = index === undefined ? undefined : this.runs[pick.kind][index];
+    return run !== undefined && run.at >= pick.floor;
+  }
+
+  private add(kind: string, head: string, at: number | undefined, run: RunText): void {
     this.previousKind = kind;
     if (at === undefined) return;
     if (kind === "tool_call" || kind === "tool_call_update") this.addTool(head, at);
-    else if (run !== undefined && isChunkKind(kind)) this.addRun(kind, chunkText(run), at);
+    else if (run !== undefined && isChunkKind(kind)) this.addRun(kind, run, at);
   }
 
   private addTool(head: string, at: number): void {
@@ -627,9 +676,11 @@ class MessageTimes {
     else this.tools.set(id, { first: at, last: at });
   }
 
-  private addRun(kind: ChunkKind, text: string, at: number): void {
-    if (text.length === 0) return;
-    this.runs[kind].push({ text: prefixOf(text), at });
+  private addRun(kind: ChunkKind, text: string | null, at: number): void {
+    if (text === "") return;
+    this.runs[kind].push(
+      text === null ? { text: "", at, opaque: true } : { text: prefixOf(text), at },
+    );
     this.runCount += 1;
   }
 
@@ -684,7 +735,7 @@ class MessageTimes {
     const runs = this.runs[kind];
     for (let index = from; index >= 0; index -= 1) {
       const run = runs[index];
-      if (run !== undefined && text.startsWith(run.text)) return index;
+      if (run !== undefined && run.opaque !== true && text.startsWith(run.text)) return index;
     }
     return -1;
   }
