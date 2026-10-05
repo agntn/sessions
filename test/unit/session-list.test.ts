@@ -257,7 +257,7 @@ describe("session listing across harnesses", () => {
     expect(JSON.stringify(result)).toContain("offset=1");
   });
 
-  it("reads the placeholders OMP sends for every field it was not given as unset", async () => {
+  it("reads what OMP passes on for the fields a model meant to skip as unset", async () => {
     const tools = new Map<
       string,
       (id: string, params: Readonly<Record<string, unknown>>) => Promise<unknown>
@@ -278,14 +278,23 @@ describe("session listing across harnesses", () => {
     const list = tools.get("sessions_list");
     const read = tools.get("sessions_read");
     if (!list || !read) throw new Error("OMP tools not registered");
-    const blank = { path: "", paths: [], since: "", until: "", offset: 0, limit: 20 };
+    const blank = { path: "", paths: [], offset: 0, limit: 20 };
 
     await expect(
       list("omp", { ...blank, source: "pi", sources: ["pi"], lastHours: 24 }),
-    ).resolves.toMatchObject({ details: { sources: ["pi"], total: 2 } });
+    ).resolves.toMatchObject({ details: { source: "pi", sources: ["pi"], total: 2 } });
     await expect(
       list("omp", { ...blank, source: "pi", sources: ["pi", "codex"], lastHours: 24 }),
     ).resolves.toMatchObject({ details: { sources: ["pi", "codex"], total: 4 } });
+    await expect(
+      list("omp", {
+        ...blank,
+        source: "pi",
+        sources: ["pi", "codex"],
+        path: join(directory, ".pi/agent/sessions"),
+        lastHours: 24,
+      }),
+    ).resolves.toMatchObject({ details: { source: "pi", sources: ["pi"], total: 2 } });
     await expect(
       list("omp", {
         ...blank,
@@ -306,15 +315,28 @@ describe("session listing across harnesses", () => {
       }),
     ).resolves.toMatchObject({ details: { total: 2, since: "2026-09-20T12:00:00.000Z" } });
     await expect(
-      list("omp", { ...blank, source: "pi", sources: ["pi"], lastHours: 0, limit: 0 }),
-    ).resolves.toMatchObject({ details: { total: 3 } });
+      list("omp", {
+        ...blank,
+        source: "pi",
+        sources: ["pi"],
+        since: " ",
+        until: "2026-09-19T12:00:00Z",
+        lastHours: 24,
+      }),
+    ).resolves.toMatchObject({
+      details: {
+        total: 2,
+        until: "2026-09-19T12:00:00.000Z",
+        sessions: [{ id: "same" }, { id: "old" }],
+      },
+    });
     await expect(
       list("omp", { ...blank, source: "claude", sources: ["pi"], lastHours: 24 }),
     ).rejects.toThrow("Use source or sources, not both");
 
     const readBlank = { ...blank, source: "pi", sessionId: "updated", knownToolResults: [] };
     const origin = { message: 0, block: 0, character: 0 };
-    const first = await read("omp", { ...readBlank, position: origin, limit: 0, maxChars: 0 });
+    const first = await read("omp", { ...readBlank, since: " ", position: origin });
     expect(first).toMatchObject({ details: { returnedMessages: 2 } });
     expect(JSON.stringify(first)).toContain("[Tool bodies:");
     await expect(read("omp", { ...readBlank, offset: 1, position: origin })).resolves.toMatchObject(

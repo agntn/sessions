@@ -136,7 +136,7 @@ omp install @agntn/sessions
 
 The extensions and MCP use the [same executors](./src/tool-operations.ts). Extensions also attach structured details. MCP carries the answer and continuation instructions in text.
 
-OMP fills in every field on the form, even the ones the model meant to skip. So its extension reads `""`, an empty `paths` or `sources` and a zero `lastHours` as left out. `knownToolResults: []` keeps its meaning, since that's how digest labels start. A real `since` or `until` beats the `lastHours` it couldn't leave blank. MCP and Pi still reject a blank bound by name.
+OMP has the model fill in every field on the form, even the ones it meant to skip. So its extension reads a blank `path` or `since`, an empty `paths` and a `source` already in `sources` as left out. A real `since` or `until` beats the filler `lastHours`. `knownToolResults: []` keeps its meaning, since that's how digest labels start. MCP and Pi still reject a blank bound by name.
 
 ### Keep reading, without starting over
 

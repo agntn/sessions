@@ -39,7 +39,6 @@ function loadToolOperations(): Promise<typeof SessionsTools> {
 
 interface PlaceholderSourceParams {
   readonly source?: string;
-  readonly limit?: number;
   readonly path?: string;
   readonly paths?: readonly string[];
   readonly since?: string;
@@ -54,14 +53,13 @@ interface PlaceholderListParams extends PlaceholderSourceParams {
 interface PlaceholderReadParams extends PlaceholderSourceParams {
   readonly source: string;
   readonly offset?: number;
-  readonly maxChars?: number;
   readonly position?: Readonly<{ message: number; block: number; character: number }>;
 }
 
 /**
- * OMP sends every optional field, so a blank string is one the model left out.
+ * OMP drops `""` only where the schema sets `minLength`, so `path: ""` and `" "` still get here.
  *
- * @param {string | undefined} value - Field as OMP sent it.
+ * @param {string | undefined} value - Field as OMP passed it on.
  * @returns {string | undefined} The value, or undefined when it's blank.
  */
 function text(value: string | undefined): string | undefined {
@@ -69,19 +67,9 @@ function text(value: string | undefined): string | undefined {
 }
 
 /**
- * A zero limit can't mean anything, so it's the same placeholder as a blank string.
+ * `paths` has no `minItems`, so OMP passes `[]` on as it came.
  *
- * @param {number | undefined} value - Limit as OMP sent it.
- * @returns {number | undefined} The limit, or undefined when it's zero.
- */
-function count(value: number | undefined): number | undefined {
-  return value === 0 ? undefined : value;
-}
-
-/**
- * An empty list is the same placeholder as a blank string.
- *
- * @param {readonly string[] | undefined} value - List as OMP sent it.
+ * @param {readonly string[] | undefined} value - List as OMP passed it on.
  * @returns {readonly string[] | undefined} The list, or undefined when it's empty.
  */
 function list(value: readonly string[] | undefined): readonly string[] | undefined {
@@ -104,31 +92,29 @@ function harnesses(
 }
 
 /**
- * Unsets OMP's list placeholders. `lastHours` can't be blank, so it yields to `since` and `until`.
+ * Unsets OMP's list placeholders. A filler `lastHours` yields to a real `since` or `until`.
  *
- * @param params - Parameters as OMP sent them.
+ * @param params - Parameters as OMP passed them on.
  * @returns {T} The same parameters with each placeholder unset.
  */
 function listParams<T extends Readonly<PlaceholderListParams>>(params: T): T {
   const since = text(params.since);
   const until = text(params.until);
-  const bounded = since !== undefined || until !== undefined;
   const set = { source: text(params.source), path: text(params.path), paths: list(params.paths) };
   return {
     ...params,
     ...set,
-    ...harnesses({ ...set, sources: list(params.sources) }),
+    ...harnesses({ ...set, sources: params.sources }),
     since,
     until,
-    lastHours: bounded ? undefined : count(params.lastHours),
-    limit: count(params.limit),
+    lastHours: since !== undefined || until !== undefined ? undefined : params.lastHours,
   };
 }
 
 /**
  * A zero `offset` or `position` beside the other one is only OMP's default, so it goes.
  *
- * @param params - Parameters as OMP sent them.
+ * @param params - Parameters as OMP passed them on.
  * @returns {T} The same parameters with each placeholder unset.
  */
 function readParams<T extends Readonly<PlaceholderReadParams>>(params: T): T {
@@ -144,8 +130,6 @@ function readParams<T extends Readonly<PlaceholderReadParams>>(params: T): T {
     paths: list(params.paths),
     since: text(params.since),
     until: text(params.until),
-    limit: count(params.limit),
-    maxChars: count(params.maxChars),
     ...(position !== undefined && offset === 0 ? { offset: undefined } : {}),
     ...(origin && offset !== undefined && offset !== 0 ? { position: undefined } : {}),
   };
