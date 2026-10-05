@@ -35,7 +35,7 @@ interface RunPick {
   readonly text: string;
   readonly found: number;
   readonly ceiling: number;
-  /** Time of the nearest tool anchor before the entry; a run older than that can't be its twin. */
+  /** Time of the last tool result before the entry; no run older than that can be its own. */
   readonly floor: number;
 }
 
@@ -43,6 +43,8 @@ interface EntryKey {
   readonly kind?: ChunkKind;
   readonly text: string;
   readonly anchor?: number;
+  /** Set on a tool result: the model speaks again only after it, so later text can't be older. */
+  readonly result?: number;
 }
 
 type ChunkKind = "user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk";
@@ -513,21 +515,34 @@ class MessageTimes {
       const key = keys[index];
       upper = key?.anchor ?? upper;
       if (key?.kind === undefined) continue;
-      const ceiling = this.ceiling(key.kind, upper, ceilings);
-      const found = this.lastMatch(key.kind, key.text, ceiling);
-      if (found === -1) continue;
       const floor = floors[index] ?? Number.NEGATIVE_INFINITY;
-      picks.push({ index, kind: key.kind, text: key.text, found, ceiling, floor });
-      ceilings[key.kind] = found - 1;
+      const ceiling = this.ceiling(key.kind, upper, ceilings);
+      const pick = this.pickFor(index, key.kind, key.text, ceiling, floor);
+      if (pick === undefined) continue;
+      picks.push(pick);
+      ceilings[key.kind] = pick.found - 1;
     }
     return this.settlePicks(keys, picks);
+  }
+
+  private pickFor(
+    index: number,
+    kind: ChunkKind,
+    text: string,
+    ceiling: number,
+    floor: number,
+  ): RunPick | undefined {
+    const found = this.lastMatch(kind, text, ceiling);
+    const run = this.runs[kind][found];
+    if (run === undefined || run.at < floor) return undefined;
+    return { index, kind, text, found, ceiling, floor };
   }
 
   private floorsOf(keys: readonly EntryKey[]): number[] {
     let floor = Number.NEGATIVE_INFINITY;
     return keys.map((key) => {
       const before = floor;
-      floor = key.anchor ?? floor;
+      floor = key.result ?? floor;
       return before;
     });
   }
@@ -580,7 +595,7 @@ class MessageTimes {
 
   /**
    * A twin is the latest unclaimed run with a prefix of the pick's text that the pick's ceiling
-   * reaches, and only if it's no older than the tool anchor before the pick.
+   * reaches, and only if it's no older than the tool result before the pick.
    *
    * @param pick - A match found walking backwards.
    * @returns {boolean} Whether an unclaimed run in its reach says the same thing.
@@ -642,9 +657,10 @@ class MessageTimes {
   private keyOf(entry: Entry): EntryKey {
     const run = chunkRunFor(entry);
     const anchor = this.anchorOf(entry);
+    const result = entry.type === "tool_result" ? anchor : undefined;
     return run === undefined
-      ? { text: "", anchor }
-      : { kind: run.kind, text: prefixOf(run.text), anchor };
+      ? { text: "", anchor, result }
+      : { kind: run.kind, text: prefixOf(run.text), anchor, result };
   }
 
   private anchorOf(entry: Entry): number | undefined {

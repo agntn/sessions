@@ -510,6 +510,35 @@ describe("GrokSource", () => {
     });
   });
 
+  it("won't date text after a tool result with a run from before it", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "older",
+      [
+        { type: "assistant", content: "", tool_calls: [{ id: "call-run", name: "bash" }] },
+        { type: "tool_result", tool_call_id: "call-run", content: "ok" },
+        { type: "assistant", content: "same, and then more" },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "older", [
+      { at: "2026-09-30T08:00:30.000Z", update: chunk("agent_message_chunk", "same") },
+      {
+        at: "2026-09-30T08:01:06.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "call-run", title: "bash" },
+      },
+      {
+        at: "2026-09-30T08:01:09.000Z",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-run", status: "completed" },
+      },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.at(-1)).toMatchObject({ timestampSource: "session" });
+  });
+
   it("frees the run of a match it drops for being ambiguous", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     writeSession(
