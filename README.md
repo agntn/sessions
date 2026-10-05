@@ -136,6 +136,8 @@ omp install @agntn/sessions
 
 The extensions and MCP use the [same executors](./src/tool-operations.ts). Extensions also attach structured details. MCP carries the answer and continuation instructions in text.
 
+OMP has the model fill in every field on the form, even the ones it meant to skip. So its extension reads a blank `path` or `since`, an empty `paths` and a `source` already in `sources` as left out. A real `since` or `until` beats the filler `lastHours`. `knownToolResults: []` keeps its meaning, since that's how digest labels start. MCP and Pi still reject a blank bound by name.
+
 ### Keep reading, without starting over
 
 Use `source` with `path`, or `paths` where supported, to override one harness's location. `path` is a directory for most harnesses and the database file for aei, mastra and opencode. Got the exact `.jsonl` in hand? For Claude, Codex, OpenClaw, Pi and OMP, pass the directory it sits in and let `sessionId` do the picking. Hand over the file itself and the tools say so, instead of choking on `ENOTDIR`. Listings across harnesses use native locations and label each row with its source. Explicitly selected unavailable sources return an error. With no selection, only available sources are read.
