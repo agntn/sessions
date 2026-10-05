@@ -144,6 +144,8 @@ Page session listings with `offset` and `limit` (up to 100). For a fixed period,
 
 Tool results from Pi, OMP, Claude, OpenCode and Gemini keep the native error status as `isError`, including results with no text. Gemini counts a cancelled call as failed, since its transcript stores one as an error. `sessions_read` prints the flag beside the tool call ID. An absent flag means unknown, not success.
 
+Provider died mid-turn? A Pi or OMP turn that ended early gets a `stop` block. It keeps the native `stopReason`, like `error`, `aborted` or `length`, plus the error text. That holds even when the provider failed before a single token. `sessions_read` prints it as `[stop error] Connection error.` A failed request reads like one, not like an awkward silence. Turns that ended normally don't get one.
+
 For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
 
 To avoid rereading known tool bodies, pass `knownToolResults: []`. This labels each tool-result body with its digest and original length, without omitting anything. After reading a complete body, put its 64-character lowercase digest in `knownToolResults` on a new read. Up to 100 digests are accepted. Matching bodies become explicit references with their original message/block position and a complete ordinary `sessions_read` request to recover the text. Timestamps, call IDs, and error flags remain visible.

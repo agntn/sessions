@@ -1,4 +1,4 @@
-export type BlockType = "text" | "thinking" | "tool_call" | "tool_result" | (string & {});
+export type BlockType = "text" | "thinking" | "tool_call" | "tool_result" | "stop" | (string & {});
 
 /** A normalized content block within a harness message. */
 export interface Block {
@@ -9,6 +9,8 @@ export interface Block {
   toolCallId?: string;
   /** Native tool result status; absent when the outcome is unknown. */
   isError?: boolean;
+  /** Native reason a `stop` block's turn ended early, such as `error` or `aborted`. */
+  stopReason?: string;
 }
 
 /** Origin metadata retained when a harness exposes channels. */

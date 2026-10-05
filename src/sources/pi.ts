@@ -78,6 +78,22 @@ function toolResultBlocks(message: Readonly<Record<string, unknown>>): Block[] {
   ];
 }
 
+/** Turns that ended the way the model meant to, so they need no stop block. */
+const PLANNED_STOPS = new Set(["stop", "toolUse"]);
+
+function stopBlocks(message: Readonly<Record<string, unknown>>): Block[] {
+  const stopReason = scalarText(message.stopReason);
+  const text = scalarText(message.errorMessage);
+  if (!text && (!stopReason || PLANNED_STOPS.has(stopReason))) return [];
+  return [{ type: "stop", ...(stopReason ? { stopReason } : {}), ...(text ? { text } : {}) }];
+}
+
+function messageBlocks(role: Message["role"], message: Readonly<Record<string, unknown>>): Block[] {
+  if (role === "tool") return toolResultBlocks(message);
+  const blocks = parseBlocks(message.content);
+  return role === "assistant" ? [...blocks, ...stopBlocks(message)] : blocks;
+}
+
 function nativeRole(value: unknown): Message["role"] | undefined {
   if (value === "assistant") return "assistant";
   if (value === "user") return "user";
@@ -183,8 +199,7 @@ export class PiSource implements Source {
     if (!isRecord(entry.message)) return undefined;
     const role = nativeRole(entry.message.role);
     if (!role) return undefined;
-    const blocks =
-      role === "tool" ? toolResultBlocks(entry.message) : parseBlocks(entry.message.content);
+    const blocks = messageBlocks(role, entry.message);
     if (blocks.length === 0) return undefined;
 
     const timestampText = scalarText(entry.timestamp);
