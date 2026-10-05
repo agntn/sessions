@@ -395,7 +395,7 @@ class MessageTimes {
       upper = key?.anchor ?? upper;
       if (key?.kind === undefined) continue;
       const ceiling = this.ceiling(key.kind, upper, ceilings);
-      const found = this.lastMatch(key.kind, key.text, ceiling, -1);
+      const found = this.lastMatch(key.kind, key.text, ceiling);
       if (found === -1) continue;
       picks.push({ index, kind: key.kind, text: key.text, found, ceiling });
       ceilings[key.kind] = found - 1;
@@ -404,8 +404,8 @@ class MessageTimes {
   }
 
   /**
-   * A pick stays only when no unclaimed run in its reach says the same thing. Grok logs no
-   * rewind, so two such runs can't be told apart and the entry keeps its anchor or none.
+   * A pick stays only when no run left unclaimed in its reach says the same thing. Grok logs no
+   * rewind, so such runs can't be told apart and the entry keeps its anchor or none.
    *
    * @param keys - One key per visible entry.
    * @param picks - Matches found walking backwards.
@@ -416,23 +416,22 @@ class MessageTimes {
     picks: readonly RunPick[],
   ): (number | undefined)[] {
     const said = keys.map((key) => key.anchor);
-    const floors: Record<ChunkKind, number> = {
-      user_message_chunk: -1,
-      agent_message_chunk: -1,
-      agent_thought_chunk: -1,
-    };
-    for (const pick of picks.toReversed()) {
-      const twin = this.lastMatch(
-        pick.kind,
-        pick.text,
-        pick.ceiling,
-        floors[pick.kind],
-        pick.found,
-      );
-      if (twin === -1) said[pick.index] = this.runs[pick.kind][pick.found]?.at;
-      floors[pick.kind] = pick.found;
+    const claimed = Object.fromEntries(picks.map((pick) => [`${pick.kind}:${pick.found}`, true]));
+    for (const pick of picks) {
+      if (this.hasTwin(pick, claimed)) continue;
+      said[pick.index] = this.runs[pick.kind][pick.found]?.at;
     }
     return said;
+  }
+
+  private hasTwin(pick: RunPick, claimed: Readonly<Record<string, boolean>>): boolean {
+    const runs = this.runs[pick.kind];
+    for (let index = pick.ceiling; index >= 0; index -= 1) {
+      const run = runs[index];
+      if (run === undefined || Object.hasOwn(claimed, `${pick.kind}:${index}`)) continue;
+      if (pick.text.startsWith(run.text)) return true;
+    }
+    return false;
   }
 
   private add(kind: string, head: string, at: number | undefined, run: string | undefined): void {
@@ -502,11 +501,11 @@ class MessageTimes {
     return index;
   }
 
-  private lastMatch(kind: ChunkKind, text: string, from: number, floor: number, skip = -1): number {
+  private lastMatch(kind: ChunkKind, text: string, from: number): number {
     const runs = this.runs[kind];
-    for (let index = from; index > floor; index -= 1) {
+    for (let index = from; index >= 0; index -= 1) {
       const run = runs[index];
-      if (index !== skip && run !== undefined && text.startsWith(run.text)) return index;
+      if (run !== undefined && text.startsWith(run.text)) return index;
     }
     return -1;
   }

@@ -390,7 +390,9 @@ describe("GrokSource", () => {
         { type: "tool_result", tool_call_id: "call-kept", content: "ok" },
         { type: "user", prompt_index: 1, content: [{ type: "text", text: "same" }] },
         { type: "assistant", content: "Sure." },
-        { type: "user", prompt_index: 2, content: [{ type: "text", text: "new" }] },
+        { type: "user", prompt_index: 2, content: [{ type: "text", text: "same" }] },
+        { type: "assistant", content: "Again?" },
+        { type: "user", prompt_index: 3, content: [{ type: "text", text: "new" }] },
       ],
       { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
     );
@@ -413,6 +415,8 @@ describe("GrokSource", () => {
       },
       at("08:06:00", "user_message_chunk", "same"),
       at("08:06:05", "agent_message_chunk", "Sure."),
+      at("08:06:30", "user_message_chunk", "same"),
+      at("08:06:35", "agent_message_chunk", "Again?"),
       at("08:07:00", "user_message_chunk", "same"),
       { at: "2026-09-30T08:07:30.000Z", update: { sessionUpdate: "turn_completed" } },
       at("08:08:00", "user_message_chunk", "new"),
@@ -430,6 +434,8 @@ describe("GrokSource", () => {
       ["2026-09-30T08:05:09.000Z", "message"],
       ["2026-09-30T08:05:09.000Z", "session"],
       ["2026-09-30T08:06:05.000Z", "message"],
+      ["2026-09-30T08:06:05.000Z", "session"],
+      ["2026-09-30T08:06:35.000Z", "message"],
       ["2026-09-30T08:08:00.000Z", "message"],
     ]);
   });
