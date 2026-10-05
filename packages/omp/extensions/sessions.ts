@@ -37,6 +37,105 @@ function loadToolOperations(): Promise<typeof SessionsTools> {
   return toolOperationsPromise;
 }
 
+interface PlaceholderSourceParams {
+  readonly source?: string;
+  readonly path?: string;
+  readonly paths?: readonly string[];
+  readonly since?: string;
+  readonly until?: string;
+}
+
+interface PlaceholderListParams extends PlaceholderSourceParams {
+  readonly sources?: readonly string[];
+  readonly lastHours?: number;
+}
+
+interface PlaceholderReadParams extends PlaceholderSourceParams {
+  readonly source: string;
+  readonly offset?: number;
+  readonly position?: Readonly<{ message: number; block: number; character: number }>;
+}
+
+/**
+ * OMP sends every optional field, so a blank string is one the model left out.
+ *
+ * @param {string | undefined} value - Field as OMP sent it.
+ * @returns {string | undefined} The value, or undefined when it's blank.
+ */
+function text(value: string | undefined): string | undefined {
+  return value?.trim() ? value : undefined;
+}
+
+/**
+ * An empty list is the same placeholder as a blank string.
+ *
+ * @param {readonly string[] | undefined} value - List as OMP sent it.
+ * @returns {readonly string[] | undefined} The list, or undefined when it's empty.
+ */
+function list(value: readonly string[] | undefined): readonly string[] | undefined {
+  return value?.length ? value : undefined;
+}
+
+/**
+ * Keeps one of `source` and `sources` when `sources` holds `source`. Other pairs stay a conflict.
+ *
+ * @param params - List parameters without placeholders.
+ * @returns {Pick<PlaceholderListParams, "source" | "sources">} The harness selection to pass on.
+ */
+function harnesses(
+  params: Readonly<PlaceholderListParams>,
+): Pick<PlaceholderListParams, "source" | "sources"> {
+  const { source, sources } = params;
+  if (source === undefined || sources?.includes(source) !== true) return { source, sources };
+  const single = sources.length === 1 || params.path !== undefined || params.paths !== undefined;
+  return single ? { source, sources: undefined } : { source: undefined, sources };
+}
+
+/**
+ * Unsets OMP's list placeholders. `lastHours` can't be blank, so it yields to `since` and `until`.
+ *
+ * @param params - Parameters as OMP sent them.
+ * @returns {T} The same parameters with each placeholder unset.
+ */
+function listParams<T extends Readonly<PlaceholderListParams>>(params: T): T {
+  const since = text(params.since);
+  const until = text(params.until);
+  const bounded = since !== undefined || until !== undefined;
+  const set = { source: text(params.source), path: text(params.path), paths: list(params.paths) };
+  return {
+    ...params,
+    ...set,
+    ...harnesses({ ...set, sources: list(params.sources) }),
+    since,
+    until,
+    lastHours: bounded || params.lastHours === 0 ? undefined : params.lastHours,
+  };
+}
+
+/**
+ * A zero `offset` or `position` beside the other one is only OMP's default, so it goes.
+ *
+ * @param params - Parameters as OMP sent them.
+ * @returns {T} The same parameters with each placeholder unset.
+ */
+function readParams<T extends Readonly<PlaceholderReadParams>>(params: T): T {
+  const { offset, position } = params;
+  const origin =
+    position !== undefined &&
+    position.message === 0 &&
+    position.block === 0 &&
+    position.character === 0;
+  return {
+    ...params,
+    path: text(params.path),
+    paths: list(params.paths),
+    since: text(params.since),
+    until: text(params.until),
+    ...(position !== undefined && offset === 0 ? { offset: undefined } : {}),
+    ...(origin && offset !== undefined && offset !== 0 ? { position: undefined } : {}),
+  };
+}
+
 export default function sessionsExtension(pi: ExtensionAPI): void {
   const { Type } = pi.typebox;
   const sourceOptions = {
@@ -183,7 +282,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
     approval: "read",
     async execute(_toolCallId, params) {
       const { listSessions } = await loadToolOperations();
-      return listSessions(params);
+      return listSessions(listParams(params));
     },
   });
 
@@ -196,7 +295,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
     approval: "read",
     async execute(_toolCallId, params) {
       const { readSession } = await loadToolOperations();
-      return readSession(params);
+      return readSession(readParams(params));
     },
   });
 }

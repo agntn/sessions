@@ -15,6 +15,7 @@
 - Applications own indexing, storage, rendering, and export.
 - Keep the agent surfaces bounded and read-only: `src/tool-operations.ts` holds the executors, `src/mcp.ts` exports `createMcpServer()`, `src/commands/mcp.ts` runs it over stdio, and `packages/pi/extensions/` registers the pi tools.
 - No agent surface reimplements an operation. Schemas are declared per surface because pi registers tools synchronously, the executors are not.
+- OMP sends every optional field, so `packages/omp/extensions/` turns blank strings, empty lists and zero placeholders into unset fields before an executor sees them. A new optional field gets the same pass there, or OMP can't call the tool at all.
 - An MCP client reads `content` and never `details`, so tool text has to carry whatever the next call needs.
 - Agent reads stay bounded without persistence, caching, or indexes owned by this package. Stream summaries and requested message windows; use a native projection when the source store can answer more narrowly.
 - Inside a checkout, `dist/cli.mjs` loads the `mcp` command from `src/commands/mcp.ts`, so a local server takes edits on restart. The npm package, copies under `node_modules` and `SESSIONS_DIST=1` keep the bundle. `test/unit/bin.test.ts` runs `mcp` in each layout.

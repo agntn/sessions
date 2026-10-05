@@ -257,6 +257,71 @@ describe("session listing across harnesses", () => {
     expect(JSON.stringify(result)).toContain("offset=1");
   });
 
+  it("reads the placeholders OMP sends for every field it was not given as unset", async () => {
+    const tools = new Map<
+      string,
+      (id: string, params: Readonly<Record<string, unknown>>) => Promise<unknown>
+    >();
+    ompExtension({
+      typebox: TypeBox,
+      setLabel() {},
+      registerTool(definition: {
+        readonly name: string;
+        readonly execute: (
+          id: string,
+          params: Readonly<Record<string, unknown>>,
+        ) => Promise<unknown>;
+      }) {
+        tools.set(definition.name, definition.execute);
+      },
+    } as unknown as OmpAPI);
+    const list = tools.get("sessions_list");
+    const read = tools.get("sessions_read");
+    if (!list || !read) throw new Error("OMP tools not registered");
+    const blank = { path: "", paths: [], since: "", until: "", offset: 0, limit: 20 };
+
+    await expect(
+      list("omp", { ...blank, source: "pi", sources: ["pi"], lastHours: 24 }),
+    ).resolves.toMatchObject({ details: { sources: ["pi"], total: 2 } });
+    await expect(
+      list("omp", { ...blank, source: "pi", sources: ["pi", "codex"], lastHours: 24 }),
+    ).resolves.toMatchObject({ details: { sources: ["pi", "codex"], total: 4 } });
+    await expect(
+      list("omp", {
+        ...blank,
+        source: "codex",
+        sources: ["codex"],
+        since: "2026-09-20T00:00:00Z",
+        until: "2026-09-20T12:00:00Z",
+        lastHours: 0.1,
+      }),
+    ).resolves.toMatchObject({ details: { total: 1, sessions: [{ id: "same" }] } });
+    await expect(
+      list("omp", {
+        ...blank,
+        source: "pi",
+        sources: ["pi", "codex"],
+        since: "2026-09-20T12:00:00Z",
+        lastHours: 24,
+      }),
+    ).resolves.toMatchObject({ details: { total: 2, since: "2026-09-20T12:00:00.000Z" } });
+    await expect(
+      list("omp", { ...blank, source: "pi", sources: ["pi"], lastHours: 0 }),
+    ).resolves.toMatchObject({ details: { total: 3 } });
+    await expect(
+      list("omp", { ...blank, source: "claude", sources: ["pi"], lastHours: 24 }),
+    ).rejects.toThrow("Use source or sources, not both");
+
+    const readBlank = { ...blank, source: "pi", sessionId: "updated", knownToolResults: [] };
+    const origin = { message: 0, block: 0, character: 0 };
+    await expect(read("omp", { ...readBlank, position: origin })).resolves.toMatchObject({
+      details: { returnedMessages: 2 },
+    });
+    await expect(read("omp", { ...readBlank, offset: 1, position: origin })).resolves.toMatchObject(
+      { details: { returnedMessages: 1 } },
+    );
+  });
+
   it("rejects empty time bounds through MCP with the field name", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createMcpServer();
