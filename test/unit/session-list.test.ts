@@ -314,9 +314,9 @@ describe("session listing across harnesses", () => {
 
     const readBlank = { ...blank, source: "pi", sessionId: "updated", knownToolResults: [] };
     const origin = { message: 0, block: 0, character: 0 };
-    await expect(read("omp", { ...readBlank, position: origin })).resolves.toMatchObject({
-      details: { returnedMessages: 2 },
-    });
+    const first = await read("omp", { ...readBlank, position: origin });
+    expect(first).toMatchObject({ details: { returnedMessages: 2 } });
+    expect(JSON.stringify(first)).toContain("[Tool bodies:");
     await expect(read("omp", { ...readBlank, offset: 1, position: origin })).resolves.toMatchObject(
       { details: { returnedMessages: 1 } },
     );
