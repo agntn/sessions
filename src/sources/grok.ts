@@ -27,6 +27,14 @@ interface SessionClock {
 type Entry = Readonly<Record<string, unknown>>;
 type Time = Readonly<Pick<Message, "timestamp" | "timestampSource">>;
 
+interface RunPick {
+  readonly index: number;
+  readonly kind: ChunkKind;
+  readonly text: string;
+  readonly found: number;
+  readonly ceiling: number;
+}
+
 interface EntryKey {
   readonly kind?: ChunkKind;
   readonly text: string;
@@ -361,8 +369,8 @@ class MessageTimes {
   }
 
   /**
-   * Matches the whole transcript backwards, so a run a rewind dropped loses to the run the history
-   * kept. Each entry leaves a short key, never its payload.
+   * Matches the whole transcript backwards from tool anchors. Each entry leaves a short key, never
+   * its payload.
    *
    * @param path - The session's `chat_history.jsonl`.
    * @returns {Promise<(number | undefined)[]>} One time per visible entry, empty without runs.
@@ -375,7 +383,7 @@ class MessageTimes {
   }
 
   private matchKeys(keys: readonly EntryKey[]): (number | undefined)[] {
-    const said = keys.map((key) => key.anchor);
+    const picks: RunPick[] = [];
     const ceilings: Record<ChunkKind, number> = {
       user_message_chunk: this.runs.user_message_chunk.length - 1,
       agent_message_chunk: this.runs.agent_message_chunk.length - 1,
@@ -386,10 +394,43 @@ class MessageTimes {
       const key = keys[index];
       upper = key?.anchor ?? upper;
       if (key?.kind === undefined) continue;
-      const found = this.lastMatch(key.kind, key.text, this.ceiling(key.kind, upper, ceilings));
+      const ceiling = this.ceiling(key.kind, upper, ceilings);
+      const found = this.lastMatch(key.kind, key.text, ceiling, -1);
       if (found === -1) continue;
-      said[index] = this.runs[key.kind][found]?.at;
+      picks.push({ index, kind: key.kind, text: key.text, found, ceiling });
       ceilings[key.kind] = found - 1;
+    }
+    return this.settlePicks(keys, picks);
+  }
+
+  /**
+   * A pick stays only when no unclaimed run in its reach says the same thing. Grok logs no
+   * rewind, so two such runs can't be told apart and the entry keeps its anchor or none.
+   *
+   * @param keys - One key per visible entry.
+   * @param picks - Matches found walking backwards.
+   * @returns {(number | undefined)[]} One time per entry.
+   */
+  private settlePicks(
+    keys: readonly EntryKey[],
+    picks: readonly RunPick[],
+  ): (number | undefined)[] {
+    const said = keys.map((key) => key.anchor);
+    const floors: Record<ChunkKind, number> = {
+      user_message_chunk: -1,
+      agent_message_chunk: -1,
+      agent_thought_chunk: -1,
+    };
+    for (const pick of picks.toReversed()) {
+      const twin = this.lastMatch(
+        pick.kind,
+        pick.text,
+        pick.ceiling,
+        floors[pick.kind],
+        pick.found,
+      );
+      if (twin === -1) said[pick.index] = this.runs[pick.kind][pick.found]?.at;
+      floors[pick.kind] = pick.found;
     }
     return said;
   }
@@ -461,11 +502,11 @@ class MessageTimes {
     return index;
   }
 
-  private lastMatch(kind: ChunkKind, text: string, from: number): number {
+  private lastMatch(kind: ChunkKind, text: string, from: number, floor: number, skip = -1): number {
     const runs = this.runs[kind];
-    for (let index = from; index >= 0; index -= 1) {
+    for (let index = from; index > floor; index -= 1) {
       const run = runs[index];
-      if (run !== undefined && text.startsWith(run.text)) return index;
+      if (index !== skip && run !== undefined && text.startsWith(run.text)) return index;
     }
     return -1;
   }

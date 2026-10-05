@@ -374,7 +374,7 @@ describe("GrokSource", () => {
     ]);
   });
 
-  it("dates the turn a rewind kept, not the one it dropped", async () => {
+  it("leaves text a rewind repeated undated and keeps the rest", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     writeSession(
       directory,
@@ -388,22 +388,21 @@ describe("GrokSource", () => {
           tool_calls: [{ id: "call-kept", name: "bash", arguments: "{}" }],
         },
         { type: "tool_result", tool_call_id: "call-kept", content: "ok" },
-        { type: "user", prompt_index: 1, content: [{ type: "text", text: "thanks" }] },
-        { type: "assistant", content: "Anytime." },
+        { type: "user", prompt_index: 1, content: [{ type: "text", text: "same" }] },
+        { type: "assistant", content: "Sure." },
+        { type: "user", prompt_index: 2, content: [{ type: "text", text: "new" }] },
       ],
       { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
     );
-    const turn = (at: string, prompt: string, reply: string): Update[] => [
-      { at: `2026-09-30T${at}:00.000Z`, update: chunk("user_message_chunk", prompt) },
-      { at: `2026-09-30T${at}:05.000Z`, update: chunk("agent_message_chunk", reply) },
-    ];
+    const at = (time: string, kind: string, text: string): Update => ({
+      at: `2026-09-30T${time}.000Z`,
+      update: chunk(kind, text),
+    });
     writeUpdates(directory, "project", "rewound", [
-      ...turn("08:01", "fix the build", "On it."),
-      {
-        at: "2026-09-30T08:01:06.000Z",
-        update: { sessionUpdate: "tool_call", toolCallId: "call-dropped", title: "bash" },
-      },
-      ...turn("08:05", "fix the build", "On it."),
+      at("08:01:00", "user_message_chunk", "fix the build"),
+      at("08:01:05", "agent_message_chunk", "On it."),
+      at("08:05:00", "user_message_chunk", "fix the build"),
+      at("08:05:05", "agent_message_chunk", "On it."),
       {
         at: "2026-09-30T08:05:06.000Z",
         update: { sessionUpdate: "tool_call", toolCallId: "call-kept", title: "bash" },
@@ -412,21 +411,30 @@ describe("GrokSource", () => {
         at: "2026-09-30T08:05:09.000Z",
         update: { sessionUpdate: "tool_call_update", toolCallId: "call-kept", status: "completed" },
       },
-      ...turn("08:06", "thanks", "Anytime."),
-      ...turn("08:08", "thanks", "Anytime."),
+      at("08:06:00", "user_message_chunk", "same"),
+      at("08:06:05", "agent_message_chunk", "Sure."),
+      at("08:07:00", "user_message_chunk", "same"),
+      { at: "2026-09-30T08:07:30.000Z", update: { sessionUpdate: "turn_completed" } },
+      at("08:08:00", "user_message_chunk", "new"),
     ]);
 
     const messages = await collect(new GrokSource(directory));
-    expect(messages.map((message) => new Date(message.timestamp).toISOString())).toEqual([
-      "2026-09-30T08:05:00.000Z",
-      "2026-09-30T08:05:05.000Z",
-      "2026-09-30T08:05:09.000Z",
-      "2026-09-30T08:08:00.000Z",
-      "2026-09-30T08:08:05.000Z",
+    expect(
+      messages.map((message) => [
+        new Date(message.timestamp).toISOString(),
+        message.timestampSource,
+      ]),
+    ).toEqual([
+      ["2026-09-30T08:00:00.000Z", "session"],
+      ["2026-09-30T08:05:06.000Z", "message"],
+      ["2026-09-30T08:05:09.000Z", "message"],
+      ["2026-09-30T08:05:09.000Z", "session"],
+      ["2026-09-30T08:06:05.000Z", "message"],
+      ["2026-09-30T08:08:00.000Z", "message"],
     ]);
   });
 
-  it("keeps a rewind apart over a long stretch without tools", async () => {
+  it("keeps a rewind from spreading over a long stretch without tools", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     const replies = Array.from({ length: 300 }, (_, index) => `reply ${index}.`);
     writeSession(
@@ -448,8 +456,9 @@ describe("GrokSource", () => {
     ]);
 
     const messages = await collect(new GrokSource(directory));
-    expect(messages.filter((message) => message.timestampSource === "message")).toHaveLength(300);
-    expect(messages[0]?.timestamp).toBe(Date.parse("2026-09-30T08:00:00.000Z"));
+    expect(messages.filter((message) => message.timestampSource === "message")).toHaveLength(299);
+    expect(messages[0]?.timestampSource).toBe("session");
+    expect(messages[1]?.timestamp).toBe(Date.parse("2026-09-30T08:00:01.000Z"));
     expect(messages.at(-1)?.timestamp).toBe(Date.parse("2026-09-30T08:04:59.000Z"));
   });
 
