@@ -1,6 +1,8 @@
-import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { createReadStream, existsSync, read, readdirSync, readFileSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename, join, sep } from "node:path";
-import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
+import { promisify } from "node:util";
 import { home, osUser } from "../core/env.ts";
 import type {
   Block,
@@ -23,6 +25,69 @@ interface SessionClock {
   readonly updatedAt: number;
   readonly source: "session" | "file";
 }
+
+type Entry = Readonly<Record<string, unknown>>;
+type Time = Readonly<Pick<Message, "timestamp" | "timestampSource">>;
+
+interface RunPick {
+  readonly index: number;
+  readonly kind: ChunkKind;
+  readonly text: string;
+  readonly found: number;
+  readonly ceiling: number;
+  /** First run written after the last tool result before the entry; nothing earlier is its own. */
+  readonly floor: number;
+}
+
+interface EntryKey {
+  readonly kind?: ChunkKind;
+  readonly text: string;
+  readonly anchor?: number;
+  /** Runs written by the anchor's update: this entry and every earlier one sit below it. */
+  readonly upper?: Cut;
+  /** Set on a tool result: the model speaks again only after it, so later text sits above it. */
+  readonly floor?: Cut;
+}
+
+type ChunkKind = "user_message_chunk" | "agent_message_chunk" | "agent_thought_chunk";
+
+interface ChunkRun {
+  readonly text: string;
+  readonly at: number;
+  /** A run whose text couldn't be read: it matches nothing but still makes its reach ambiguous. */
+  readonly opaque?: true;
+}
+
+/** How many runs of each kind the stream had written at some point. */
+type Cut = Readonly<Record<ChunkKind, number>>;
+
+interface ToolTimes {
+  readonly first: number;
+  readonly firstCut: Cut;
+  last: number;
+  lastCut: Cut;
+}
+
+/** Kind, tool call id and write time all sit in the first few hundred bytes of an update. */
+const HEAD_BYTES = 1024;
+/** A longer update line keeps only its ends: a chunk that size dates nothing, a tool still does. */
+const LINE_HEAD = 1 << 16;
+/** `_meta` closes every update, a few hundred bytes from its end. */
+const LINE_TAIL = 4096;
+/** Only a prefix is kept per chunk run, so a pasted prompt isn't held in memory twice. */
+const RUN_PREFIX = 200;
+const QUERY_OPEN = "<user_query>\n";
+const META_KEY = '"_meta":';
+const UPDATE_KIND = /"sessionUpdate":"([a-z_]+)"/u;
+const TOOL_CALL_ID = /"toolCallId":"([^"]+)"/u;
+const AGENT_MS = /"agentTimestampMs":(\d+)/u;
+const WRITE_SECONDS = /"timestamp":(\d+)/u;
+const TEXT_START = /"content":\{"type":"text","text":"/u;
+const CHUNK_KINDS: readonly string[] = [
+  "user_message_chunk",
+  "agent_message_chunk",
+  "agent_thought_chunk",
+];
 
 function defaultSessionsDir(): string {
   const override = process.env.GROK_HOME?.trim();
@@ -190,6 +255,508 @@ function roleFor(type: unknown): Message["role"] | undefined {
   return undefined;
 }
 
+/**
+ * A copy, not a slice: V8 keeps a sliced string's whole parent alive.
+ *
+ * @param text - Chunk or entry text.
+ * @returns {string} Its first `RUN_PREFIX` characters as a string of their own.
+ */
+function prefixOf(text: string): string {
+  return Array.from(text.slice(0, RUN_PREFIX)).join("");
+}
+
+/** Runs of one kind: earliest index by exact prefix, and the lengths that occur. */
+interface RunIndex {
+  readonly byText: Map<string, number[]>;
+  readonly lengths: number[];
+  readonly opaque: number[];
+}
+
+function noRuns(): RunIndex {
+  return { byText: new Map(), lengths: [], opaque: [] };
+}
+
+/**
+ * Binary search over rising run indexes.
+ *
+ * @param indexes - Run indexes in rising order.
+ * @param ceiling - Highest index allowed.
+ * @returns {number | undefined} The highest index at or below the ceiling.
+ */
+function lastAtMost(indexes: readonly number[], ceiling: number): number | undefined {
+  let low = 0;
+  let high = indexes.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if ((indexes[middle] ?? Number.POSITIVE_INFINITY) <= ceiling) low = middle + 1;
+    else high = middle - 1;
+  }
+  return high >= 0 ? indexes[high] : undefined;
+}
+
+/**
+ * Reads the opening of a chunk's text from the start of a line too long to keep whole.
+ *
+ * @param head - The kept start of the line.
+ * @returns {string | undefined} The text's opening, or nothing when it can't be decoded.
+ */
+function headText(head: string): string | undefined {
+  const match = TEXT_START.exec(head);
+  if (!match) return undefined;
+  const start = match.index + match[0].length;
+  const literal = head.slice(start, start + RUN_PREFIX * 6);
+  for (let cut = 0; cut <= 6; cut += 1) {
+    const text = parseJson(`"${literal.slice(0, literal.length - cut)}"`);
+    if (typeof text === "string") return text;
+  }
+  return undefined;
+}
+
+function noIndex(): Record<ChunkKind, RunIndex> {
+  return {
+    user_message_chunk: noRuns(),
+    agent_message_chunk: noRuns(),
+    agent_thought_chunk: noRuns(),
+  };
+}
+
+function isChunkKind(kind: string): kind is ChunkKind {
+  return CHUNK_KINDS.includes(kind);
+}
+
+function datable(ms: number): number | undefined {
+  return Number.isFinite(new Date(ms).getTime()) ? ms : undefined;
+}
+
+function updateTime(head: string, meta: string): number | undefined {
+  const agentMs = AGENT_MS.exec(meta)?.[1];
+  const agentTime = agentMs === undefined ? undefined : datable(Number(agentMs));
+  if (agentTime !== undefined) return agentTime;
+  const seconds = WRITE_SECONDS.exec(head)?.[1];
+  return seconds === undefined ? undefined : datable(Number(seconds) * 1000);
+}
+
+function chunkText(line: string): string {
+  const params = parseJsonRecord(line)?.params;
+  const update = isRecord(params) ? params.update : undefined;
+  const content = isRecord(update) ? update.content : undefined;
+  return isRecord(content) ? (scalarText(content.text) ?? "") : "";
+}
+
+function queryText(content: unknown): string {
+  const text = userBlocks(content)
+    .map((block) => block.text ?? "")
+    .join("");
+  return text.startsWith(QUERY_OPEN) ? text.slice(QUERY_OPEN.length) : text;
+}
+
+function chunkRunFor(
+  entry: Readonly<Record<string, unknown>>,
+): Readonly<{ kind: ChunkKind; text: string }> | undefined {
+  switch (entry.type) {
+    case "user":
+      return entry.synthetic_reason === undefined
+        ? { kind: "user_message_chunk", text: queryText(entry.content) }
+        : undefined;
+    case "assistant":
+      return typeof entry.content === "string"
+        ? { kind: "agent_message_chunk", text: entry.content }
+        : undefined;
+    case "reasoning":
+      return {
+        kind: "agent_thought_chunk",
+        text: reasoningBlocks(entry)
+          .map((block) => block.text ?? "")
+          .join(""),
+      };
+    default:
+      return undefined;
+  }
+}
+
+/** A run's text: read in full, read from the line's start, `null` when unreadable. */
+type RunText = string | null | undefined;
+
+/**
+ * Text that opens a run, read whole from a short line and from the kept start of a long one.
+ *
+ * @param head - The kept start of the line, all of it when `whole`.
+ * @param whole - Whether the line fit.
+ * @returns {RunText} The text, or `null` when a long line's start doesn't decode.
+ */
+function runText(head: string, whole: boolean): RunText {
+  return whole ? chunkText(head) : (headText(head) ?? null);
+}
+
+/** What a line keeps: its start, its end, and whether the start is all of it. */
+interface LineView {
+  readonly head: Buffer;
+  readonly tail: Buffer;
+  readonly whole: boolean;
+}
+
+/** Keeps at most `LINE_HEAD` bytes from the start of a line and `LINE_TAIL` from its end. */
+class LineSplitter {
+  /** The read chunk `drain()` works through next. */
+  chunk: Buffer = Buffer.alloc(0);
+  private head: Buffer[] = [];
+  private headSize = 0;
+  private tail: Buffer = Buffer.alloc(0);
+  private size = 0;
+
+  /**
+   * Splits the current chunk and hands back the lines it finished.
+   *
+   * @returns {LineView[]} Lines that ended inside this chunk.
+   */
+  drain(): LineView[] {
+    const done: LineView[] = [];
+    let start = 0;
+    for (let end = this.chunk.indexOf(10); end !== -1; end = this.chunk.indexOf(10, start)) {
+      if (this.size === 0) done.push(this.view(start, end));
+      else {
+        this.take(start, end);
+        done.push(this.finish());
+      }
+      start = end + 1;
+    }
+    if (start < this.chunk.length) this.take(start, this.chunk.length);
+    return done;
+  }
+
+  /**
+   * Finishes the last line when the file doesn't end with a newline.
+   *
+   * @returns {LineView[]} The last line, if any bytes are left.
+   */
+  end(): LineView[] {
+    return this.size > 0 ? [this.finish()] : [];
+  }
+
+  /**
+   * A line inside one chunk needs no copy: the caller decodes it before the next read.
+   *
+   * @param start - First byte of the line in the chunk.
+   * @param end - Byte offset of its newline.
+   * @returns {LineView} Views into the chunk.
+   */
+  private view(start: number, end: number): LineView {
+    return {
+      head: this.chunk.subarray(start, Math.min(end, start + LINE_HEAD)),
+      tail: this.chunk.subarray(Math.max(start, end - LINE_TAIL), end),
+      whole: end - start <= LINE_HEAD,
+    };
+  }
+
+  private take(start: number, end: number): void {
+    if (this.headSize < LINE_HEAD) {
+      const stop = Math.min(end, start + LINE_HEAD - this.headSize);
+      this.head.push(Buffer.from(this.chunk.subarray(start, stop)));
+      this.headSize += stop - start;
+    }
+    const from = Math.max(start, end - LINE_TAIL);
+    const joined = Buffer.concat([this.tail, this.chunk.subarray(from, end)]);
+    this.tail = Buffer.from(joined.subarray(Math.max(0, joined.length - LINE_TAIL)));
+    this.size += end - start;
+  }
+
+  private finish(): LineView {
+    const line = { head: Buffer.concat(this.head), tail: this.tail, whole: this.size <= LINE_HEAD };
+    this.head = [];
+    this.headSize = 0;
+    this.tail = Buffer.alloc(0);
+    this.size = 0;
+    return line;
+  }
+}
+
+/**
+ * Splits on bytes and keeps only the ends of a long line, so a megabyte of tool output is never
+ * held or decoded just to find its id.
+ *
+ * @param path - JSONL file to read.
+ * @yields {LineView} One line, cut down to its ends when it's long.
+ */
+async function* lineViews(path: string): AsyncGenerator<LineView> {
+  const input = createReadStream(path, { highWaterMark: 1 << 20 });
+  const chunks: AsyncIterable<Buffer> = input;
+  const splitter = new LineSplitter();
+  try {
+    for await (const chunk of chunks) {
+      splitter.chunk = chunk;
+      yield* splitter.drain();
+    }
+    yield* splitter.end();
+  } finally {
+    input.destroy();
+  }
+}
+
+/** Dates chat entries from `updates.jsonl`: tool calls by id, text by the chunk opening its run. */
+class MessageTimes {
+  private readonly tools = new Map<string, ToolTimes>();
+  private readonly runs: Record<ChunkKind, ChunkRun[]> = {
+    user_message_chunk: [],
+    agent_message_chunk: [],
+    agent_thought_chunk: [],
+  };
+  private previousKind: string | undefined;
+  private runCount = 0;
+  private every: Record<ChunkKind, RunIndex> = noIndex();
+  private unclaimed: Record<ChunkKind, RunIndex> = noIndex();
+  private known: number | undefined;
+
+  /**
+   * A missing or unreadable file leaves every message on the session clock, as before.
+   *
+   * @param directory - Native session directory.
+   * @returns {Promise<MessageTimes>} Times found in the file, or none.
+   */
+  static async read(directory: string): Promise<MessageTimes> {
+    const path = join(directory, "updates.jsonl");
+    if (!existsSync(path)) return new MessageTimes();
+    try {
+      return await MessageTimes.scan(path);
+    } catch {
+      return new MessageTimes();
+    }
+  }
+
+  private static async scan(path: string): Promise<MessageTimes> {
+    const times = new MessageTimes();
+    for await (const line of lineViews(path)) {
+      const head = line.head.toString("utf8", 0, HEAD_BYTES);
+      const kind = UPDATE_KIND.exec(head)?.[1];
+      if (kind === undefined) continue;
+      const metaAt = line.tail.lastIndexOf(META_KEY);
+      const at = updateTime(head, metaAt === -1 ? "" : line.tail.toString("utf8", metaAt));
+      const opensRun = isChunkKind(kind) && kind !== times.previousKind;
+      times.add(
+        kind,
+        head,
+        at,
+        opensRun ? runText(line.head.toString("utf8"), line.whole) : undefined,
+      );
+    }
+    return times;
+  }
+
+  /**
+   * Matches the whole transcript backwards from tool anchors. Each entry leaves a short key, never
+   * its payload.
+   *
+   * @param file - The session's `chat_history.jsonl`, opened once for both passes.
+   * @returns {Promise<(number | undefined)[]>} One time per visible entry, empty without runs.
+   */
+  async dateTranscript(file: Snapshot): Promise<(number | undefined)[]> {
+    const keys: EntryKey[] = [];
+    if (this.runCount === 0 && this.tools.size === 0) return [];
+    for await (const entry of records(file)) keys.push(this.keyOf(entry));
+    return this.matchKeys(keys);
+  }
+
+  private matchKeys(keys: readonly EntryKey[]): (number | undefined)[] {
+    this.every = this.indexRuns({});
+    const picks: RunPick[] = [];
+    const taken = this.cut();
+    const floors = this.floorsOf(keys);
+    let bound = taken;
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index];
+      bound = key?.upper ?? bound;
+      if (key?.kind === undefined) continue;
+      const ceiling = Math.min(taken[key.kind], bound[key.kind]) - 1;
+      const floor = floors[index]?.[key.kind] ?? 0;
+      const found = this.lastMatch(key.kind, key.text, ceiling, floor);
+      if (found === -1) continue;
+      picks.push({ index, kind: key.kind, text: key.text, found, ceiling, floor });
+      taken[key.kind] = found;
+    }
+    return this.settlePicks(keys, picks);
+  }
+
+  private floorsOf(keys: readonly EntryKey[]): (Cut | undefined)[] {
+    let floor: Cut | undefined;
+    return keys.map((key) => {
+      const before = floor;
+      floor = key.floor ?? floor;
+      return before;
+    });
+  }
+
+  private cut(): Record<ChunkKind, number> {
+    return {
+      user_message_chunk: this.runs.user_message_chunk.length,
+      agent_message_chunk: this.runs.agent_message_chunk.length,
+      agent_thought_chunk: this.runs.agent_thought_chunk.length,
+    };
+  }
+
+  /**
+   * A pick stays only when no run left unclaimed in its reach says the same thing, rechecked until
+   * nothing changes. Grok logs no rewind, so such runs can't be told apart.
+   *
+   * @param keys - One key per visible entry.
+   * @param picks - Matches found walking backwards.
+   * @returns {(number | undefined)[]} One time per entry.
+   */
+  private settlePicks(
+    keys: readonly EntryKey[],
+    picks: readonly RunPick[],
+  ): (number | undefined)[] {
+    let kept = picks;
+    for (let size = -1; size !== kept.length;) {
+      size = kept.length;
+      this.unclaimed = this.indexRuns(
+        Object.fromEntries(kept.map((pick) => [`${pick.kind}:${pick.found}`, true])),
+      );
+      kept = kept.filter((pick) => !this.hasTwin(pick));
+    }
+    const said = keys.map((key) => key.anchor);
+    for (const pick of kept) said[pick.index] = this.runs[pick.kind][pick.found]?.at;
+    return said;
+  }
+
+  /**
+   * Indexes runs by exact text, one entry per run, so a lookup only tries the prefix lengths that
+   * some run has.
+   *
+   * @param claimed - Runs to leave out, keyed `kind:index`.
+   * @returns {Record<ChunkKind, RunIndex>} One index per kind.
+   */
+  private indexRuns(claimed: Readonly<Record<string, boolean>>): Record<ChunkKind, RunIndex> {
+    const index = noIndex();
+    for (const kind of CHUNK_KINDS) {
+      if (isChunkKind(kind)) index[kind] = this.indexKind(kind, claimed);
+    }
+    return index;
+  }
+
+  private indexKind(kind: ChunkKind, claimed: Readonly<Record<string, boolean>>): RunIndex {
+    const into = noRuns();
+    for (const [position, run] of this.runs[kind].entries()) {
+      if (Object.hasOwn(claimed, `${kind}:${position}`)) continue;
+      if (run.opaque === true) into.opaque.push(position);
+      else if (into.byText.has(run.text)) into.byText.get(run.text)?.push(position);
+      else into.byText.set(run.text, [position]);
+    }
+    into.lengths.push(...new Set([...into.byText.keys()].map((text) => text.length)));
+    into.lengths.sort((left, right) => left - right);
+    return into;
+  }
+
+  /**
+   * The latest run at or below `ceiling` whose text opens `text`, found through an index.
+   *
+   * @param which - All runs, or only the unclaimed ones.
+   * @param kind - Chunk kind.
+   * @param text - Entry prefix.
+   * @param ceiling - Highest run allowed.
+   * @returns {number} The run, or -1.
+   */
+  private latestPrefix(
+    which: "every" | "unclaimed",
+    kind: ChunkKind,
+    text: string,
+    ceiling: number,
+  ): number {
+    const index = this[which][kind];
+    let best = -1;
+    for (const length of index.lengths) {
+      if (length > text.length) break;
+      const same = index.byText.get(text.slice(0, length)) ?? [];
+      best = Math.max(best, lastAtMost(same, ceiling) ?? -1);
+    }
+    return best;
+  }
+
+  /**
+   * A twin is an unclaimed run between the pick's floor and ceiling whose text opens the pick's,
+   * or an unreadable run there.
+   *
+   * @param pick - A match found walking backwards.
+   * @returns {boolean} Whether an unclaimed run in its reach says the same thing.
+   */
+  private hasTwin(pick: RunPick): boolean {
+    const free = this.unclaimed[pick.kind];
+    if (this.inReach(pick, lastAtMost(free.opaque, pick.ceiling))) return true;
+    return this.latestPrefix("unclaimed", pick.kind, pick.text, pick.ceiling) >= pick.floor;
+  }
+
+  private inReach(pick: RunPick, index: number | undefined): boolean {
+    return index !== undefined && index >= pick.floor;
+  }
+
+  private add(kind: string, head: string, at: number | undefined, run: RunText): void {
+    this.previousKind = kind;
+    if (at === undefined) return;
+    if (kind === "tool_call" || kind === "tool_call_update") this.addTool(head, at);
+    else if (run !== undefined && isChunkKind(kind)) this.addRun(kind, run, at);
+  }
+
+  private addTool(head: string, at: number): void {
+    const id = TOOL_CALL_ID.exec(head)?.[1];
+    if (id === undefined) return;
+    const times = this.tools.get(id);
+    const now = this.cut();
+    if (times) {
+      times.last = Math.max(times.last, at);
+      times.lastCut = now;
+    } else this.tools.set(id, { first: at, firstCut: now, last: at, lastCut: now });
+  }
+
+  private addRun(kind: ChunkKind, text: string | null, at: number): void {
+    if (text === "") return;
+    this.runs[kind].push(
+      text === null ? { text: "", at, opaque: true } : { text: prefixOf(text), at },
+    );
+    this.runCount += 1;
+  }
+
+  private toolOf(id: string | undefined): ToolTimes | undefined {
+    return id === undefined ? undefined : this.tools.get(id);
+  }
+
+  /**
+   * An unmatched entry stays inferred but borrows the last known time, so sorting keeps it put.
+   *
+   * @param at - Time the updates gave this entry, if any.
+   * @param clock - Session clock for entries the updates don't date.
+   * @param isLast - Whether this is the last entry of the transcript.
+   * @returns {Time} The time and where it came from.
+   */
+  settle(at: number | undefined, clock: SessionClock, isLast: boolean): Time {
+    if (at !== undefined) {
+      this.known = at;
+      return { timestamp: at, timestampSource: "message" };
+    }
+    const inferred = timestampAt(clock, isLast);
+    return isLast || this.known === undefined ? inferred : { ...inferred, timestamp: this.known };
+  }
+
+  private keyOf(entry: Entry): EntryKey {
+    const run = chunkRunFor(entry);
+    const anchor = this.anchorOf(entry);
+    const text = run === undefined ? "" : prefixOf(run.text);
+    return { ...anchor, kind: run?.kind, text };
+  }
+
+  private anchorOf(entry: Entry): Pick<EntryKey, "anchor" | "upper" | "floor"> {
+    if (entry.type === "tool_result") {
+      const tool = this.toolOf(scalarText(entry.tool_call_id));
+      return tool ? { anchor: tool.last, upper: tool.lastCut, floor: tool.lastCut } : {};
+    }
+    const call = blocksFor(entry).find((block) => block.type === "tool_call");
+    const tool = this.toolOf(call?.toolCallId);
+    return tool ? { anchor: tool.first, upper: tool.firstCut } : {};
+  }
+
+  private lastMatch(kind: ChunkKind, text: string, ceiling: number, floor: number): number {
+    const found = this.latestPrefix("every", kind, text, ceiling);
+    return found >= floor ? found : -1;
+  }
+}
+
 function userContext(entry: Readonly<Record<string, unknown>>): Record<string, string> | undefined {
   const reason = scalarText(entry.synthetic_reason);
   return reason ? { syntheticReason: reason } : undefined;
@@ -221,19 +788,45 @@ function isVisible(entry: Readonly<Record<string, unknown>>): boolean {
   return roleFor(entry.type) !== undefined && blocksFor(entry).length > 0;
 }
 
-async function* records(path: string): AsyncGenerator<Readonly<Record<string, unknown>>> {
-  const input = createReadStream(path);
-  try {
-    for await (const line of createInterface({ input, crlfDelay: Infinity })) {
-      const entry = parseJsonRecord(line);
-      if (entry && isVisible(entry)) yield entry;
-    }
-  } finally {
-    input.destroy();
+/** One open transcript and the size it had then, so both passes read the same bytes. */
+interface Snapshot {
+  readonly fd: number;
+  readonly size: number;
+}
+
+const readAt = promisify(read);
+
+/**
+ * Reads lines by position from an open file, so a second pass sees the same bytes as the first.
+ *
+ * @param file - Open transcript and its size when opened.
+ * @yields {string} One line without its newline.
+ */
+async function* textLines(file: Snapshot): AsyncGenerator<string> {
+  const chunk = Buffer.alloc(1 << 20);
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  for (let position = 0; position < file.size;) {
+    const length = Math.min(chunk.length, file.size - position);
+    const { bytesRead } = await readAt(file.fd, chunk, 0, length, position);
+    if (bytesRead === 0) break;
+    position += bytesRead;
+    const lines = (pending + decoder.write(chunk.subarray(0, bytesRead))).split("\n");
+    pending = lines.pop() ?? "";
+    yield* lines;
+  }
+  pending += decoder.end();
+  if (pending.length > 0) yield pending;
+}
+
+async function* records(file: Snapshot): AsyncGenerator<Readonly<Record<string, unknown>>> {
+  for await (const line of textLines(file)) {
+    const entry = parseJsonRecord(line);
+    if (entry && isVisible(entry)) yield entry;
   }
 }
 
-/** Lines have no clock, so times come from `summary.json` or the file mtime. */
+/** Chat lines carry no clock, so `updates.jsonl` dates them and `summary.json` fills the gaps. */
 export class GrokSource implements Source {
   readonly name = "grok";
   private readonly sessionsDir: string;
@@ -253,12 +846,11 @@ export class GrokSource implements Source {
     entry: Readonly<Record<string, unknown>>,
     sessionId: string,
     clock: SessionClock,
-    isLast: boolean,
+    time: Time,
   ): Message | undefined {
     const role = roleFor(entry.type);
     const blocks = blocksFor(entry);
     if (!role || blocks.length === 0) return undefined;
-    const time = timestampAt(clock, isLast);
     const context = role === "user" ? userContext(entry) : undefined;
     return {
       source: this.name,
@@ -280,17 +872,29 @@ export class GrokSource implements Source {
   private async *readFile(file: Transcript): AsyncGenerator<Message> {
     const sessionId = sessionIdFromDirectory(file.directory);
     const clock = readClock(file.directory, file.mtime);
-    let pending: Readonly<Record<string, unknown>> | undefined;
-    for await (const entry of records(file.path)) {
-      if (pending) {
-        const message = this.messageFrom(pending, sessionId, clock, false);
-        if (message) yield message;
+    const times = await MessageTimes.read(file.directory);
+    const handle = await open(file.path);
+    try {
+      const snapshot = { fd: handle.fd, size: (await handle.stat()).size };
+      const dates = await times.dateTranscript(snapshot);
+      let index = 0;
+      let pending: Entry | undefined;
+      for await (const entry of records(snapshot)) {
+        if (pending) {
+          const time = times.settle(dates[index], clock, false);
+          const message = this.messageFrom(pending, sessionId, clock, time);
+          if (message) yield message;
+          index += 1;
+        }
+        pending = entry;
       }
-      pending = entry;
+      if (!pending) return;
+      const time = times.settle(dates[index], clock, true);
+      const message = this.messageFrom(pending, sessionId, clock, time);
+      if (message) yield message;
+    } finally {
+      await handle.close();
     }
-    if (!pending) return;
-    const message = this.messageFrom(pending, sessionId, clock, true);
-    if (message) yield message;
   }
 
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {

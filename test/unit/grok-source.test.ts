@@ -29,6 +29,38 @@ function writeSession(
   return chat;
 }
 
+interface Update {
+  readonly at: string;
+  readonly update: Readonly<Record<string, unknown>>;
+  /** `false` leaves the agent time out, a string writes it as raw digits. */
+  readonly agentMs?: false | string;
+}
+
+function writeUpdates(root: string, project: string, id: string, updates: readonly Update[]) {
+  const lines = updates.map(({ at, update, agentMs }) => {
+    const ms = Date.parse(at);
+    const line = JSON.stringify({
+      timestamp: Math.floor(ms / 1000) + 1,
+      method: "session/update",
+      params: {
+        sessionId: id,
+        update,
+        _meta:
+          agentMs === false ? { eventId: `${id}-1` } : { eventId: `${id}-1`, agentTimestampMs: ms },
+      },
+    });
+    return typeof agentMs === "string"
+      ? line.replace(`"agentTimestampMs":${ms}`, `"agentTimestampMs":${agentMs}`)
+      : line;
+  });
+  writeFileSync(join(root, project, id, "updates.jsonl"), `${lines.join("\n")}\n`);
+}
+
+const chunk = (kind: string, text: string) => ({
+  sessionUpdate: kind,
+  content: { type: "text", text },
+});
+
 async function collect(source: Readonly<GrokSource>, sessionId?: string): Promise<Message[]> {
   const messages: Message[] = [];
   for await (const message of source.read(sessionId === undefined ? undefined : { sessionId })) {
@@ -202,6 +234,433 @@ describe("GrokSource", () => {
     expect(filtered.messages).toEqual([]);
   });
 
+  it("dates messages from updates.jsonl so a time window finds them", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "dated",
+      [
+        { type: "user", content: [{ type: "text", text: "<user_info> OS Version" }] },
+        {
+          type: "user",
+          content: [{ type: "text", text: "<user_query>\nfix the build\n</user_query>" }],
+        },
+        { type: "reasoning", summary: [{ type: "summary_text", text: "check the script" }] },
+        {
+          type: "assistant",
+          content: "Reading it.",
+          tool_calls: [{ id: "call-1", name: "read_file", arguments: "{}" }],
+        },
+        { type: "tool_result", tool_call_id: "call-1", content: "export const a = 1" },
+        {
+          type: "user",
+          synthetic_reason: "system_reminder",
+          content: [{ type: "text", text: "<system-reminder> rules" }],
+        },
+        { type: "backend_tool_call", kind: { tool_type: "web_search", id: "ws-1", input: "pi" } },
+        { type: "assistant", content: "Fixed it. Run the build again." },
+      ],
+      {
+        created_at: "2026-09-30T08:00:00.000Z",
+        last_active_at: "2026-09-30T08:10:00.000Z",
+      },
+    );
+    writeUpdates(directory, "project", "dated", [
+      { at: "2026-09-30T08:01:00.000Z", update: chunk("user_message_chunk", "fix the build") },
+      { at: "2026-09-30T08:01:02.000Z", update: chunk("agent_thought_chunk", "check the script") },
+      { at: "2026-09-30T08:01:03.000Z", update: chunk("agent_message_chunk", "Reading") },
+      { at: "2026-09-30T08:01:03.500Z", update: chunk("agent_message_chunk", " it.") },
+      {
+        at: "2026-09-30T08:01:04.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "call-1", title: "read_file" },
+      },
+      {
+        at: "2026-09-30T08:01:09.000Z",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-1", status: "completed" },
+      },
+      {
+        at: "2026-09-30T08:01:20.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "ws-1", title: "web_search" },
+      },
+      { at: "2026-09-30T08:01:30.000Z", update: chunk("agent_message_chunk", "Fixed it.") },
+      { at: "2026-09-30T08:01:31.000Z", update: chunk("agent_message_chunk", " Run the build") },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(
+      messages.map((message) => [
+        new Date(message.timestamp).toISOString(),
+        message.timestampSource,
+      ]),
+    ).toEqual([
+      ["2026-09-30T08:00:00.000Z", "session"],
+      ["2026-09-30T08:01:00.000Z", "message"],
+      ["2026-09-30T08:01:02.000Z", "message"],
+      ["2026-09-30T08:01:03.000Z", "message"],
+      ["2026-09-30T08:01:09.000Z", "message"],
+      ["2026-09-30T08:01:09.000Z", "session"],
+      ["2026-09-30T08:01:20.000Z", "message"],
+      ["2026-09-30T08:01:30.000Z", "message"],
+    ]);
+    const window = await readSourceSession(new GrokSource(directory), "dated", 0, 20, {
+      since: Date.parse("2026-09-30T08:01:00.000Z"),
+      until: Date.parse("2026-09-30T08:02:00.000Z"),
+    });
+    expect(window.indices).toEqual([1, 2, 3, 4, 6, 7]);
+    expect(window.inferredExcluded).toBe(2);
+    const sessions = await create("grok", { path: directory }).list();
+    expect(sessions[0]).toMatchObject({
+      createdAt: Date.parse("2026-09-30T08:00:00.000Z"),
+      updatedAt: Date.parse("2026-09-30T08:10:00.000Z"),
+    });
+  });
+
+  it("matches only the chunk that opens a run and falls back to the write second", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "runs",
+      [
+        { type: "assistant", content: "one two" },
+        { type: "assistant", content: " two" },
+        { type: "assistant", content: "three" },
+        { type: "assistant", content: "four" },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "runs", [
+      { at: "2026-09-30T08:05:00.000Z", update: chunk("agent_message_chunk", "one") },
+      { at: "2026-09-30T08:05:01.000Z", update: chunk("agent_message_chunk", " two") },
+      { at: "2026-09-30T08:06:00.000Z", update: { sessionUpdate: "turn_completed" } },
+      {
+        at: "2026-09-30T08:07:00.250Z",
+        update: chunk("agent_message_chunk", "three"),
+        agentMs: false,
+      },
+      { at: "2026-09-30T08:08:00.000Z", update: { sessionUpdate: "turn_completed" } },
+      {
+        at: "2026-09-30T08:09:00.000Z",
+        update: chunk("agent_message_chunk", "four"),
+        agentMs: "99999999999999999999",
+      },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(
+      messages.map((message) => [
+        new Date(message.timestamp).toISOString(),
+        message.timestampSource,
+      ]),
+    ).toEqual([
+      ["2026-09-30T08:05:00.000Z", "message"],
+      ["2026-09-30T08:05:00.000Z", "session"],
+      ["2026-09-30T08:07:01.000Z", "message"],
+      ["2026-09-30T08:09:01.000Z", "message"],
+    ]);
+  });
+
+  it("reads a session as before when updates.jsonl can't be opened", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(directory, "project", "locked", [{ type: "assistant", content: "hi" }], {
+      created_at: "2026-09-30T08:00:00.000Z",
+    });
+    mkdirSync(join(directory, "project", "locked", "updates.jsonl"));
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages).toMatchObject([
+      { timestamp: Date.parse("2026-09-30T08:00:00.000Z"), timestampSource: "session" },
+    ]);
+  });
+
+  it("leaves text a rewind repeated undated and keeps the rest", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "rewound",
+      [
+        { type: "user", prompt_index: 0, content: [{ type: "text", text: "fix the build" }] },
+        {
+          type: "assistant",
+          content: "On it.",
+          tool_calls: [{ id: "call-kept", name: "bash", arguments: "{}" }],
+        },
+        { type: "tool_result", tool_call_id: "call-kept", content: "ok" },
+        { type: "user", prompt_index: 1, content: [{ type: "text", text: "same" }] },
+        { type: "assistant", content: "Sure." },
+        { type: "user", prompt_index: 2, content: [{ type: "text", text: "same" }] },
+        { type: "assistant", content: "Again?" },
+        { type: "user", prompt_index: 3, content: [{ type: "text", text: "new" }] },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    const at = (time: string, kind: string, text: string): Update => ({
+      at: `2026-09-30T${time}.000Z`,
+      update: chunk(kind, text),
+    });
+    writeUpdates(directory, "project", "rewound", [
+      at("08:01:00", "user_message_chunk", "fix the build"),
+      at("08:01:05", "agent_message_chunk", "On it."),
+      at("08:05:00", "user_message_chunk", "fix the build"),
+      at("08:05:05", "agent_message_chunk", "On it."),
+      {
+        at: "2026-09-30T08:05:06.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "call-kept", title: "bash" },
+      },
+      {
+        at: "2026-09-30T08:05:09.000Z",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-kept", status: "completed" },
+      },
+      at("08:06:00", "user_message_chunk", "same"),
+      at("08:06:05", "agent_message_chunk", "Sure."),
+      at("08:06:30", "user_message_chunk", "same"),
+      at("08:06:35", "agent_message_chunk", "Again?"),
+      at("08:07:00", "user_message_chunk", "same"),
+      { at: "2026-09-30T08:07:30.000Z", update: { sessionUpdate: "turn_completed" } },
+      at("08:08:00", "user_message_chunk", "new"),
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(
+      messages.map((message) => [
+        new Date(message.timestamp).toISOString(),
+        message.timestampSource,
+      ]),
+    ).toEqual([
+      ["2026-09-30T08:00:00.000Z", "session"],
+      ["2026-09-30T08:05:06.000Z", "message"],
+      ["2026-09-30T08:05:09.000Z", "message"],
+      ["2026-09-30T08:05:09.000Z", "session"],
+      ["2026-09-30T08:06:05.000Z", "message"],
+      ["2026-09-30T08:06:05.000Z", "session"],
+      ["2026-09-30T08:06:35.000Z", "message"],
+      ["2026-09-30T08:08:00.000Z", "message"],
+    ]);
+  });
+
+  it("dates a chunk too long to keep from its opening", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    const long = `same${"y".repeat(70_000)}.`;
+    writeSession(
+      directory,
+      "project",
+      "long-chunk",
+      [
+        { type: "assistant", content: "same" },
+        { type: "assistant", content: long },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "long-chunk", [
+      { at: "2026-09-30T08:01:00.000Z", update: chunk("agent_message_chunk", "same") },
+      { at: "2026-09-30T08:01:30.000Z", update: { sessionUpdate: "turn_completed" } },
+      { at: "2026-09-30T08:02:00.000Z", update: chunk("agent_message_chunk", long) },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(
+      messages.map((message) => [
+        new Date(message.timestamp).toISOString(),
+        message.timestampSource,
+      ]),
+    ).toEqual([
+      ["2026-09-30T08:01:00.000Z", "message"],
+      ["2026-09-30T08:02:00.000Z", "message"],
+    ]);
+  });
+
+  it("leaves text undated next to a long chunk it can't read", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    const long = `same${"y".repeat(70_000)}.`;
+    writeSession(
+      directory,
+      "project",
+      "opaque",
+      [
+        { type: "assistant", content: "same" },
+        { type: "assistant", content: long },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "opaque", [
+      { at: "2026-09-30T08:01:00.000Z", update: chunk("agent_message_chunk", "same") },
+      { at: "2026-09-30T08:01:30.000Z", update: { sessionUpdate: "turn_completed" } },
+      {
+        at: "2026-09-30T08:02:00.000Z",
+        update: { sessionUpdate: "agent_message_chunk", content: { text: long, type: "text" } },
+      },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.map((message) => message.timestampSource)).toEqual(["session", "session"]);
+  });
+
+  it("ignores a twin from before the tool call that precedes the entry", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "anchored",
+      [
+        {
+          type: "assistant",
+          content: "Starting.",
+          tool_calls: [{ id: "call-run", name: "bash", arguments: "{}" }],
+        },
+        { type: "tool_result", tool_call_id: "call-run", content: "ok" },
+        { type: "assistant", content: "same" },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "anchored", [
+      { at: "2026-09-30T08:00:30.000Z", update: chunk("agent_message_chunk", "same") },
+      { at: "2026-09-30T08:00:40.000Z", update: { sessionUpdate: "turn_completed" } },
+      { at: "2026-09-30T08:01:05.000Z", update: chunk("agent_message_chunk", "Starting.") },
+      {
+        at: "2026-09-30T08:01:06.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "call-run", title: "bash" },
+      },
+      {
+        at: "2026-09-30T08:01:09.000Z",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-run", status: "completed" },
+      },
+      { at: "2026-09-30T08:02:00.000Z", update: chunk("agent_message_chunk", "same") },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.at(-1)).toMatchObject({
+      timestamp: Date.parse("2026-09-30T08:02:00.000Z"),
+      timestampSource: "message",
+    });
+  });
+
+  it("won't date text after a tool result with a run from before it", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "older",
+      [
+        { type: "assistant", content: "", tool_calls: [{ id: "call-run", name: "bash" }] },
+        { type: "tool_result", tool_call_id: "call-run", content: "ok" },
+        { type: "assistant", content: "same, and then more" },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "older", [
+      { at: "2026-09-30T08:00:30.000Z", update: chunk("agent_message_chunk", "same") },
+      {
+        at: "2026-09-30T08:01:06.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "call-run", title: "bash" },
+      },
+      {
+        at: "2026-09-30T08:01:09.000Z",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-run", status: "completed" },
+      },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.at(-1)).toMatchObject({ timestampSource: "session" });
+  });
+
+  it("frees the run of a match it drops for being ambiguous", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "overlap",
+      [
+        { type: "assistant", content: "abc" },
+        { type: "assistant", content: "abx" },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(
+      directory,
+      "project",
+      "overlap",
+      ["abc", "ab", "abx"].flatMap((text, index) => [
+        { at: "2026-09-30T08:00:30.000Z", update: { sessionUpdate: "turn_completed" } },
+        { at: `2026-09-30T08:0${index + 1}:00.000Z`, update: chunk("agent_message_chunk", text) },
+      ]),
+    );
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.map((message) => message.timestampSource)).toEqual(["session", "session"]);
+  });
+
+  it("keeps a rewind from spreading over a long stretch without tools", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    const replies = Array.from(
+      { length: 300 },
+      (_, index) => `reply ${index} from a long stretch.`,
+    );
+    writeSession(
+      directory,
+      "project",
+      "chatty",
+      replies.map((content) => ({ type: "assistant", content })),
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "chatty", [
+      {
+        at: "2026-09-30T07:59:00.000Z",
+        update: chunk("agent_message_chunk", "reply 0 from a long stretch."),
+      },
+      ...replies.flatMap((reply, index) => [
+        { at: "2026-09-30T08:59:00.000Z", update: { sessionUpdate: "turn_completed" } },
+        {
+          at: new Date(Date.parse("2026-09-30T08:00:00.000Z") + index * 1000).toISOString(),
+          update: chunk("agent_message_chunk", reply),
+        },
+      ]),
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.filter((message) => message.timestampSource === "message")).toHaveLength(299);
+    expect(messages[0]?.timestampSource).toBe("session");
+    expect(messages[1]?.timestamp).toBe(Date.parse("2026-09-30T08:00:01.000Z"));
+    expect(messages.at(-1)?.timestamp).toBe(Date.parse("2026-09-30T08:04:59.000Z"));
+  });
+
+  it("finds the call id and time around a large tool output", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(
+      directory,
+      "project",
+      "large",
+      [
+        { type: "assistant", content: "", tool_calls: [{ id: "call-big", name: "bash" }] },
+        { type: "tool_result", tool_call_id: "call-big", content: "done" },
+      ],
+      { created_at: "2026-09-30T08:00:00.000Z", last_active_at: "2026-09-30T09:00:00.000Z" },
+    );
+    writeUpdates(directory, "project", "large", [
+      {
+        at: "2026-09-30T08:01:00.000Z",
+        update: { sessionUpdate: "tool_call", toolCallId: "call-big", title: "bash" },
+      },
+      {
+        at: "2026-09-30T08:03:00.000Z",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-big",
+          status: "completed",
+          rawOutput: { stdout: "x".repeat(3 << 20) },
+          _meta: { "x.ai/tool": { name: "bash" } },
+        },
+      },
+    ]);
+
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.map((message) => new Date(message.timestamp).toISOString())).toEqual([
+      "2026-09-30T08:01:00.000Z",
+      "2026-09-30T08:03:00.000Z",
+    ]);
+  });
+
   it("keeps creation and last activity when a session has one message", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
     writeSession(
@@ -284,6 +743,19 @@ describe("GrokSource", () => {
       "real",
     ]);
     expect(new GrokSource(join(directory, "missing")).available()).toBe(false);
+  });
+
+  it("keeps a line whose text holds a line separator", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-grok-"));
+    writeSession(directory, "project", "separator", [
+      { type: "tool_result", tool_call_id: "call-ls", content: "before\u2028after" },
+      { type: "assistant", content: "done" },
+    ]);
+    const messages = await collect(new GrokSource(directory));
+    expect(messages.map((message) => message.blocks[0]?.text)).toEqual([
+      "before\u2028after",
+      "done",
+    ]);
   });
 
   it("reads $GROK_HOME/sessions when no path is passed", async () => {
