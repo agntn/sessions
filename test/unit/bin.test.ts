@@ -9,7 +9,7 @@ import {
   symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
@@ -106,6 +106,22 @@ describe.skipIf(!existsSync(join(root, "dist/cli.mjs")))("built bin", () => {
     const copy = copyOf(tmpdir(), [...manifest.files, "package.json"]);
     symlinkSync(join(root, "node_modules"), join(copy, "node_modules"));
     const loaded = await mcpLoads(join(copy, "dist/cli.mjs"));
+    expect(loadedBundle(loaded, copy)).toBe(true);
+  });
+
+  it("keeps the bundle in a checkout installed without devDependencies, so without typebox", async () => {
+    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      readonly dependencies: Readonly<Record<string, string>>;
+    };
+    const copy = copyOf(tmpdir(), ["dist", "src", "package.json"]);
+    for (const name of Object.keys(manifest.dependencies)) {
+      mkdirSync(dirname(join(copy, "node_modules", name)), { recursive: true });
+      symlinkSync(join(root, "node_modules", name), join(copy, "node_modules", name));
+    }
+    const loaded = await mcpLoads(join(copy, "dist/cli.mjs"));
+    expect(loaded.filter((url) => url.startsWith(pathToFileURL(join(copy, "src/")).href))).toEqual(
+      [],
+    );
     expect(loadedBundle(loaded, copy)).toBe(true);
   });
 });

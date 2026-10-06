@@ -17,9 +17,22 @@ function isMcpModule(value: unknown): value is { readonly default: typeof McpCom
 }
 
 /**
+ * Whether `typebox` resolves here; a checkout installed without devDependencies has none.
+ * @returns {boolean} Whether `src/mcp.ts` could import it.
+ */
+function resolvesTypebox(): boolean {
+  try {
+    import.meta.resolve("typebox");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Loads `mcp` from `src/` when a built bin runs in a checkout, so a local server takes edits.
- * The npm package, copies under `node_modules` and `SESSIONS_DIST=1` keep the bundle, and a literal
- * import would pull the source into it.
+ * The npm package, copies under `node_modules`, a checkout without devDependencies and
+ * `SESSIONS_DIST=1` keep the bundle, and a literal import would pull the source into it.
  * @returns {Promise<typeof McpCommand>} The command that starts the stdio server.
  */
 async function loadMcpCommand(): Promise<typeof McpCommand> {
@@ -29,7 +42,8 @@ async function loadMcpCommand(): Promise<typeof McpCommand> {
     !import.meta.url.endsWith(".ts") &&
     process.env.SESSIONS_DIST !== "1" &&
     !sourcePath.includes(`${sep}node_modules${sep}`) &&
-    existsSync(sourcePath);
+    existsSync(sourcePath) &&
+    resolvesTypebox();
   if (!fromSource) return (await import("./commands/mcp.ts")).default;
   const module: unknown = await import(source.href);
   if (!isMcpModule(module)) throw new TypeError(`${sourcePath} has no default command`);
