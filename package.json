@@ -26,8 +26,8 @@
   },
   "files": [
     "dist",
-    "packages/omp/extensions",
-    "packages/pi/extensions"
+    "extensions/omp",
+    "extensions/pi"
   ],
   "type": "module",
   "sideEffects": false,
@@ -106,12 +106,12 @@
   },
   "omp": {
     "extensions": [
-      "./packages/omp/extensions/sessions.ts"
+      "./extensions/omp/sessions.ts"
     ]
   },
   "pi": {
     "extensions": [
-      "./packages/pi/extensions/*.ts"
+      "./extensions/pi/*.ts"
     ]
   }
 }

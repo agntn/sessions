@@ -10,8 +10,8 @@
     "noEmit": true
   },
   "include": [
-    "packages/omp/extensions/**/*.ts",
-    "packages/pi/extensions/**/*.ts",
+    "extensions/omp/**/*.ts",
+    "extensions/pi/**/*.ts",
     "test/unit/omp-extension.test.ts",
     "test/unit/pi-extension*.test.ts"
   ],

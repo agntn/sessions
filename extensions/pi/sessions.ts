@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import type * as SessionsTools from "../../../src/tool-operations.ts";
+import type * as SessionsTools from "../../src/tool-operations.ts";
 
 const DEFAULT_SESSION_LIMIT = 20;
 const MAX_SESSION_LIMIT = 100;
@@ -13,8 +13,8 @@ const DEFAULT_OUTPUT_CHARS = 20_000;
 const MIN_OUTPUT_CHARS = 1_000;
 const MAX_OUTPUT_CHARS = 100_000;
 
-const distributionModuleUrl = new URL("../../../dist/tool-operations.mjs", import.meta.url);
-const sourceModulePath = fileURLToPath(new URL("../../../src/tool-operations.ts", import.meta.url));
+const distributionModuleUrl = new URL("../../dist/tool-operations.mjs", import.meta.url);
+const sourceModulePath = fileURLToPath(new URL("../../src/tool-operations.ts", import.meta.url));
 let toolOperationsPromise: Promise<typeof SessionsTools> | undefined;
 
 /**
@@ -29,7 +29,7 @@ let toolOperationsPromise: Promise<typeof SessionsTools> | undefined;
 function loadToolOperations(): Promise<typeof SessionsTools> {
   toolOperationsPromise ??= (
     existsSync(sourceModulePath)
-      ? import("../../../src/tool-operations.ts")
+      ? import("../../src/tool-operations.ts")
       : import(distributionModuleUrl.href)
   ) as Promise<typeof SessionsTools>;
   return toolOperationsPromise;
