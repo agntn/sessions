@@ -10,8 +10,8 @@ import type { ExtensionAPI as OmpAPI } from "@oh-my-pi/pi-coding-agent";
 import * as TypeBox from "@oh-my-pi/omptype/typebox";
 import { Value } from "typebox/value";
 import type { TSchema } from "typebox";
-import piExtension from "../../packages/pi/extensions/sessions.ts";
-import ompExtension from "../../packages/omp/extensions/sessions.ts";
+import piExtension from "../../extensions/pi/sessions.ts";
+import ompExtension from "../../extensions/omp/sessions.ts";
 import { createMcpServer } from "../../src/mcp.ts";
 import {
   readSession,

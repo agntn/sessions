@@ -5,7 +5,7 @@ import type { ToolResult } from "../../src/tool-operations.ts";
 import * as TypeBox from "@oh-my-pi/omptype/typebox";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import sessionsExtension from "../../packages/omp/extensions/sessions";
+import sessionsExtension from "../../extensions/omp/sessions";
 
 const sessionsMock = vi.hoisted(() => ({
   allSources: vi.fn(),
