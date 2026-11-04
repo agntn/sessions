@@ -28,10 +28,10 @@ importers:
         specifier: 0.99.2
         version: 0.99.2
       '@oh-my-pi/omptype':
-        specifier: ^18.0.0
+        specifier: 18.1.10
         version: 18.1.10
       '@oh-my-pi/pi-coding-agent':
-        specifier: ^18.0.0
+        specifier: 18.1.10
         version: 18.1.10
       '@types/node':
         specifier: 25.3.5
@@ -3749,7 +3749,7 @@ snapshots:
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/remapping@2.3.5':
@@ -3766,7 +3766,7 @@ snapshots:
   '@jridgewell/trace-mapping@0.3.31':
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   '@kurkle/color@0.3.4': {}
 
