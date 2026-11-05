@@ -27,6 +27,7 @@ describe("public harness registry", () => {
       "grok",
       "mastra",
       "omp",
+      "openbot",
       "openclaw",
       "opencode",
       "pi",
@@ -60,7 +61,7 @@ describe("public harness registry", () => {
     customPath = mkdtempSync(join(tmpdir(), "sessions-source-"));
     const file = join(customPath, "session.jsonl");
     writeFileSync(file, "");
-    const database = ["aei", "mastra", "opencode"].includes(name);
+    const database = ["aei", "mastra", "openbot", "opencode"].includes(name);
     expect(() => create(name, { path: database ? customPath : file })).toThrow(SourcePathError);
     expect(() => create(name, { path: database ? file : customPath })).not.toThrow();
   });

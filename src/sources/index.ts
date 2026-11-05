@@ -11,6 +11,7 @@ import { GeminiSource } from "./gemini.ts";
 import { GrokSource } from "./grok.ts";
 import { MastraSource } from "./mastra.ts";
 import { OmpSource } from "./omp.ts";
+import { OpenBotSource } from "./openbot.ts";
 import { OpenClawSource } from "./openclaw.ts";
 import { OpenCodeSource } from "./opencode.ts";
 import { PiSource } from "./pi.ts";
@@ -34,6 +35,7 @@ const adapters: Record<string, AdapterFactory> = {
   grok: (options) => new GrokSource(options?.path),
   mastra: (options) => new MastraSource(options?.path),
   omp: (options) => new OmpSource(options?.path),
+  openbot: (options) => new OpenBotSource(options?.path),
   openclaw: (options) =>
     new OpenClawSource(options?.paths ?? (options?.path ? [options.path] : undefined)),
   opencode: (options) => new OpenCodeSource(options?.path),
@@ -41,7 +43,7 @@ const adapters: Record<string, AdapterFactory> = {
 };
 
 /** Sources whose path is one database file; the rest read a directory of session files. */
-const databaseSources = new Set(["aei", "mastra", "opencode"]);
+const databaseSources = new Set(["aei", "mastra", "openbot", "opencode"]);
 
 function overridePaths(
   name: string,

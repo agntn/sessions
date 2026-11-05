@@ -74,6 +74,7 @@ Need more than one harness? `allSources()` creates every reader. Check each read
 | Grok        | `grok`      |
 | Mastra      | `mastra`    |
 | OMP         | `omp`       |
+| OpenBot     | `openbot`   |
 | OpenClaw    | `openclaw`  |
 | OpenCode    | `opencode`  |
 | Pi          | `pi`        |
@@ -87,10 +88,12 @@ node --input-type=module -e 'import { sources } from "@agntn/sessions"; console.
 Output:
 
 ```text
-aei, claude, codex, gemini, grok, mastra, omp, openclaw, opencode, pi
+aei, claude, codex, gemini, grok, mastra, omp, openbot, openclaw, opencode, pi
 ```
 
 OpenClaw also accepts `paths` for multiple native locations. See the [source registry](./src/sources/index.ts) for supported overrides and links to each parser.
+
+`openbot` reads OpenBot, a desktop app running agent teams on Codex, Claude Code, and Pi. Each agent thread and team channel is a session. The channel drops replaced revisions, but the agent thread keeps the drafts. Tool calls are one hop away: OpenBot stores none, but each message's `context` names the turn's `provider`, `providerSessionId`, and `model`. Hand that id to the `codex` or `claude` reader. For Pi it's the session file's path.
 
 ## 🤖 Agent tools
 
@@ -140,7 +143,7 @@ OMP has the model fill in every field on the form, even the ones it meant to ski
 
 ### Keep reading, without starting over
 
-Use `source` with `path`, or `paths` where supported, to override one harness's location. `path` is a directory for most harnesses and the database file for aei, mastra and opencode. Got the exact `.jsonl` in hand? For Claude, Codex, OpenClaw, Pi and OMP, pass the directory it sits in and let `sessionId` do the picking. Hand over the file itself and the tools say so, instead of choking on `ENOTDIR`. Listings across harnesses use native locations and label each row with its source. Explicitly selected unavailable sources return an error. With no selection, only available sources are read.
+Use `source` with `path`, or `paths` where supported, to override one harness's location. `path` is a directory for most harnesses and the database file for aei, mastra, openbot and opencode. Got the exact `.jsonl` in hand? For Claude, Codex, OpenClaw, Pi and OMP, pass the directory it sits in and let `sessionId` do the picking. Hand over the file itself and the tools say so, instead of choking on `ENOTDIR`. Listings across harnesses use native locations and label each row with its source. Explicitly selected unavailable sources return an error. With no selection, only available sources are read.
 
 Page session listings with `offset` and `limit` (up to 100). For a fixed period, pass `since` and/or `until` as ISO timestamps with a timezone. Both bounds are inclusive. Don't combine them with `lastHours`. That one sets `since` and no ceiling. The session still writing while you list is usually the one you're after, and it shouldn't vanish for being a few seconds too fresh. Reuse the returned `since` on later pages, so the window doesn't creep between calls. The archive itself isn't a snapshot. With `since`, Claude, Codex, Pi and OMP skip a session whose files were all last written before it, so a transcript with a backdated modification time drops out of that listing.
 
@@ -169,7 +172,7 @@ Reuse the same bounds with each returned `position`. `limit` caps matching messa
 
 File adapters expose `Message.timestampSource` as `message`, `session`, or `file`. Legacy Codex JSON uses session time plus item order, not individual message times. Grok doesn't stamp its chat lines, but it keeps a second diary. `updates.jsonl` next to the transcript times every event. Prompts, replies, thinking, tool calls and results take their message time from there. Anything it can't match falls back to `summary.json` or the file time, and says so. Other sources can leave provenance absent; filters then check the timestamp itself. Session activity listings still use fallback times.
 
-These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session. Claude Code, Codex, Gemini CLI, and OpenClaw name the file after it. Grok names the session directory. Pi and OMP open a project file whose name holds the id, including the shortened id OMP writes, and still check nested runs from the header. OpenCode answers both from SQLite. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
+These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session. Claude Code, Codex, Gemini CLI, and OpenClaw name the file after it. Grok names the session directory. Pi and OMP open a project file whose name holds the id, including the shortened id OMP writes, and still check nested runs from the header. OpenCode answers both from SQLite. OpenBot filters reads by session id in SQLite, but listings read the whole database. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
 
 Unknown sources, unreadable overrides, and missing session IDs return tool errors over MCP. See the [tool schemas](./src/mcp.ts) for all limits. Session text can contain private data. Only connect clients you trust with it.
 
