@@ -142,7 +142,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
     path: Type.Optional(
       Type.String({
         description:
-          "Native data path for the single source: the sessions directory for claude, codex, gemini, grok, omp, openclaw and pi, the database file for aei, mastra and opencode.",
+          "Native data path for the single source: the sessions directory for claude, codex, gemini, grok, omp, openclaw and pi, the database file for aei, mastra, openbot and opencode.",
       }),
     ),
     paths: Type.Optional(
@@ -164,7 +164,7 @@ export default function sessionsExtension(pi: ExtensionAPI): void {
       Type.Array(Type.String({ minLength: 1 }), {
         description: "Selected harness names. Cannot be combined with source or path overrides.",
         minItems: 1,
-        maxItems: 10,
+        maxItems: 11,
       }),
     ),
     since: Type.Optional(
