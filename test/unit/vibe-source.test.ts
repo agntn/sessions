@@ -257,6 +257,55 @@ describe("VibeSource", () => {
     expect(messages[3]?.blocks[0]?.text).toBe("moved");
   });
 
+  it("replaces the first entry with an id and keeps a later twin", async () => {
+    const twin = said("user", "twin");
+    writeStore("twins", {
+      inline: [said("user", "inline")],
+      chunks: [[twin], [twin, said("assistant", "gone"), said("assistant", "temp")]],
+      journal: [
+        delta({ op: "append_entry", entry: twin }),
+        delta({ op: "replace_entry", id: "user-twin", entry: said("user", "first") }),
+        delta({ op: "replace_entry", id: "user-inline", entry: said("user", "swapped") }),
+        delta({ op: "remove_entry", id: "assistant-gone" }),
+        delta({ op: "append_entry", entry: said("assistant", "gone") }),
+        delta({ op: "replace_entry", id: "assistant-gone", entry: said("assistant", "back") }),
+        delta({ op: "replace_entry", id: "assistant-temp", entry: said("assistant", "edited") }),
+        delta({ op: "remove_entry", id: "assistant-temp" }),
+        delta({ op: "append_entry", entry: said("assistant", "temp") }),
+      ],
+    });
+
+    expect(await texts()).toEqual(["swapped", "first", "twin", "twin", "back", "temp"]);
+  });
+
+  it("reads a chunk only when the read gets to it", async () => {
+    const dir = writeStore("lazy", {
+      chunks: [[said("user", "first")], [said("assistant", "written early")]],
+    });
+    const seen: (string | undefined)[] = [];
+
+    for await (const message of new VibeSource(root).read()) {
+      seen.push(message.blocks[0]?.text);
+      const late = JSON.stringify([said("user", "late")]);
+      writeFileSync(join(dir, "chunks", `${digest(1)}.json`), late);
+    }
+
+    expect(seen).toEqual(["first", "late"]);
+  });
+
+  it("refuses a store with a missing chunk and stops at one that won't parse", async () => {
+    const holed = writeStore("holed", { chunks: [[said("user", "a")], [said("user", "b")]] });
+    rmSync(join(holed, "chunks", `${digest(1)}.json`));
+    const cut = writeStore("cut", { chunks: [[said("user", "kept")], [said("user", "lost")]] });
+    writeFileSync(join(cut, "chunks", `${digest(1)}.json`), "[{");
+    writeStore("whole", { chunks: [[said("user", "whole")]] });
+
+    const read = await texts();
+
+    expect(read).toHaveLength(2);
+    expect(read).toEqual(expect.arrayContaining(["kept", "whole"]));
+  });
+
   it("takes whole histories from set_history_entries and projection_advanced", async () => {
     writeStore("rewritten", {
       chunks: [[said("user", "before")]],

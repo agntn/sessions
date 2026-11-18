@@ -69,42 +69,69 @@ function defaultStoreDir(): string {
   return join(override || join(home(), ".vibe"), "logs", "session", "unified");
 }
 
-/** The public history of one session, rebuilt the way Vibe restores it. */
-class History {
-  private kept: Native[];
+/** One session's store with its journal folded in. The chunks are still on disk. */
+interface Store {
+  readonly envelope: Native;
+  /** The history in order, one chunk in memory at a time. A chunk that fails to read throws. */
+  readonly entries: () => Generator<Native>;
+}
+
+/** Folds the recovery journal into what it changes, keeping no entry a later record replaced. */
+class Replay {
   private state: Native;
+  private tail: Native[] = [];
+  private baseGone = false;
+  private readonly replaced = new Map<unknown, Native>();
+  private readonly removed = new Set<unknown>();
 
-  constructor(snapshot: Native, pooled: readonly Native[]) {
+  constructor(snapshot: Native) {
     this.state = snapshot;
-    this.kept = [...records(record(snapshot.history).entries), ...pooled];
-  }
-
-  get entries(): readonly Native[] {
-    return this.kept;
   }
 
   get envelope(): Native {
     return this.state;
   }
 
-  private swap(op: Native): void {
-    const index = this.kept.findIndex((entry) => entry.id === op.id);
-    if (index !== -1 && isRecord(op.entry)) this.kept[index] = op.entry;
+  private swapInTail(id: unknown, entry: Native): void {
+    const index = this.tail.findIndex((kept) => kept.id === id);
+    if (index !== -1) this.tail[index] = entry;
+  }
+
+  /**
+   * A replace hits the first entry with that id, and published entries come first.
+   * @param id - Native entry id.
+   * @param entry - The entry that takes its place.
+   */
+  private replace(id: unknown, entry: Native): void {
+    if (this.baseGone) this.swapInTail(id, entry);
+    else this.replaced.set(id, entry);
+  }
+
+  private remove(id: unknown): void {
+    this.removed.add(id);
+    this.replaced.delete(id);
+    this.tail = this.tail.filter((kept) => kept.id !== id);
+  }
+
+  private rewrite(entries: readonly Native[]): void {
+    this.baseGone = true;
+    this.replaced.clear();
+    this.tail = [...entries];
   }
 
   private apply(op: Native): void {
     switch (op.op) {
       case "append_entry":
-        if (isRecord(op.entry)) this.kept.push(op.entry);
+        if (isRecord(op.entry)) this.tail.push(op.entry);
         break;
       case "replace_entry":
-        this.swap(op);
+        if (isRecord(op.entry)) this.replace(op.id, op.entry);
         break;
       case "remove_entry":
-        this.kept = this.kept.filter((entry) => entry.id !== op.id);
+        this.remove(op.id);
         break;
       case "set_history_entries":
-        this.kept = records(op.entries);
+        this.rewrite(records(op.entries));
         break;
       case "set_envelope":
         this.state = record(op.state);
@@ -118,51 +145,86 @@ class History {
    * Folds one recovery journal record in. Only projection records touch the history.
    * @param entry - Parsed journal line.
    */
-  replay(entry: Native): void {
+  fold(entry: Native): void {
     const payload = record(entry.payload);
     if (entry.type === "projection_advanced") {
       this.state = record(payload.snapshot);
-      this.kept = records(record(this.state.history).entries);
+      this.rewrite(records(record(this.state.history).entries));
     } else if (entry.type === "projection_delta" || entry.type === "session_relocated") {
       for (const op of records(payload.delta)) this.apply(op);
     }
   }
+
+  private *published(inline: readonly Native[], chunks: readonly string[]): Generator<Native> {
+    const swapped = new Set<unknown>();
+    for (const entry of storedEntries(inline, chunks)) {
+      if (this.removed.has(entry.id)) continue;
+      const replacement = swapped.has(entry.id) ? undefined : this.replaced.get(entry.id);
+      if (replacement) swapped.add(entry.id);
+      yield replacement ?? entry;
+    }
+    for (const [id, entry] of this.replaced) if (!swapped.has(id)) this.swapInTail(id, entry);
+  }
+
+  /**
+   * Streams the history the journal leaves over the published generation.
+   * @param inline - Entries the generation keeps in its own document.
+   * @param chunks - Paths of its pooled chunks, in order.
+   * @yields {Native} Each surviving entry, then the ones the journal appended.
+   */
+  *entries(inline: readonly Native[], chunks: readonly string[]): Generator<Native> {
+    if (!this.baseGone) yield* this.published(inline, chunks);
+    yield* this.tail;
+  }
 }
 
-function pooledEntries(dir: string, chunks: unknown): Native[] {
-  if (!Array.isArray(chunks)) return [];
-  return chunks.flatMap((digest: unknown) => {
-    const path = join(dir, "chunks", `${named(digest, "chunk")}.json`);
-    return records(parseJson(readFileSync(path, "utf8")));
-  });
+function* storedEntries(inline: readonly Native[], chunks: readonly string[]): Generator<Native> {
+  yield* inline;
+  for (const path of chunks) yield* records(parseJson(readFileSync(path, "utf8")));
 }
 
 /**
- * Follows `CURRENT` to its generation, then replays the journal written since.
+ * A store missing a chunk is refused whole, before half of it reads as a session.
  * @param dir - Session directory.
- * @returns {Promise<History>} The history as of the last complete journal record.
+ * @param chunks - Native chunk digests of the generation.
+ * @returns {string[]} The chunk files, in order.
  */
-async function load(dir: string): Promise<History> {
+function chunkPaths(dir: string, chunks: unknown): string[] {
+  const digests: unknown[] = Array.isArray(chunks) ? chunks : [];
+  const paths = digests.map((digest) => join(dir, "chunks", `${named(digest, "chunk")}.json`));
+  const missing = paths.find((path) => !existsSync(path));
+  if (missing) throw new TypeError(`${missing} is missing from a Vibe store`);
+  return paths;
+}
+
+/**
+ * Follows `CURRENT` to its generation and folds the journal written since.
+ * @param dir - Session directory.
+ * @returns {Promise<Store>} The store as of the last complete journal record.
+ */
+async function load(dir: string): Promise<Store> {
   const current = readRecord(join(dir, "CURRENT"));
   const generation = join(dir, "generations", named(current.generation, "generation"));
   const manifest = readRecord(join(generation, "manifest.json"));
   const stored = record(manifest.projection_state);
-  const state = readRecord(join(generation, named(stored.path, "document")));
-  const history = new History(record(state.snapshot), pooledEntries(dir, stored.chunks));
+  const snapshot = record(readRecord(join(generation, named(stored.path, "document"))).snapshot);
+  const chunks = chunkPaths(dir, stored.chunks);
+  const replay = new Replay(snapshot);
   const segment = named(record(manifest.recovery_journal_segment).path, "segment");
   for await (const line of jsonlLines(join(dir, segment))) {
     const entry = parseJsonRecord(line);
-    if (entry) history.replay(entry);
+    if (entry) replay.fold(entry);
   }
-  return history;
+  const inline = records(record(snapshot.history).entries);
+  return { envelope: replay.envelope, entries: () => replay.entries(inline, chunks) };
 }
 
 /**
  * One store that can't be followed is skipped, so it doesn't hide the sessions next to it.
  * @param dir - Session directory.
- * @returns {Promise<History | undefined>} Nothing for a store that can't be read.
+ * @returns {Promise<Store | undefined>} Nothing for a store that can't be opened.
  */
-async function readableHistory(dir: string): Promise<History | undefined> {
+async function openStore(dir: string): Promise<Store | undefined> {
   try {
     return await load(dir);
   } catch {
@@ -296,6 +358,11 @@ function stopDrafts(envelope: Native): Draft[] {
   return [{ role: "assistant", at: turn.completedAt, blocks: [block] }];
 }
 
+function* sessionDrafts(store: Store): Generator<Draft> {
+  for (const entry of store.entries()) yield* entryDrafts(entry);
+  yield* stopDrafts(store.envelope);
+}
+
 function workingDirectory(dir: string): string | undefined {
   try {
     return text(record(readRecord(join(dir, "meta.json")).environment).working_directory);
@@ -376,14 +443,11 @@ export class VibeSource implements Source {
       .sort((left, right) => left.mtime - right.mtime);
   }
 
-  private async *readSession(dir: SessionDir): AsyncGenerator<Message> {
-    const history = await readableHistory(dir.path);
-    if (!history) return;
-    const parent = text(record(history.envelope.session).parentSessionId);
+  private *messages(dir: SessionDir, store: Store): Generator<Message> {
+    const parent = text(record(store.envelope.session).parentSessionId);
     const shared = sharedContext(workingDirectory(dir.path), parent);
     const author = parent ? BOT : this.user;
-    const drafts = [...history.entries.flatMap(entryDrafts), ...stopDrafts(history.envelope)];
-    for (const draft of drafts) {
+    for (const draft of sessionDrafts(store)) {
       if (draft.blocks.length === 0) continue;
       const native = nativeTime(draft.at);
       const timestamp = native ?? dir.mtime;
@@ -402,12 +466,28 @@ export class VibeSource implements Source {
     }
   }
 
+  private async *readSession(dir: SessionDir): AsyncGenerator<Message> {
+    const store = await openStore(dir.path);
+    if (store) yield* this.messages(dir, store);
+  }
+
+  /**
+   * A chunk that stops parsing mid-session ends that session, never the whole read.
+   * @param options - Exact session and activity filters.
+   * @yields {Message} Messages of each session, oldest store write first.
+   */
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const dirs = activeFiles(
       this.sessionDirs(options?.sessionId || undefined),
       (dir) => dir.id,
       options?.activeSince,
     );
-    for (const dir of dirs) yield* this.readSession(dir);
+    for (const dir of dirs) {
+      try {
+        yield* this.readSession(dir);
+      } catch {
+        continue;
+      }
+    }
   }
 }
