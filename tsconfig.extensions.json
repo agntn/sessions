@@ -3,7 +3,8 @@
   "compilerOptions": {
     "rootDir": ".",
     "paths": {
-      "@agntn/sessions": ["./src/index.ts"]
+      "@agntn/sessions": ["./src/index.ts"],
+      "@agntn/sessions/tool-operations": ["./src/tool-operations.ts"]
     },
     "declaration": false,
     "declarationMap": false,
