@@ -38,7 +38,7 @@ if (reader.available()) {
 }
 ```
 
-Readers use native data locations by default. Moved yours? Pass `create("claude", { path: "/custom/claude/projects" })`. That's the directory, not one session in it. A file there throws `SourcePathError` before anything gets read. Grok reads `$GROK_HOME/sessions` when that variable is set, and `~/.grok/sessions` otherwise. Sessions come back newest first, with messages in chronological order. Text, thinking, tool calls, tool results, roles, timestamps, and source metadata are normalized where the harness exposes them.
+Readers use native data locations by default. Moved yours? Pass `create("claude", { path: "/custom/claude/projects" })`. That's the directory, not one session in it. A file there throws `SourcePathError` before anything gets read. Grok reads `$GROK_HOME/sessions` when that variable is set, and `~/.grok/sessions` otherwise. Vibe reads `$VIBE_HOME/logs/session/unified` if `VIBE_HOME` is set, or `~/.vibe/logs/session/unified` otherwise. Sessions come back newest first, with messages in chronological order. Text, thinking, tool calls, tool results, roles, timestamps, and source metadata are normalized where the harness exposes them.
 
 **Mind the archive size.** Library `list()` loads the complete archive, including message payloads, into memory. For large archives, read a page instead:
 
@@ -65,19 +65,20 @@ Need more than one harness? `allSources()` creates every reader. Check each read
 
 ## 🗂️ Which harnesses?
 
-| Harness     | Source name |
-| ----------- | ----------- |
-| AEI         | `aei`       |
-| Claude Code | `claude`    |
-| Codex       | `codex`     |
-| Gemini CLI  | `gemini`    |
-| Grok        | `grok`      |
-| Mastra      | `mastra`    |
-| OMP         | `omp`       |
-| OpenBot     | `openbot`   |
-| OpenClaw    | `openclaw`  |
-| OpenCode    | `opencode`  |
-| Pi          | `pi`        |
+| Harness      | Source name |
+| ------------ | ----------- |
+| AEI          | `aei`       |
+| Claude Code  | `claude`    |
+| Codex        | `codex`     |
+| Gemini CLI   | `gemini`    |
+| Grok         | `grok`      |
+| Mastra       | `mastra`    |
+| Mistral Vibe | `vibe`      |
+| OMP          | `omp`       |
+| OpenBot      | `openbot`   |
+| OpenClaw     | `openclaw`  |
+| OpenCode     | `opencode`  |
+| Pi           | `pi`        |
 
 Ask the registry rather than guessing names:
 
@@ -88,12 +89,14 @@ node --input-type=module -e 'import { sources } from "@agntn/sessions"; console.
 Output:
 
 ```text
-aei, claude, codex, gemini, grok, mastra, omp, openbot, openclaw, opencode, pi
+aei, claude, codex, gemini, grok, mastra, omp, openbot, openclaw, opencode, pi, vibe
 ```
 
 OpenClaw also accepts `paths` for multiple native locations. See the [source registry](./src/sources/index.ts) for supported overrides and links to each parser.
 
 `openbot` reads OpenBot, a desktop app running agent teams on Codex, Claude Code, and Pi. Each agent thread and team channel is a session. The channel drops replaced revisions, but the agent thread keeps the drafts. Tool calls are one hop away: OpenBot stores none, but each message's `context` names the turn's `provider`, `providerSessionId`, and `model`. Hand that id to the `codex` or `claude` reader. For Pi it's the session file's path.
+
+`vibe` reads Mistral Vibe. Its store of generations and chunks isn't fun to read by hand. A subagent run is a session too, with a `child-` ID and `context.parentSessionId` on its messages. Going down? The parent's `agents.spawn` call carries `context.childSessionId`. A top session's `context.cwd` is where it ran. Interrupted text stays, with its cause in `context.discarded`. Older Vibe session files aren't read.
 
 ## 🤖 Agent tools
 
@@ -145,11 +148,11 @@ OMP has the model fill in every field on the form, even the ones it meant to ski
 
 Use `source` with `path`, or `paths` where supported, to override one harness's location. `path` is a directory for most harnesses and the database file for aei, mastra, openbot and opencode. Got the exact `.jsonl` in hand? For Claude, Codex, OpenClaw, Pi and OMP, pass the directory it sits in and let `sessionId` do the picking. Hand over the file itself and the tools say so, instead of choking on `ENOTDIR`. Listings across harnesses use native locations and label each row with its source. Explicitly selected unavailable sources return an error. With no selection, only available sources are read.
 
-Page session listings with `offset` and `limit` (up to 100). For a fixed period, pass `since` and/or `until` as ISO timestamps with a timezone. Both bounds are inclusive. Don't combine them with `lastHours`. That one sets `since` and no ceiling. The session still writing while you list is usually the one you're after, and it shouldn't vanish for being a few seconds too fresh. Reuse the returned `since` on later pages, so the window doesn't creep between calls. The archive itself isn't a snapshot. With `since`, Claude, Codex, Pi and OMP skip a session whose files were all last written before it, so a transcript with a backdated modification time drops out of that listing.
+Page session listings with `offset` and `limit` (up to 100). For a fixed period, pass `since` and/or `until` as ISO timestamps with a timezone. Both bounds are inclusive. Don't combine them with `lastHours`. That one sets `since` and no ceiling. The session still writing while you list is usually the one you're after, and it shouldn't vanish for being a few seconds too fresh. Reuse the returned `since` on later pages, so the window doesn't creep between calls. The archive itself isn't a snapshot. With `since`, Claude, Codex, Pi, OMP and Vibe skip a session whose files were all last written before it, so a transcript with a backdated modification time drops out of that listing.
 
-Tool results from Pi, OMP, Claude, OpenCode and Gemini keep the native error status as `isError`, including results with no text. Gemini counts a cancelled call as failed, since its transcript stores one as an error. `sessions_read` prints the flag beside the tool call ID. An absent flag means unknown, not success.
+Tool results from Pi, OMP, Claude, OpenCode, Gemini and Vibe keep the native error status as `isError`, including results with no text. Gemini counts a cancelled call as failed, since its transcript stores one as an error. Vibe counts cancelled and skipped calls too. `sessions_read` prints the flag beside the tool call ID. An absent flag means unknown, not success.
 
-Provider died mid-turn? A Pi or OMP turn that ended early gets a `stop` block. It keeps the native `stopReason`, like `error`, `aborted` or `length`, plus the error text. That holds even when the provider failed before a single token. `sessions_read` prints it as `[stop error] Connection error.` A failed request reads like one, not like an awkward silence. Turns that ended normally don't get one.
+Provider died mid-turn? A Pi or OMP turn that ended early gets a `stop` block. It keeps the native `stopReason`, like `error`, `aborted` or `length`, plus the error text. That holds even when the provider failed before a single token. `sessions_read` prints it as `[stop error] Connection error.` A failed request reads like one, not like an awkward silence. Turns that ended normally don't get one. Vibe records how only the latest turn ended, so a session gets at most one `stop` block, at its end. Its `stopReason` is `interrupted`, `failed`, `limit` or `length`.
 
 For messages, `sessions_read` defaults to 20,000 response characters and accepts `maxChars` up to 100,000. Copy its returned `position` to continue, even inside a block. Use `offset` instead to start at a message boundary, never both.
 
@@ -172,7 +175,7 @@ Reuse the same bounds with each returned `position`. `limit` caps matching messa
 
 File adapters expose `Message.timestampSource` as `message`, `session`, or `file`. Legacy Codex JSON uses session time plus item order, not individual message times. Grok doesn't stamp its chat lines, but it keeps a second diary. `updates.jsonl` next to the transcript times every event. Prompts, replies, thinking, tool calls and results take their message time from there. Anything it can't match falls back to `summary.json` or the file time, and says so. Other sources can leave provenance absent; filters then check the timestamp itself. Session activity listings still use fallback times.
 
-These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session. Claude Code, Codex, Gemini CLI, and OpenClaw name the file after it. Grok names the session directory. Pi and OMP open a project file whose name holds the id, including the shortened id OMP writes, and still check nested runs from the header. OpenCode answers both from SQLite. OpenBot filters reads by session id in SQLite, but listings read the whole database. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
+These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session. Claude Code, Codex, Gemini CLI, and OpenClaw name the file after it. Grok and Vibe name the session directory. Pi and OMP open a project file whose name holds the id, including the shortened id OMP writes, and still check nested runs from the header. OpenCode answers both from SQLite. OpenBot filters reads by session id in SQLite, but listings read the whole database. AEI and Mastra still read their whole database. Bounded output does not mean instant reads.
 
 Unknown sources, unreadable overrides, and missing session IDs return tool errors over MCP. See the [tool schemas](./src/mcp.ts) for all limits. Session text can contain private data. Only connect clients you trust with it.
 

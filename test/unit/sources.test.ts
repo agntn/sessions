@@ -31,6 +31,7 @@ describe("public harness registry", () => {
       "openclaw",
       "opencode",
       "pi",
+      "vibe",
     ]);
     expect(allSources().map((reader) => reader.name)).toEqual(sources());
     expect(create("claude").name).toBe("claude");
