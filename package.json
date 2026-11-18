@@ -12,7 +12,8 @@
     "harness",
     "openbot",
     "pi-package",
-    "sessions"
+    "sessions",
+    "vibe"
   ],
   "homepage": "https://github.com/agntn/sessions#readme",
   "bugs": "https://github.com/agntn/sessions/issues",

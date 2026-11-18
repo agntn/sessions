@@ -46,6 +46,7 @@ beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "sessions-window-"));
   vi.stubEnv("HOME", directory);
   vi.stubEnv("GROK_HOME", directory);
+  vi.stubEnv("VIBE_HOME", directory);
   vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-20T12:00:00Z"));
   transcript("pi", "same", ["2026-09-19T12:00:00Z"]);
   transcript("codex", "same", ["2026-09-20T12:00:00Z"]);

@@ -112,7 +112,7 @@ describe("Pi extension", () => {
     const list = runtime.getTool("sessions_list") as {
       parameters: { properties?: { sources?: { maxItems?: number } } };
     };
-    expect(list.parameters.properties?.sources?.maxItems).toBe(11);
+    expect(list.parameters.properties?.sources?.maxItems).toBe(12);
   });
 
   it("reports supported source availability", async () => {

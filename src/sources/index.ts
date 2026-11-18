@@ -15,6 +15,7 @@ import { OpenBotSource } from "./openbot.ts";
 import { OpenClawSource } from "./openclaw.ts";
 import { OpenCodeSource } from "./opencode.ts";
 import { PiSource } from "./pi.ts";
+import { VibeSource } from "./vibe.ts";
 /** Optional native data location for a harness reader. */
 export interface SourceOptions {
   readonly path?: string;
@@ -40,6 +41,7 @@ const adapters: Record<string, AdapterFactory> = {
     new OpenClawSource(options?.paths ?? (options?.path ? [options.path] : undefined)),
   opencode: (options) => new OpenCodeSource(options?.path),
   pi: (options) => new PiSource(options?.path),
+  vibe: (options) => new VibeSource(options?.path),
 };
 
 /** Sources whose path is one database file; the rest read a directory of session files. */
