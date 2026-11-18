@@ -292,7 +292,8 @@ export class OpenBotSource implements Source {
       const known = await tables(db);
       const agents = await agentNames(db, known.has("projection_agents"));
       for (const stream of STREAMS) {
-        if (stream.tables.every((table) => known.has(table))) yield* this.stream(db, stream, agents, options?.sessionId);
+        if (stream.tables.every((table) => known.has(table)))
+          yield* this.stream(db, stream, agents, options?.sessionId);
       }
     } finally {
       db.close();
