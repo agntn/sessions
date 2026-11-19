@@ -88,6 +88,16 @@ function parseContent(raw: string): Block[] {
   return fallback;
 }
 
+/**
+ * Mastra Code keeps the project as `projectPath` in JSONB thread metadata.
+ * @param value - `projectPath` read from `mastra_threads.metadata`.
+ * @returns {Record<string, string>} `{ cwd }`, or nothing when the thread names none.
+ */
+function cwdOf(value: unknown): Record<string, string> {
+  const cwd = scalarText(value);
+  return cwd ? { cwd } : {};
+}
+
 export class MastraSource implements Source {
   name = "mastra";
   private dbPath: string;
@@ -108,10 +118,12 @@ export class MastraSource implements Source {
     try {
       const rowsResult = await db.execute({
         sql: `
-  SELECT rowid as rowId, role, content, createdAt, thread_id
-  FROM mastra_messages
-  WHERE role IN ('user', 'assistant')
-  ORDER BY createdAt, rowid
+  SELECT m.rowid as rowId, m.role, m.content, m.createdAt, m.thread_id,
+    CASE WHEN json_valid(t.metadata, 10) THEN json_extract(t.metadata, '$.projectPath') END AS cwd
+  FROM mastra_messages m
+  LEFT JOIN mastra_threads t ON t.id = m.thread_id
+  WHERE m.role IN ('user', 'assistant')
+  ORDER BY m.createdAt, m.rowid
 `,
         args: [],
       });
@@ -121,6 +133,7 @@ export class MastraSource implements Source {
         content: string;
         createdAt: string;
         thread_id: string;
+        cwd?: unknown;
       }[];
 
       for (const row of rows) {
@@ -140,7 +153,11 @@ export class MastraSource implements Source {
           timestamp: ts,
           date,
           blocks: entryBlocks,
-          context: { mastraCreatedAt: row.createdAt, mastraRowId: String(row.rowId) },
+          context: {
+            mastraCreatedAt: row.createdAt,
+            mastraRowId: String(row.rowId),
+            ...cwdOf(row.cwd),
+          },
           channel: this.channel,
           author:
             row.role === "user" ? this.user : { platform: "cli", name: "mastra", isBot: true },

@@ -14,6 +14,7 @@ import { isRecord, parseJson, scalarText } from "./parsing.ts";
 interface ChatFile {
   readonly path: string;
   readonly mtime: number;
+  readonly cwd?: string;
 }
 
 function thoughtBlock(value: unknown): Block[] {
@@ -79,17 +80,32 @@ function sessionIdFromPath(path: string): string {
   return path.split("/").pop()?.replace(".json", "") || "";
 }
 
+/**
+ * The path in `.project_root`. Older folders named by a hash have none.
+ * @param projectDir - One folder under `~/.gemini/tmp`.
+ * @returns {Pick<ChatFile, "cwd">} The project path, when the folder recorded one.
+ */
+function projectRoot(projectDir: string): Pick<ChatFile, "cwd"> {
+  try {
+    const cwd = readFileSync(join(projectDir, ".project_root"), "utf-8");
+    return cwd ? { cwd } : {};
+  } catch {
+    return {};
+  }
+}
+
 function* walkChatFiles(dir: string, sessionId?: string): Generator<ChatFile> {
   if (!existsSync(dir)) return;
   for (const project of readdirSync(dir, { withFileTypes: true })) {
     if (!project.isDirectory()) continue;
     const chatsDir = join(dir, project.name, "chats");
     if (!existsSync(chatsDir)) continue;
+    const root = projectRoot(join(dir, project.name));
     for (const file of readdirSync(chatsDir, { withFileTypes: true })) {
       if (!file.name.endsWith(".json")) continue;
       if (sessionId && sessionIdFromPath(file.name) !== sessionId) continue;
       const path = join(chatsDir, file.name);
-      yield { path, mtime: statSync(path).mtimeMs };
+      yield { path, mtime: statSync(path).mtimeMs, ...root };
     }
   }
 }
@@ -122,7 +138,7 @@ export class GeminiSource implements Source {
   private messageFromEntry(
     entry: Readonly<Record<string, unknown>>,
     sessionId: string,
-    mtime: number,
+    file: Readonly<ChatFile>,
   ): Message | undefined {
     const role = nativeRole(entry.type);
     if (!role) return undefined;
@@ -131,7 +147,7 @@ export class GeminiSource implements Source {
 
     const timestampText = scalarText(entry.timestamp);
     const nativeTimestamp = timestampText ? new Date(timestampText).getTime() : Number.NaN;
-    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : mtime;
+    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : file.mtime;
     return {
       source: this.name,
       sessionId,
@@ -142,6 +158,7 @@ export class GeminiSource implements Source {
       blocks,
       channel: this.channel,
       author: role === "user" ? this.user : { platform: "cli", name: "gemini", isBot: true },
+      ...(file.cwd ? { context: { cwd: file.cwd } } : {}),
     };
   }
 
@@ -157,7 +174,7 @@ export class GeminiSource implements Source {
     const sessionId = sessionIdFromPath(file.path);
     for (const entry of data.messages) {
       if (!isRecord(entry)) continue;
-      const message = this.messageFromEntry(entry, sessionId, file.mtime);
+      const message = this.messageFromEntry(entry, sessionId, file);
       if (message) yield message;
     }
   }

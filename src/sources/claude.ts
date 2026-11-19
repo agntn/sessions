@@ -17,6 +17,13 @@ interface SessionFile {
   readonly mtime: number;
 }
 
+/** What a message takes from its transcript. `cwd` sits on each entry. */
+interface Transcript {
+  readonly sessionId: string;
+  readonly mtime: number;
+  readonly cwd?: string;
+}
+
 function textBlock(type: "text" | "thinking", value: unknown): Block[] {
   const text = scalarText(value);
   return text ? [{ type, text }] : [];
@@ -120,8 +127,7 @@ export class ClaudeSource implements Source {
 
   private messageFromEntry(
     entry: Readonly<Record<string, unknown>>,
-    sessionId: string,
-    mtime: number,
+    transcript: Readonly<Transcript>,
   ): Message | undefined {
     const role = nativeRole(entry.type);
     if (!role || !isRecord(entry.message)) return undefined;
@@ -130,10 +136,10 @@ export class ClaudeSource implements Source {
 
     const parsed = scalarText(entry.timestamp);
     const nativeTimestamp = parsed ? new Date(parsed).getTime() : Number.NaN;
-    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : mtime;
+    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : transcript.mtime;
     return {
       source: this.name,
-      sessionId,
+      sessionId: transcript.sessionId,
       role,
       timestamp,
       timestampSource: Number.isFinite(nativeTimestamp) ? "message" : "file",
@@ -141,17 +147,20 @@ export class ClaudeSource implements Source {
       blocks,
       channel: this.channel,
       author: role === "user" ? this.user : { platform: "cli", name: "claude-code", isBot: true },
+      ...(transcript.cwd ? { context: { cwd: transcript.cwd } } : {}),
     };
   }
 
   private async *readFile(file: SessionFile): AsyncGenerator<Message> {
     const sessionId = sessionIdFromPath(file.path);
     const lines = jsonlLines(file.path);
+    let cwd: string | undefined;
     for await (const line of lines) {
       try {
         const entry = parseJson(line);
         if (!isRecord(entry)) continue;
-        const message = this.messageFromEntry(entry, sessionId, file.mtime);
+        cwd = scalarText(entry.cwd) || cwd;
+        const message = this.messageFromEntry(entry, { sessionId, mtime: file.mtime, cwd });
         if (message) yield message;
       } catch {
         continue;

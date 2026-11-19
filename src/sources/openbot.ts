@@ -19,6 +19,15 @@ const WINDOW = 1000;
 type Row = Readonly<Record<string, unknown>>;
 type Native = Readonly<Record<string, unknown>>;
 
+/** What `projection_agents` says about one agent. */
+interface Agent {
+  readonly name?: string;
+  /** `workspacePath`, the `cwd` its Claude Code runs report. */
+  readonly cwd?: string;
+}
+
+type Agents = Readonly<Record<string, Readonly<Agent>>>;
+
 /** Last row of a page, compared as a row value so equal ordinals never repeat or vanish. */
 interface Cursor {
   readonly sid: string;
@@ -42,7 +51,7 @@ interface Stream {
   readonly from: string;
   readonly filter: string;
   readonly order: string;
-  readonly toMessage: (row: Row, agents: Readonly<Record<string, string>>) => Message | undefined;
+  readonly toMessage: (row: Row, agents: Agents) => Message | undefined;
 }
 
 function text(value: unknown): string | undefined {
@@ -109,13 +118,14 @@ function routineAuthor(native: Native): Participant | undefined {
   };
 }
 
-function senderAgent(
-  native: Native,
-  agents: Readonly<Record<string, string>>,
-): Participant | undefined {
+function agentOf(agents: Agents, id: string | undefined): Readonly<Agent> | undefined {
+  return id && Object.hasOwn(agents, id) ? agents[id] : undefined;
+}
+
+function senderAgent(native: Native, agents: Agents): Participant | undefined {
   const id = text(native.senderAgentId);
   if (!id) return undefined;
-  const name = Object.hasOwn(agents, id) ? agents[id] : undefined;
+  const name = agentOf(agents, id)?.name;
   return { platform: "openbot", platformId: id, name: name ?? id, isBot: true };
 }
 
@@ -123,13 +133,13 @@ function senderAgent(
  * Names who wrote a thread message: the agent itself, a routine, another agent or a member.
  * @param native - Parsed `message_json` of a thread row.
  * @param origin - Thread metadata, including its agent.
- * @param agents - Agent names by id, for messages one agent sent another.
+ * @param agents - Agents by id, for messages one agent sent another.
  * @returns {Participant | undefined} The author, when OpenBot recorded one.
  */
 function threadAuthor(
   native: Native,
   origin: Readonly<Origin>,
-  agents: Readonly<Record<string, string>>,
+  agents: Agents,
 ): Participant | undefined {
   if (native.author === "assistant") return origin.agent;
   if (native.author === "agent") return senderAgent(native, agents);
@@ -168,17 +178,17 @@ function threadContext(row: Row): Record<string, string> {
   return context;
 }
 
-function threadMessage(row: Row, agents: Readonly<Record<string, string>>): Message | undefined {
+function threadMessage(row: Row, agents: Agents): Message | undefined {
   const native = parseJsonRecord(scalarText(row.body) ?? "");
   const sessionId = text(row.sid);
   if (!native || !sessionId) return undefined;
   const agentId = text(row.agentId);
-  const name = agentId && Object.hasOwn(agents, agentId) ? agents[agentId] : undefined;
+  const { name, cwd } = agentOf(agents, agentId) ?? {};
   const origin: Origin = {
     sessionId,
     channel: { platform: "openbot", platformId: agentId, name: name ?? agentId, type: "thread" },
     agent: { platform: "openbot", platformId: agentId, name: name ?? "openbot", isBot: true },
-    context: threadContext(row),
+    context: { ...threadContext(row), ...(cwd ? { cwd } : {}) },
   };
   return message(native, origin, threadAuthor(native, origin, agents));
 }
@@ -256,18 +266,19 @@ async function tables(db: Readonly<Client>): Promise<ReadonlySet<string>> {
   return new Set(result.rows.flatMap((row) => scalarText(row.name) ?? []));
 }
 
-async function agentNames(db: Readonly<Client>, present: boolean) {
-  const names: Record<string, string> = {};
-  if (!present) return names;
-  const result = await db.execute(
-    "SELECT agent_id AS id, json_extract(agent_json, '$.name') AS name FROM projection_agents",
-  );
+async function agentsOf(db: Readonly<Client>, present: boolean): Promise<Agents> {
+  const agents: Record<string, Agent> = {};
+  if (!present) return agents;
+  const result =
+    await db.execute(`SELECT agent_id AS id, json_extract(agent_json, '$.name') AS name,
+    json_extract(agent_json, '$.workspacePath') AS cwd FROM projection_agents`);
   for (const row of result.rows) {
     const id = scalarText(row.id);
     const name = text(row.name);
-    if (id && name) names[id] = name;
+    const cwd = text(row.cwd);
+    if (id && (name || cwd)) agents[id] = { ...(name ? { name } : {}), ...(cwd ? { cwd } : {}) };
   }
-  return names;
+  return agents;
 }
 
 /**
@@ -290,7 +301,7 @@ export class OpenBotSource implements Source {
     const db = await openDatabase(this.dbPath);
     try {
       const known = await tables(db);
-      const agents = await agentNames(db, known.has("projection_agents"));
+      const agents = await agentsOf(db, known.has("projection_agents"));
       for (const stream of STREAMS) {
         if (stream.tables.every((table) => known.has(table)))
           yield* this.stream(db, stream, agents, options?.sessionId);
@@ -303,7 +314,7 @@ export class OpenBotSource implements Source {
   private async *stream(
     db: Readonly<Client>,
     stream: Readonly<Stream>,
-    agents: Readonly<Record<string, string>>,
+    agents: Agents,
     sessionId: string | undefined,
   ): AsyncGenerator<Message> {
     let cursor: Cursor | undefined;

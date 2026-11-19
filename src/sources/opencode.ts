@@ -33,6 +33,7 @@ interface PartRow {
   readonly tc: number;
   readonly sid: string;
   readonly rid: number;
+  readonly cwd?: unknown;
 }
 
 interface ParsedPart {
@@ -154,6 +155,16 @@ function parsePart(raw: string): ParsedPart | undefined {
   }
 }
 
+/**
+ * OpenCode keeps a session's directory on its `session` row.
+ * @param row - One part row, with `session.directory` joined in.
+ * @returns {Pick<Message, "context">} `context.cwd`, or nothing when the row has none.
+ */
+function contextOf(row: Readonly<PartRow>): Pick<Message, "context"> {
+  const cwd = scalarText(row.cwd);
+  return cwd ? { context: { cwd } } : {};
+}
+
 function partPage(
   options: Readonly<SourceReadOptions> | undefined,
   boundary: Readonly<Boundary> | undefined,
@@ -231,6 +242,7 @@ export class OpenCodeSource implements Source {
       blocks: part.blocks,
       channel: this.channel,
       author,
+      ...contextOf(row),
     };
   }
 
@@ -367,9 +379,11 @@ export class OpenCodeSource implements Source {
       json_extract(m.data, '$.role') as role,
       p.time_created as tc,
       p.session_id as sid,
-      p.rowid as rid
+      p.rowid as rid,
+      s.directory as cwd
     FROM part p
     JOIN message m ON p.message_id = m.id
+    LEFT JOIN session s ON s.id = p.session_id
     ${whereSql}
     ORDER BY p.time_created, p.rowid
     LIMIT ?
