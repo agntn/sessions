@@ -524,6 +524,60 @@ describe("OpenCodeSource", () => {
     expect(firstCall.args).toEqual(["wanted", 5000]);
   });
 
+  it.each([
+    { reachedParts: 2, pageFilter: true },
+    { reachedParts: 7, pageFilter: false },
+  ])(
+    "keeps activeSince sessions when $reachedParts of 9 parts reach the bound",
+    async ({ reachedParts, pageFilter }) => {
+      executeMock
+        .mockResolvedValueOnce({ rows: [{ ids: '["live"]', reachedParts, allParts: 9 }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              pdata: JSON.stringify({ type: "text", text: "old" }),
+              role: "user",
+              tc: 1,
+              sid: "ended",
+              rid: 1,
+            },
+            {
+              pdata: JSON.stringify({ type: "text", text: "new" }),
+              role: "user",
+              tc: 2,
+              sid: "live",
+              rid: 2,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const texts: string[] = [];
+      for await (const message of new OpenCodeSource("/tmp/opencode.db").read({ activeSince: 2 })) {
+        texts.push(message.blocks[0]?.text ?? "");
+      }
+
+      const reachCall = executeMock.mock.calls[0]?.[0] as { args: unknown[] };
+      const pageCall = executeMock.mock.calls[1]?.[0] as { sql: string; args: unknown[] };
+      expect(reachCall.args).toEqual([2]);
+      expect(pageCall.sql.includes("json_each(?)")).toBe(pageFilter);
+      expect(pageCall.args).toEqual(pageFilter ? ['["live"]', 5000] : [5000]);
+      expect(texts).toEqual(pageFilter ? ["old", "new"] : ["new"]);
+    },
+  );
+
+  it("stops before the first page when no session reaches activeSince", async () => {
+    executeMock.mockResolvedValueOnce({ rows: [{ ids: "[]", reachedParts: 0, allParts: 9 }] });
+
+    const source = new OpenCodeSource("/tmp/opencode.db");
+    const messages: Message[] = [];
+    for await (const message of source.read({ activeSince: 2 })) messages.push(message);
+
+    expect(messages).toEqual([]);
+    expect(executeMock).toHaveBeenCalledTimes(1);
+    expect(closeMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a bounded session summary page from SQL", async () => {
     executeMock.mockResolvedValueOnce({
       rows: [

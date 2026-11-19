@@ -223,6 +223,40 @@ describe("session listing across harnesses", () => {
     expect((await listSourceSessions(source, 0, 1, { since: 400 })).total).toBe(0);
   });
 
+  it("reads whole OpenCode sessions that reach activeSince, never the ended ones", async () => {
+    const path = join(directory, "opencode.db");
+    const db = createClient({ url: `file:${path}` });
+    try {
+      await db.executeMultiple(`
+        CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT);
+        CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT);
+        CREATE TABLE part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT);
+        INSERT INTO message VALUES ('m', '{"role":"user"}');
+        INSERT INTO part VALUES
+          ('early', 'm', 10, '{"type":"text","text":"e1"}'),
+          ('early', 'm', 20, '{"type":"text","text":"e2"}'),
+          ('live', 'm', 100, '{"type":"text","text":"l1"}'),
+          ('ended', 'm', 110, '{"type":"text","text":"d1"}'),
+          ('ended', 'm', 120, '{"type":"text","text":"d2"}'),
+          ('ended', 'm', 130, '{"type":"text","text":"d3"}'),
+          ('ended', 'm', 140, '{"type":"text","text":"d4"}'),
+          ('live', 'm', 200, '{"type":"text","text":"l2"}');
+      `);
+    } finally {
+      db.close();
+    }
+    const read = async (activeSince: number): Promise<string[]> => {
+      const texts: string[] = [];
+      for await (const message of new OpenCodeSource(path).read({ activeSince })) {
+        texts.push(message.blocks[0]?.text ?? "");
+      }
+      return texts;
+    };
+    expect(await read(150)).toEqual(["l1", "l2"]);
+    expect(await read(135)).toEqual(["l1", "d1", "d2", "d3", "d4", "l2"]);
+    expect(await read(201)).toEqual([]);
+  });
+
   it.each(["pi", "omp"])("passes filtered discovery through the %s extension", async (harness) => {
     const tools = new Map<
       string,
