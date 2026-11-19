@@ -266,12 +266,14 @@ export class OpenClawSource implements Source {
     const lines = jsonlLines(file.path);
     let sessionTimestamp = "";
     let sessionContext: StringContext | undefined;
+    let cwd: string | undefined;
 
     for await (const line of lines) {
       const entry = parseJsonRecord(line);
       if (!entry) continue;
       if (entry.type === "session") {
         sessionTimestamp = scalarText(entry.timestamp) ?? sessionTimestamp;
+        cwd = scalarText(entry.cwd) || cwd;
         continue;
       }
       if (entry.type !== "message") continue;
@@ -284,7 +286,8 @@ export class OpenClawSource implements Source {
       );
       if (!normalized) continue;
       sessionContext = normalized.sessionContext;
-      yield normalized.message;
+      const { message } = normalized;
+      yield cwd ? { ...message, context: { ...message.context, cwd } } : message;
     }
   }
 

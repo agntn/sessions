@@ -92,6 +92,8 @@ Output:
 aei, claude, codex, gemini, grok, mastra, omp, openbot, openclaw, opencode, pi, vibe
 ```
 
+Find the working directory in each message's `context.cwd` when the source stores it. Older Gemini folders keep only a hash of the path. A hash isn't much help as a project path. Their messages go without `context.cwd`.
+
 OpenClaw also accepts `paths` for multiple native locations. See the [source registry](./src/sources/index.ts) for supported overrides and links to each parser.
 
 `openbot` reads OpenBot, a desktop app running agent teams on Codex, Claude Code, and Pi. Each agent thread and team channel is a session. The channel drops replaced revisions, but the agent thread keeps the drafts. Tool calls are one hop away: OpenBot stores none, but each message's `context` names the turn's `provider`, `providerSessionId`, and `model`. Hand that id to the `codex` or `claude` reader. For Pi it's the session file's path.

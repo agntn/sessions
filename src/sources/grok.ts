@@ -26,6 +26,13 @@ interface SessionClock {
   readonly source: "session" | "file";
 }
 
+/** What every message of one session shares. */
+interface SessionShared {
+  readonly id: string;
+  readonly clock: SessionClock;
+  readonly cwd?: string;
+}
+
 type Entry = Readonly<Record<string, unknown>>;
 type Time = Readonly<Pick<Message, "timestamp" | "timestampSource">>;
 
@@ -130,14 +137,26 @@ function readSummary(directory: string): Readonly<Record<string, unknown>> | und
   }
 }
 
-function readClock(directory: string, mtime: number): SessionClock {
+function clockOf(
+  summary: Readonly<Record<string, unknown>> | undefined,
+  mtime: number,
+): SessionClock {
   const fileClock: SessionClock = { createdAt: mtime, updatedAt: mtime, source: "file" };
-  const summary = readSummary(directory);
   if (!summary) return fileClock;
   const updated = epoch(summary.last_active_at) ?? epoch(summary.updated_at);
   const createdAt = epoch(summary.created_at) ?? updated;
   if (createdAt === undefined) return fileClock;
   return { createdAt, updatedAt: Math.max(createdAt, updated ?? createdAt), source: "session" };
+}
+
+/**
+ * Takes `info.cwd` from `summary.json`, never the encoded folder name.
+ * @param summary - Parsed `summary.json`, when the session has one.
+ * @returns {string | undefined} The recorded `info.cwd`.
+ */
+function cwdOf(summary: Readonly<Record<string, unknown>> | undefined): string | undefined {
+  const info = isRecord(summary?.info) ? summary.info : undefined;
+  return scalarText(info?.cwd) || undefined;
 }
 
 function timestampAt(
@@ -844,17 +863,20 @@ export class GrokSource implements Source {
 
   private messageFrom(
     entry: Readonly<Record<string, unknown>>,
-    sessionId: string,
-    clock: SessionClock,
+    session: Readonly<SessionShared>,
     time: Time,
   ): Message | undefined {
     const role = roleFor(entry.type);
     const blocks = blocksFor(entry);
     if (!role || blocks.length === 0) return undefined;
-    const context = role === "user" ? userContext(entry) : undefined;
+    const { clock } = session;
+    const context = {
+      ...(session.cwd ? { cwd: session.cwd } : {}),
+      ...(role === "user" ? userContext(entry) : undefined),
+    };
     return {
       source: this.name,
-      sessionId,
+      sessionId: session.id,
       role,
       timestamp: time.timestamp,
       timestampSource: time.timestampSource,
@@ -865,13 +887,18 @@ export class GrokSource implements Source {
       blocks,
       channel: this.channel,
       author: role === "user" ? this.user : { platform: "cli", name: "grok", isBot: true },
-      ...(context ? { context } : {}),
+      ...(Object.keys(context).length > 0 ? { context } : {}),
     };
   }
 
   private async *readFile(file: Transcript): AsyncGenerator<Message> {
-    const sessionId = sessionIdFromDirectory(file.directory);
-    const clock = readClock(file.directory, file.mtime);
+    const summary = readSummary(file.directory);
+    const session: SessionShared = {
+      id: sessionIdFromDirectory(file.directory),
+      clock: clockOf(summary, file.mtime),
+      cwd: cwdOf(summary),
+    };
+    const { clock } = session;
     const times = await MessageTimes.read(file.directory);
     const handle = await open(file.path);
     try {
@@ -882,7 +909,7 @@ export class GrokSource implements Source {
       for await (const entry of records(snapshot)) {
         if (pending) {
           const time = times.settle(dates[index], clock, false);
-          const message = this.messageFrom(pending, sessionId, clock, time);
+          const message = this.messageFrom(pending, session, time);
           if (message) yield message;
           index += 1;
         }
@@ -890,7 +917,7 @@ export class GrokSource implements Source {
       }
       if (!pending) return;
       const time = times.settle(dates[index], clock, true);
-      const message = this.messageFrom(pending, sessionId, clock, time);
+      const message = this.messageFrom(pending, session, time);
       if (message) yield message;
     } finally {
       await handle.close();

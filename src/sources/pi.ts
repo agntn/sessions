@@ -11,6 +11,13 @@ interface SessionFile {
   readonly mtime: number;
 }
 
+/** What every message of one transcript shares. */
+interface Transcript {
+  readonly sessionId: string;
+  readonly mtime: number;
+  readonly cwd?: string;
+}
+
 function textBlock(type: "text" | "thinking", value: unknown): Block[] {
   const text = scalarText(value);
   return text ? [{ type, text }] : [];
@@ -184,8 +191,7 @@ export class PiSource implements Source {
 
   private messageFromEntry(
     entry: Readonly<Record<string, unknown>>,
-    sessionId: string,
-    mtime: number,
+    transcript: Readonly<Transcript>,
   ): Message | undefined {
     if (!isRecord(entry.message)) return undefined;
     const role = nativeRole(entry.message.role);
@@ -195,10 +201,10 @@ export class PiSource implements Source {
 
     const timestampText = scalarText(entry.timestamp);
     const nativeTimestamp = timestampText ? new Date(timestampText).getTime() : Number.NaN;
-    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : mtime;
+    const timestamp = Number.isFinite(nativeTimestamp) ? nativeTimestamp : transcript.mtime;
     return {
       source: this.name,
-      sessionId,
+      sessionId: transcript.sessionId,
       role,
       timestamp,
       timestampSource: Number.isFinite(nativeTimestamp) ? "message" : "file",
@@ -206,6 +212,7 @@ export class PiSource implements Source {
       blocks,
       channel: { platform: "cli", name: this.name },
       author: role === "user" ? this.user : { platform: "cli", name: this.name, isBot: true },
+      ...(transcript.cwd ? { context: { cwd: transcript.cwd } } : {}),
     };
   }
 
@@ -219,6 +226,7 @@ export class PiSource implements Source {
      * transcripts.
      */
     let sessionId = sessionIdFromPath(file.path);
+    let cwd: string | undefined;
     for await (const line of jsonlLines(file.path, wanted === undefined ? undefined : PEEK_BYTES)) {
       const entry = parseJsonRecord(line);
       if (!entry) continue;
@@ -226,8 +234,11 @@ export class PiSource implements Source {
       if (settled === undefined) continue;
       sessionId = settled;
       if (foreignSession(sessionId, wanted)) return;
-      if (entry.type === "session") continue;
-      const message = this.messageFromEntry(entry, sessionId, file.mtime);
+      if (entry.type === "session") {
+        cwd = scalarText(entry.cwd) || cwd;
+        continue;
+      }
+      const message = this.messageFromEntry(entry, { sessionId, mtime: file.mtime, cwd });
       if (message) yield message;
     }
   }
