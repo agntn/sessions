@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { Client } from "@libsql/client";
 import { openDatabase } from "../core/db.ts";
 import { home, osUser } from "../core/env.ts";
 import { INJECTED_PREFIXES } from "../tool-snippet.ts";
@@ -35,6 +36,17 @@ interface PartRow {
   readonly rid: number;
   readonly cwd?: unknown;
 }
+
+/** Which sessions an `activeSince` read keeps. */
+interface Reach {
+  /** Kept ids as a JSON array when SQL filters the pages. */
+  readonly json?: string;
+  /** Nothing reaches the bound. */
+  readonly empty: boolean;
+  keeps(sessionId: string): boolean;
+}
+
+const EVERY_SESSION: Reach = { empty: false, keeps: () => true };
 
 interface ParsedPart {
   readonly role?: Message["role"];
@@ -165,15 +177,27 @@ function contextOf(row: Readonly<PartRow>): Pick<Message, "context"> {
   return cwd ? { context: { cwd } } : {};
 }
 
+/**
+ * Builds the WHERE clause of one keyset page.
+ * @param sessionId - Exact session, or all.
+ * @param reached - Kept ids as a JSON array, or all.
+ * @param boundary - Last row of the previous page.
+ * @returns {{ whereSql: string, args: Array<string | number> }} Clause and arguments.
+ */
 function partPage(
-  options: Readonly<SourceReadOptions> | undefined,
+  sessionId: string | undefined,
+  reached: string | undefined,
   boundary: Readonly<Boundary> | undefined,
 ): { readonly whereSql: string; readonly args: Array<string | number> } {
   const predicates: string[] = [];
   const args: Array<string | number> = [];
-  if (options?.sessionId) {
+  if (sessionId) {
     predicates.push("p.session_id = ?");
-    args.push(options.sessionId);
+    args.push(sessionId);
+  }
+  if (reached !== undefined) {
+    predicates.push("p.session_id IN (SELECT value FROM json_each(?))");
+    args.push(reached);
   }
   if (boundary) {
     predicates.push("(p.time_created > ? OR (p.time_created = ? AND p.rowid > ?))");
@@ -202,6 +226,40 @@ function reachedSessions(since: number | undefined): {
     sql: "AND p.session_id IN (SELECT session_id FROM part WHERE time_created >= ?)",
     args: [since],
   };
+}
+
+/**
+ * Finds the kept sessions once. Past half the parts, a plain scan beats the session index.
+ * @param db - Open OpenCode database.
+ * @param since - Inclusive bound on a session's last part.
+ * @returns {Promise<Reach>} Kept sessions, all without a bound.
+ */
+async function reach(db: Readonly<Client>, since: number | undefined): Promise<Reach> {
+  if (since === undefined) return EVERY_SESSION;
+  const result = await db.execute({
+    sql: `
+      WITH sessions AS (
+        SELECT session_id, MAX(time_created) >= ? AS reached, COUNT(*) AS parts
+        FROM part
+        GROUP BY session_id
+      )
+      SELECT
+        json_group_array(session_id) FILTER (WHERE reached) AS ids,
+        COALESCE(SUM(parts) FILTER (WHERE reached), 0) AS reachedParts,
+        COALESCE(SUM(parts), 0) AS allParts
+      FROM sessions
+    `,
+    args: [since],
+  });
+  const row = result.rows[0];
+  const json = typeof row?.ids === "string" ? row.ids : "[]";
+  const empty = json === "[]";
+  if (Number(row?.reachedParts) * 2 <= Number(row?.allParts)) {
+    return { json, empty, keeps: () => true };
+  }
+  const parsed: unknown = JSON.parse(json);
+  const ids = new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  return { empty, keeps: (sessionId) => ids.has(sessionId) };
 }
 
 export class OpenCodeSource implements Source {
@@ -244,6 +302,20 @@ export class OpenCodeSource implements Source {
       author,
       ...contextOf(row),
     };
+  }
+
+  /**
+   * Messages of one page from the kept sessions.
+   * @param rows - One page of part rows.
+   * @param reached - Sessions to keep.
+   * @yields {Message} Each kept message.
+   */
+  private *messagesOf(rows: readonly PartRow[], reached: Readonly<Reach>): Generator<Message> {
+    for (const row of rows) {
+      if (!reached.keeps(row.sid)) continue;
+      const message = this.messageFromRow(row);
+      if (message) yield message;
+    }
   }
 
   async summaryWindow(
@@ -369,9 +441,11 @@ export class OpenCodeSource implements Source {
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const db = await openDatabase(this.dbPath);
     try {
+      const reached = await reach(db, options?.activeSince);
+      if (reached.empty) return;
       let boundary: Boundary | undefined;
       while (true) {
-        const { whereSql, args } = partPage(options, boundary);
+        const { whereSql, args } = partPage(options?.sessionId, reached.json, boundary);
         const rowsResult = await db.execute({
           sql: `
     SELECT
@@ -397,10 +471,7 @@ export class OpenCodeSource implements Source {
         if (!last) break;
         boundary = { timestamp: last.tc, rowId: last.rid };
 
-        for (const row of rows) {
-          const message = this.messageFromRow(row);
-          if (message) yield message;
-        }
+        yield* this.messagesOf(rows, reached);
       }
     } finally {
       db.close();
