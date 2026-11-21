@@ -112,7 +112,7 @@ describe("Pi extension", () => {
     const list = runtime.getTool("sessions_list") as {
       parameters: { properties?: { sources?: { maxItems?: number } } };
     };
-    expect(list.parameters.properties?.sources?.maxItems).toBe(12);
+    expect(list.parameters.properties?.sources?.maxItems).toBe(11);
   });
 
   it("reports supported source availability", async () => {
@@ -368,7 +368,7 @@ describe("Pi extension", () => {
 
     const result = await tool(loadExtension(), "sessions_list").execute(
       "test",
-      { source: "aei" },
+      { source: "mastra" },
       undefined,
       undefined,
       {} as ExtensionContext,
@@ -601,7 +601,7 @@ describe("Pi extension", () => {
 
     const result = await tool(loadExtension(), "sessions_read").execute(
       "test",
-      { source: "aei", sessionId: "session-1", maxChars: 1_000 },
+      { source: "mastra", sessionId: "session-1", maxChars: 1_000 },
       undefined,
       undefined,
       {} as ExtensionContext,

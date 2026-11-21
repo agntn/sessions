@@ -4,7 +4,6 @@ import { createSessionReader } from "../core/session.ts";
 import { statSync } from "node:fs";
 import type { SourceData } from "../core/errors.ts";
 import { SourcePathError, UnknownSourceError } from "../core/errors.ts";
-import { AeiSource } from "./aei.ts";
 import { ClaudeSource } from "./claude.ts";
 import { CodexSource } from "./codex.ts";
 import { GeminiSource } from "./gemini.ts";
@@ -29,7 +28,6 @@ type SourceOptionsInput = Readonly<Omit<SourceOptions, "paths">> & {
 type AdapterFactory = (options?: SourceOptionsInput) => Source;
 
 const adapters: Record<string, AdapterFactory> = {
-  aei: (options) => new AeiSource(options?.path),
   claude: (options) => new ClaudeSource(options?.path),
   codex: (options) => new CodexSource(options?.path),
   gemini: (options) => new GeminiSource(options?.path),
@@ -45,7 +43,7 @@ const adapters: Record<string, AdapterFactory> = {
 };
 
 /** Sources whose path is one database file; the rest read a directory of session files. */
-const databaseSources = new Set(["aei", "mastra", "openbot", "opencode"]);
+const databaseSources = new Set(["mastra", "openbot", "opencode"]);
 
 function overridePaths(
   name: string,
