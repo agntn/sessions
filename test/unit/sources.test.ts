@@ -20,7 +20,6 @@ afterEach(() => {
 describe("public harness registry", () => {
   it("exposes every supported harness through session readers", () => {
     expect(sources()).toEqual([
-      "aei",
       "claude",
       "codex",
       "gemini",
@@ -62,7 +61,7 @@ describe("public harness registry", () => {
     customPath = mkdtempSync(join(tmpdir(), "sessions-source-"));
     const file = join(customPath, "session.jsonl");
     writeFileSync(file, "");
-    const database = ["aei", "mastra", "openbot", "opencode"].includes(name);
+    const database = ["mastra", "openbot", "opencode"].includes(name);
     expect(() => create(name, { path: database ? customPath : file })).toThrow(SourcePathError);
     expect(() => create(name, { path: database ? file : customPath })).not.toThrow();
   });
