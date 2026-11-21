@@ -163,6 +163,20 @@ function transcriptSession(path: string): string {
   }
 }
 
+/**
+ * Peeks a transcript's header; a file gone since the walk holds nothing.
+ * @param path - Transcript path.
+ * @param wanted - Exact session id.
+ * @returns {boolean} Whether its messages carry `wanted`.
+ */
+function headerHolds(path: string, wanted: string): boolean {
+  try {
+    return transcriptSession(path) === wanted;
+  } catch {
+    return false;
+  }
+}
+
 function* walkJsonl(dir: string): Generator<string> {
   if (!existsSync(dir)) return;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -243,12 +257,22 @@ export class PiSource implements Source {
     }
   }
 
+  /**
+   * Pi can name a transcript after one id and head it with another, so when no named file holds
+   * the wanted session, the remaining project files get their headers peeked before giving up.
+   * @param wanted - Exact session id, or every transcript when omitted.
+   * @returns {SessionFile[]} Transcripts to read, oldest write first.
+   */
   private sessionFiles(wanted?: string): SessionFile[] {
-    const files: SessionFile[] = [];
-    for (const path of walkJsonl(this.sessionsDir)) {
-      if (!selectedTranscript(this.sessionsDir, path, wanted)) continue;
-      files.push({ path, mtime: statSync(path).mtimeMs });
-    }
+    const paths = [...walkJsonl(this.sessionsDir)];
+    const named = new Set(
+      paths.filter((path) => selectedTranscript(this.sessionsDir, path, wanted)),
+    );
+    const found = wanted === undefined || [...named].some((path) => headerHolds(path, wanted));
+    const chosen = found
+      ? [...named]
+      : paths.filter((path) => named.has(path) || headerHolds(path, wanted));
+    const files = chosen.map((path) => ({ path, mtime: statSync(path).mtimeMs }));
     files.sort((left, right) => left.mtime - right.mtime);
     return files;
   }

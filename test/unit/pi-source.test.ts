@@ -201,6 +201,43 @@ describe("PiSource", () => {
     expect((await texts()).sort()).toEqual(["nested run", "sibling secret", "wanted turn"]);
   });
 
+  it("reads a project session by the header id when the file name carries another", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
+    const project = join(directory, "--work--");
+    mkdirSync(project);
+    const transcript = (id: string, text: string): string =>
+      [
+        { type: "session", version: 3, id, timestamp: "2026-11-14T21:45:59.162Z", cwd: "/work" },
+        {
+          type: "message",
+          id: "m1",
+          timestamp: "2026-11-14T21:46:00.000Z",
+          message: { role: "user", content: [{ type: "text", text }] },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n");
+    writeFileSync(
+      join(project, "2026-11-14T21-45-58-342Z_aaaa1111.jsonl"),
+      transcript("bbbb2222", "hello"),
+    );
+    writeFileSync(
+      join(project, "2026-11-14T21-50-00-000Z_cccc3333.jsonl"),
+      transcript("cccc3333", "sibling secret"),
+    );
+    const source = new PiSource(directory);
+    const texts = async (sessionId: string): Promise<string[]> => {
+      const found: string[] = [];
+      for await (const message of source.read({ sessionId })) {
+        found.push(`${message.sessionId}: ${message.blocks[0]?.text}`);
+      }
+      return found;
+    };
+
+    expect(await texts("bbbb2222")).toEqual(["bbbb2222: hello"]);
+    expect(await texts("cccc3333")).toEqual(["cccc3333: sibling secret"]);
+  });
+
   it.each<[string, (dir: string) => string]>([
     ["trailing slash", (dir) => `${dir}/`],
     ["leading dot", (dir) => `./${relative(process.cwd(), dir)}`],
