@@ -28,14 +28,14 @@ function isWindowsDirectory(cwd: string): boolean {
 }
 
 /**
- * One spelling per directory, Windows with `\\` and an upper drive.
+ * One spelling per directory. Windows compares with `\\` and without case, as its filesystems do.
  *
  * @param cwd - Absolute path.
- * @returns {string} The normalized path.
+ * @returns {string} The comparison key, never shown.
  */
 function normalized(cwd: string): string {
   if (!isWindowsDirectory(cwd)) return posix.normalize(cwd);
-  return win32.normalize(cwd).replace(/^[a-z]:/, (drive) => drive.toUpperCase());
+  return win32.normalize(cwd).toLowerCase();
 }
 
 /**

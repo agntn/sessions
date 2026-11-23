@@ -207,6 +207,15 @@ describe("session lists", () => {
     piSession("homeless", 4);
   });
 
+  it("splits POSIX paths only at slashes", async () => {
+    piSession("backslash", 5, `${CWD}\\other`);
+    const source = new PiSource(directory);
+    const page = await listSourceSessions(source, 0, 10, { cwd: CWD });
+    expect(page.sessions.map(({ id }) => id)).toEqual(["nested", "root"]);
+    const named = await listSourceSessions(source, 0, 10, { cwd: `${CWD}\\other` });
+    expect(named.sessions.map(({ id }) => id)).toEqual(["backslash"]);
+  });
+
   it("carry each session's working directory and keep the filter before the window", async () => {
     const source = new PiSource(directory);
     const all = await listSourceSessions(source, 0, 10);
@@ -241,27 +250,30 @@ describe("session lists", () => {
       "CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT)",
       "CREATE TABLE part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT)",
       `INSERT INTO session VALUES ('root', '${CWD}'), ('nested', '${CWD}/src'),
-        ('sibling', '${CWD}-two'), ('windows', 'C:\\work\\project')`,
+        ('sibling', '${CWD}-two'), ('windows', 'C:\\Work\\Project'), ('blank', '')`,
       `INSERT INTO message VALUES ('m', '{"role":"user"}')`,
       `INSERT INTO part VALUES ('root', 'm', 100, '{"type":"text","text":"a"}'),
         ('nested', 'm', 200, '{"type":"text","text":"b"}'),
         ('sibling', 'm', 300, '{"type":"text","text":"c"}'),
         ('orphan', 'm', 400, '{"type":"text","text":"d"}'),
-        ('windows', 'm', 500, '{"type":"text","text":"e"}')`,
+        ('windows', 'm', 500, '{"type":"text","text":"e"}'),
+        ('blank', 'm', 50, '{"type":"text","text":"f"}')`,
     ]);
     const source = new OpenCodeSource(path);
 
     const all = await listSourceSessions(source, 0, 10);
     expect(all.sessions.map(({ id, cwd }) => [id, cwd])).toEqual([
-      ["windows", "C:\\work\\project"],
+      ["windows", "C:\\Work\\Project"],
       ["orphan", undefined],
       ["sibling", `${CWD}-two`],
       ["nested", `${CWD}/src`],
       ["root", CWD],
+      ["blank", undefined],
     ]);
+    expect((await listSourceSessions(source, 0, 10, { cwd: "/" })).total).toBe(3);
     const page = await listSourceSessions(source, 1, 1, { cwd: CWD });
     expect(page).toMatchObject({ total: 2, sessions: [{ id: "root", cwd: CWD }] });
-    for (const cwd of ["C:\\work", "C:/work/", "C:/work/./project"]) {
+    for (const cwd of ["C:\\work", "c:/WORK/", "C:/work/./project"]) {
       const windows = await listSourceSessions(source, 0, 10, { cwd });
       expect(windows.sessions.map(({ id }) => id)).toEqual(["windows"]);
     }
