@@ -4,7 +4,8 @@
     "rootDir": ".",
     "paths": {
       "@agntn/sessions": ["./src/index.ts"],
-      "@agntn/sessions/tool-operations": ["./src/tool-operations.ts"]
+      "@agntn/sessions/tool-operations": ["./src/tool-operations.ts"],
+      "@agntn/sessions/tools": ["./src/tools.ts"]
     },
     "declaration": false,
     "declarationMap": false,

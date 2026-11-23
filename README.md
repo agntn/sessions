@@ -132,7 +132,7 @@ Add this to your client's MCP configuration:
 }
 ```
 
-The server speaks stdio. With a local package install, `pnpm exec sessions mcp` starts it directly. Bring your own transport with `createMcpServer()` from `@agntn/sessions/mcp`.
+The server speaks stdio and works with 2025 and 2026 MCP clients. After a local install, `pnpm exec sessions mcp` starts it directly. For your own transport, use `createMcpServer()` from `@agntn/sessions/mcp`.
 
 ### Pi and OMP
 
@@ -141,9 +141,21 @@ pi install npm:@agntn/sessions
 omp install @agntn/sessions
 ```
 
-The extensions and MCP use the [same executors](./src/tool-operations.ts). Extensions also attach structured details. MCP carries the answer and continuation instructions in text.
+MCP, Pi, OMP and the CLI share the [same tool definitions](./src/tools.ts). Extensions also attach structured details. MCP carries the answer and continuation instructions in text.
 
 OMP has the model fill in every field on the form, even the ones it meant to skip. So its extension reads a blank `path` or `since`, an empty `paths` and a `source` already in `sources` as left out. A real `since` or `until` beats the filler `lastHours`. `knownToolResults: []` keeps its meaning, since that's how digest labels start. MCP and Pi still reject a blank bound by name.
+
+### CLI
+
+```bash
+sessions list --source pi --last-hours 24 --limit 5
+sessions read pi SESSION_ID --max-chars 4000
+sessions list --sources '["pi","codex"]' --json
+```
+
+Your terminal prints exactly what the model gets from the tool, down to the same lines and `Use offset=5 to continue` hints. Agent says a session doesn't exist? Check it yourself with the same call.
+
+Each tool has a command, its flags come from the schema, and arrays take JSON. Use `--json` for structured details instead. Run `pnpm exec sessions` after a local install, or `npx @agntn/sessions`.
 
 ### Keep reading, without starting over
 
@@ -178,7 +190,7 @@ File adapters expose `Message.timestampSource` as `message`, `session`, or `file
 
 These tools retain bounded summaries or the requested message window, not the complete archive. A listing still scans every transcript on each call. A read opens only the transcripts that can hold the session. Claude Code, Codex, Gemini CLI, and OpenClaw name the file after it. Grok and Vibe name the session directory. Pi and OMP open a project file whose name holds the id, including the shortened id OMP writes, and still check nested runs from the header. OpenCode answers both from SQLite. OpenBot filters reads by session id in SQLite, but listings read the whole database. Mastra still reads its whole database. Bounded output does not mean instant reads.
 
-Unknown sources, unreadable overrides, and missing session IDs return tool errors over MCP. See the [tool schemas](./src/mcp.ts) for all limits. Session text can contain private data. Only connect clients you trust with it.
+Unknown sources, unreadable overrides, and missing session IDs return tool errors over MCP. See the [tool schemas](./src/tools.ts) for all limits. Session text can contain private data. Only connect clients you trust with it.
 
 ## 🚫 Just the reader
 

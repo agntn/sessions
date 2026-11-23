@@ -1,7 +1,6 @@
 import { createClient } from "@libsql/client";
 import type { ExtensionAPI as PiAPI } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI as OmpAPI } from "@oh-my-pi/pi-coding-agent";
-import * as TypeBox from "@oh-my-pi/omptype/typebox";
 import piExtension from "../../extensions/pi/sessions.ts";
 import ompExtension from "../../extensions/omp/sessions.ts";
 import { OpenCodeSource } from "../../src/sources/opencode.ts";
@@ -9,8 +8,7 @@ import { listSourceSessions } from "../../src/tool-reader.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMcpServer } from "../../src/mcp.ts";
 import { sources } from "../../src/index.ts";
@@ -269,7 +267,8 @@ describe("session listing across harnesses", () => {
       }
     >();
     const host = {
-      typebox: TypeBox,
+      typebox: { Type: { Unsafe: (schema: unknown) => schema } },
+      pi: { Text: class {} },
       setLabel() {},
       registerTool(definition: {
         readonly name: string;
@@ -281,11 +280,17 @@ describe("session listing across harnesses", () => {
         tools.set(definition.name, definition);
       },
     };
-    if (harness === "pi") piExtension(host as unknown as PiAPI);
-    else ompExtension(host as unknown as OmpAPI);
+    if (harness === "pi") await piExtension(host as unknown as PiAPI);
+    else await ompExtension(host as unknown as OmpAPI);
     const result = await tools
       .get("sessions_list")
-      ?.execute("fixture", { lastHours: 24, sources: ["pi", "codex"], limit: 1 });
+      ?.execute(
+        "fixture",
+        { lastHours: 24, sources: ["pi", "codex"], limit: 1 },
+        undefined,
+        undefined,
+        {},
+      );
     expect(result).toMatchObject({
       details: { total: 4, sessions: [{ source: "codex", id: "future" }] },
     });
@@ -295,10 +300,17 @@ describe("session listing across harnesses", () => {
   it("reads what OMP passes on for the fields a model meant to skip as unset", async () => {
     const tools = new Map<
       string,
-      (id: string, params: Readonly<Record<string, unknown>>) => Promise<unknown>
+      (
+        id: string,
+        params: Readonly<Record<string, unknown>>,
+        signal?: undefined,
+        onUpdate?: undefined,
+        ctx?: unknown,
+      ) => Promise<unknown>
     >();
-    ompExtension({
-      typebox: TypeBox,
+    await ompExtension({
+      typebox: { Type: { Unsafe: (schema: unknown) => schema } },
+      pi: { Text: class {} },
       setLabel() {},
       registerTool(definition: {
         readonly name: string;
@@ -307,13 +319,14 @@ describe("session listing across harnesses", () => {
           params: Readonly<Record<string, unknown>>,
         ) => Promise<unknown>;
       }) {
-        tools.set(definition.name, definition.execute);
+        tools.set(definition.name, (...args) => definition.execute(...args));
       },
     } as unknown as OmpAPI);
     const list = tools.get("sessions_list");
     const read = tools.get("sessions_read");
     if (!list || !read) throw new Error("OMP tools not registered");
-    const blank = { path: "", paths: [], offset: 0, limit: 20 };
+    /** OMP drops `path: ""` itself, since the schema sets minLength. Spaces still get through. */
+    const blank = { path: " ", paths: [], offset: 0, limit: 20 };
 
     await expect(
       list("omp", { ...blank, source: "pi", sources: ["pi"], lastHours: 24 }),

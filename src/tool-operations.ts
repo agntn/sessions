@@ -1,17 +1,28 @@
 /**
- * Tool executors shared by the MCP server and the Pi extension.
+ * Tool executors behind the definitions in `tools.ts`, which every host shares.
  *
  * Each executor returns the text a caller reads plus the structured details the
  * agent harnesses attach to the call. An MCP client sees only the text, so every
  * fact needed for a follow-up call has to be in it.
  *
- * Both surfaces use the same bounded source projections. The public `list()`
+ * Every host uses the same bounded source projections. The public `list()`
  * API remains the path that returns complete archives to library consumers.
  */
 
 import { createHash } from "node:crypto";
 import type { Message, SessionTimeRange } from "./core/types.ts";
 import { quoted } from "./core/text.ts";
+import {
+  DEFAULT_MESSAGE_LIMIT,
+  DEFAULT_OUTPUT_CHARS,
+  DEFAULT_SESSION_LIMIT,
+  MAX_KNOWN_TOOL_RESULTS,
+  MAX_MESSAGE_LIMIT,
+  MAX_OUTPUT_CHARS,
+  MAX_SESSION_LIMIT,
+  MAX_SOURCES,
+  MIN_OUTPUT_CHARS,
+} from "./limits.ts";
 import { allSources } from "./index.ts";
 import type { SourceOptions } from "./index.ts";
 import { createSource } from "./sources/index.ts";
@@ -148,13 +159,15 @@ interface PagingInput {
   readonly limit?: number;
 }
 
-export const DEFAULT_SESSION_LIMIT = 20;
-export const MAX_SESSION_LIMIT = 100;
-export const DEFAULT_MESSAGE_LIMIT = 100;
-export const MAX_MESSAGE_LIMIT = 500;
-export const DEFAULT_OUTPUT_CHARS = 20_000;
-export const MIN_OUTPUT_CHARS = 1_000;
-export const MAX_OUTPUT_CHARS = 100_000;
+export {
+  DEFAULT_MESSAGE_LIMIT,
+  DEFAULT_OUTPUT_CHARS,
+  DEFAULT_SESSION_LIMIT,
+  MAX_MESSAGE_LIMIT,
+  MAX_OUTPUT_CHARS,
+  MAX_SESSION_LIMIT,
+  MIN_OUTPUT_CHARS,
+} from "./limits.ts";
 const MAX_DATE_STAMP_CHARS = 64;
 
 function optionsFrom(params: SourceParamsInput): SourceOptions | undefined {
@@ -360,8 +373,10 @@ interface RenderedMessageWindow {
 
 function knownToolResults(value: readonly string[] | undefined): readonly string[] | undefined {
   if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.length > 100) {
-    throw new RangeError("knownToolResults must be an array of at most 100 digests");
+  if (!Array.isArray(value) || value.length > MAX_KNOWN_TOOL_RESULTS) {
+    throw new RangeError(
+      `knownToolResults must be an array of at most ${MAX_KNOWN_TOOL_RESULTS} digests`,
+    );
   }
   return value.map((digest: unknown) => {
     if (typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) {
@@ -700,8 +715,8 @@ function selectedSources(params: ListParamsInput): string[] {
 }
 
 function uniqueSources(names: readonly string[]): string[] {
-  if (names.length === 0 || names.length > 11 || names.some((name) => !name.trim())) {
-    throw new RangeError("Choose between 1 and 11 non-empty source names");
+  if (names.length === 0 || names.length > MAX_SOURCES || names.some((name) => !name.trim())) {
+    throw new RangeError(`Choose between 1 and ${MAX_SOURCES} non-empty source names`);
   }
   return [...new Set(names.map((name) => name.trim()))];
 }
