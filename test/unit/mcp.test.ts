@@ -1,5 +1,4 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpServer } from "../../src/mcp.ts";
 
@@ -298,6 +297,6 @@ describe("sessions MCP server", () => {
     const response = await client.callTool({ name: "toString", arguments: {} });
 
     expect(response.isError).toBe(true);
-    expect(text(response.content)).toContain("Unknown sessions tool: toString");
+    expect(text(response.content)).toBe('Unknown sessions tool: "toString"');
   });
 });

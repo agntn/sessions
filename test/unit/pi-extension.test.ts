@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it, vi } from "vitest";
 import sessionsExtension from "../../extensions/pi/sessions";
 import type * as SessionsTools from "../../src/tool-operations.ts";
+import { readTool } from "../../src/tools.ts";
 
 const sessionsMock = vi.hoisted(() => ({
   allSources: vi.fn(),
@@ -55,7 +56,7 @@ type ExecutableTool = {
   ) => Promise<AgentToolResult<unknown>>;
 };
 
-function loadExtension(): CapturedRuntime {
+async function loadExtension(): Promise<CapturedRuntime> {
   const tools = new Map<string, unknown>();
   const runtime: CapturedRuntime = {
     toolNames: () => [...tools.keys()],
@@ -66,7 +67,7 @@ function loadExtension(): CapturedRuntime {
       tools.set(definition.name, definition);
     },
   };
-  sessionsExtension(pi as ExtensionAPI);
+  await sessionsExtension(pi as ExtensionAPI);
   return runtime;
 }
 
@@ -102,8 +103,8 @@ const session = {
 };
 
 describe("Pi extension", () => {
-  it("registers the bounded discovery and reading tools", () => {
-    const runtime = loadExtension();
+  it("registers the bounded discovery and reading tools", async () => {
+    const runtime = await loadExtension();
     expect(runtime.toolNames().sort()).toEqual([
       "sessions_list",
       "sessions_read",
@@ -121,7 +122,7 @@ describe("Pi extension", () => {
       { name: "claude", available: () => false },
     ]);
 
-    const result = await tool(loadExtension(), "sessions_sources").execute(
+    const result = await tool(await loadExtension(), "sessions_sources").execute(
       "test",
       {},
       undefined,
@@ -141,7 +142,7 @@ describe("Pi extension", () => {
     sessionsMock.list.mockResolvedValue([session, { ...session, id: "session-2" }]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_list").execute(
+    const result = await tool(await loadExtension(), "sessions_list").execute(
       "test",
       { source: " codex ", path: " /tmp/codex ", limit: 1 },
       undefined,
@@ -196,7 +197,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_list").execute(
+    const result = await tool(await loadExtension(), "sessions_list").execute(
       "test",
       { source: "codex" },
       undefined,
@@ -213,7 +214,7 @@ describe("Pi extension", () => {
     sessionsMock.list.mockResolvedValue([{ ...session, messages: [session.messages[1]] }]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_list").execute(
+    const result = await tool(await loadExtension(), "sessions_list").execute(
       "test",
       { source: "gemini" },
       undefined,
@@ -240,7 +241,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_list").execute(
+    const result = await tool(await loadExtension(), "sessions_list").execute(
       "test",
       { source: "codex" },
       undefined,
@@ -267,7 +268,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_list").execute(
+    const result = await tool(await loadExtension(), "sessions_list").execute(
       "test",
       { source: "codex" },
       undefined,
@@ -282,7 +283,7 @@ describe("Pi extension", () => {
   it("exposes message time bounds and returns filtered text and details", async () => {
     sessionsMock.list.mockResolvedValue([session]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
-    const runtime = loadExtension();
+    const runtime = await loadExtension();
     expect(runtime.getTool("sessions_read")).toMatchObject({
       parameters: {
         properties: {
@@ -317,7 +318,7 @@ describe("Pi extension", () => {
     sessionsMock.list.mockResolvedValue([session]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_read").execute(
+    const result = await tool(await loadExtension(), "sessions_read").execute(
       "test",
       { source: "codex", sessionId: "session-1", offset: 1, limit: 1 },
       undefined,
@@ -339,7 +340,7 @@ describe("Pi extension", () => {
   it("pages older sessions instead of dead-ending at the maximum limit", async () => {
     sessionsMock.list.mockResolvedValue([session, { ...session, id: "session-2" }]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
-    const list = tool(loadExtension(), "sessions_list");
+    const list = tool(await loadExtension(), "sessions_list");
     const render = async (params: Readonly<Record<string, unknown>>) =>
       (await list.execute("test", params, undefined, undefined, {} as ExtensionContext)).content
         .map((item) => (item.type === "text" ? item.text : ""))
@@ -366,7 +367,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_list").execute(
+    const result = await tool(await loadExtension(), "sessions_list").execute(
       "test",
       { source: "mastra" },
       undefined,
@@ -381,7 +382,7 @@ describe("Pi extension", () => {
   it("tells the model where the message window sits and how to continue", async () => {
     sessionsMock.list.mockResolvedValue([session]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
-    const read = tool(loadExtension(), "sessions_read");
+    const read = tool(await loadExtension(), "sessions_read");
     const render = async (params: Readonly<Record<string, unknown>>) =>
       (await read.execute("test", params, undefined, undefined, {} as ExtensionContext)).content
         .map((item) => (item.type === "text" ? item.text : ""))
@@ -398,7 +399,7 @@ describe("Pi extension", () => {
     sessionsMock.list.mockResolvedValue([{ ...session, messages: [session.messages[0], broken] }]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_read").execute(
+    const result = await tool(await loadExtension(), "sessions_read").execute(
       "test",
       { source: "codex", sessionId: "session-1" },
       undefined,
@@ -434,7 +435,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_read").execute(
+    const result = await tool(await loadExtension(), "sessions_read").execute(
       "test",
       { source: "claude", sessionId: "session-1" },
       undefined,
@@ -454,7 +455,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_read").execute(
+    const result = await tool(await loadExtension(), "sessions_read").execute(
       "test",
       { source: "codex", sessionId: "session-1" },
       undefined,
@@ -481,7 +482,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_read").execute(
+    const result = await tool(await loadExtension(), "sessions_read").execute(
       "test",
       { source: "codex", sessionId: "session-1" },
       undefined,
@@ -517,7 +518,7 @@ describe("Pi extension", () => {
       },
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
-    const read = tool(loadExtension(), "sessions_read");
+    const read = tool(await loadExtension(), "sessions_read");
 
     const first = await read.execute(
       "test",
@@ -570,7 +571,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_read").execute(
+    const result = await tool(await loadExtension(), "sessions_read").execute(
       "test",
       { source: "codex", sessionId: "session-1", maxChars: 1_001 },
       undefined,
@@ -599,7 +600,7 @@ describe("Pi extension", () => {
     ]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
-    const result = await tool(loadExtension(), "sessions_read").execute(
+    const result = await tool(await loadExtension(), "sessions_read").execute(
       "test",
       { source: "mastra", sessionId: "session-1", maxChars: 1_000 },
       undefined,
@@ -617,7 +618,7 @@ describe("Pi extension", () => {
   it("rejects conflicting and invalid output windows", async () => {
     sessionsMock.list.mockResolvedValue([session]);
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
-    const read = tool(loadExtension(), "sessions_read");
+    const read = tool(await loadExtension(), "sessions_read");
 
     await expect(
       read.execute(
@@ -641,6 +642,9 @@ describe("Pi extension", () => {
         undefined,
         {} as ExtensionContext,
       ),
+    ).rejects.toThrow("Invalid arguments at /maxChars: must be >= 1000");
+    await expect(
+      readTool.execute({ source: "codex", sessionId: "session-1", maxChars: 999 }, {}),
     ).rejects.toThrow("maxChars must be an integer between 1000 and 100000");
   });
 
@@ -649,7 +653,7 @@ describe("Pi extension", () => {
     sessionsMock.create.mockReturnValue({ list: sessionsMock.list, available: () => true });
 
     await expect(
-      tool(loadExtension(), "sessions_read").execute(
+      tool(await loadExtension(), "sessions_read").execute(
         "test",
         { source: "codex", sessionId: "missing" },
         undefined,

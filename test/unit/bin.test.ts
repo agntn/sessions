@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterEach, describe, expect, it } from "vitest";
 
 const execute = promisify(execFile);
@@ -48,14 +50,14 @@ async function mcpLoads(
 }
 
 /**
- * Whether a run loaded the MCP server from the bundle of a directory. obuild names the chunk after
- * `src/mcp.ts`, while the `dist/mcp.mjs` entry only re-exports it.
+ * Whether a run served the tools from the bundle of a directory. The CLI hands `runCli` the list
+ * from the `src/tools.ts` chunk, and `dist/mcp.mjs` never loads on that path.
  * @param loaded - Module URLs of the run.
  * @param directory - Root of the checkout or copy.
- * @returns {boolean} Whether a `dist/_chunks/mcp*.mjs` chunk loaded.
+ * @returns {boolean} Whether a `dist/_chunks/tools*.mjs` chunk loaded.
  */
 function loadedBundle(loaded: readonly string[], directory: string): boolean {
-  const chunks = pathToFileURL(join(directory, "dist/_chunks/mcp")).href;
+  const chunks = pathToFileURL(join(directory, "dist/_chunks/tools")).href;
   return loaded.some((url) => url.startsWith(chunks));
 }
 
@@ -73,14 +75,43 @@ function copyOf(parent: string, entries: readonly string[]): string {
   return copy;
 }
 
+const toolNames = ["sessions_sources", "sessions_list", "sessions_read"];
+
+/**
+ * Starts `mcp` from the built bin of the checkout and connects a client of one protocol era.
+ * @param environment - Extra environment for the server.
+ * @param mode - `legacy` for a 2025 `initialize`, or the revision a 2026 client pins.
+ * @returns {Promise<Client>} The connected client, which the test closes.
+ */
+async function connect(
+  environment: Readonly<Record<string, string>>,
+  mode: "legacy" | Readonly<{ pin: string }>,
+): Promise<Client> {
+  const { SESSIONS_DIST: _inherited, ...inherited } = process.env;
+  const client = new Client(
+    { name: "sessions-test", version: "1.0.0" },
+    { versionNegotiation: { mode } },
+  );
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [join(root, "dist/cli.mjs"), "mcp"],
+      cwd: root,
+      env: { ...(inherited as Record<string, string>), ...environment },
+      stderr: "ignore",
+    }),
+  );
+  return client;
+}
+
 describe.skipIf(!existsSync(join(root, "dist/cli.mjs")))("built bin", () => {
   const source = pathToFileURL(join(root, "src/")).href;
   const bin = join(root, "dist/cli.mjs");
 
   it("serves mcp from src/ inside the checkout", async () => {
     const loaded = await mcpLoads(bin);
-    expect(loaded).toContain(`${source}commands/mcp.ts`);
     expect(loaded).toContain(`${source}mcp.ts`);
+    expect(loaded).toContain(`${source}tools.ts`);
     expect(loadedBundle(loaded, root)).toBe(false);
   });
 
@@ -99,7 +130,7 @@ describe.skipIf(!existsSync(join(root, "dist/cli.mjs")))("built bin", () => {
     expect(loadedBundle(loaded, copy)).toBe(true);
   });
 
-  it("keeps the bundle when src/commands is missing, as in the npm package", async () => {
+  it("keeps the bundle when src/ is missing, as in the npm package", async () => {
     const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
       readonly files: readonly string[];
     };
@@ -109,7 +140,7 @@ describe.skipIf(!existsSync(join(root, "dist/cli.mjs")))("built bin", () => {
     expect(loadedBundle(loaded, copy)).toBe(true);
   });
 
-  it("keeps the bundle in a checkout installed without devDependencies, so without typebox", async () => {
+  it("serves src/ in a checkout installed without devDependencies, which it never imports", async () => {
     const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
       readonly dependencies: Readonly<Record<string, string>>;
     };
@@ -119,9 +150,35 @@ describe.skipIf(!existsSync(join(root, "dist/cli.mjs")))("built bin", () => {
       symlinkSync(join(root, "node_modules", name), join(copy, "node_modules", name));
     }
     const loaded = await mcpLoads(join(copy, "dist/cli.mjs"));
-    expect(loaded.filter((url) => url.startsWith(pathToFileURL(join(copy, "src/")).href))).toEqual(
-      [],
-    );
-    expect(loadedBundle(loaded, copy)).toBe(true);
+    expect(loaded).toContain(pathToFileURL(join(copy, "src/mcp.ts")).href);
+    expect(loadedBundle(loaded, copy)).toBe(false);
+  });
+
+  it.each([
+    { from: "source", env: {} },
+    { from: "bundle", env: { SESSIONS_DIST: "1" } },
+  ])("lets a client pinned to 2026 list the tools, from the $from", async ({ env }) => {
+    const client = await connect(env, { pin: "2026-07-28" });
+    try {
+      expect(client.getNegotiatedProtocolVersion()).toBe("2026-07-28");
+      const subscription = await client.listen({ toolsListChanged: true });
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(toolNames);
+      await subscription.close();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it.each([
+    { from: "source", env: {} },
+    { from: "bundle", env: { SESSIONS_DIST: "1" } },
+  ])("still opens a 2025 client with initialize, from the $from", async ({ env }) => {
+    const client = await connect(env, "legacy");
+    try {
+      expect(client.getNegotiatedProtocolVersion()).toMatch(/^2025-/u);
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(toolNames);
+    } finally {
+      await client.close();
+    }
   });
 });

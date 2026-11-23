@@ -3,16 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { ExtensionAPI as PiAPI } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI as OmpAPI } from "@oh-my-pi/pi-coding-agent";
-import * as TypeBox from "@oh-my-pi/omptype/typebox";
-import { Value } from "typebox/value";
-import type { TSchema } from "typebox";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { validateInput } from "@agntn/tools";
 import piExtension from "../../extensions/pi/sessions.ts";
 import ompExtension from "../../extensions/omp/sessions.ts";
 import { createMcpServer } from "../../src/mcp.ts";
+import { readTool } from "../../src/tools.ts";
 import {
   readSession,
   type ReadParams,
@@ -186,36 +182,48 @@ it("returns the same references through MCP text and both registered extensions"
 
   interface CapturedTool {
     readonly name: string;
-    readonly parameters: unknown;
     readonly execute: (
       id: string,
       args: Parameters<typeof readSession>[0],
+      signal?: undefined,
+      onUpdate?: undefined,
+      ctx?: unknown,
     ) => Promise<ToolResult<unknown>>;
   }
-  const tools = new Map<string, CapturedTool>();
-  const host = {
-    registerTool(tool: CapturedTool) {
-      tools.set(tool.name, tool);
-    },
-    setLabel() {},
-    typebox: TypeBox,
+  const registered = async (extension: (api: never) => Promise<void>) => {
+    const tools = new Map<string, CapturedTool>();
+    await extension({
+      registerTool(tool: CapturedTool) {
+        tools.set(tool.name, tool);
+      },
+      setLabel() {},
+      typebox: { Type: { Unsafe: (schema: unknown) => schema } },
+      pi: { Text: class {} },
+    } as never);
+    return tools.get("sessions_read")!;
   };
-  piExtension(host as unknown as PiAPI);
-  const pi = tools.get("sessions_read")!;
-  const acceptsPi = (args: unknown) => Value.Check(pi.parameters as TSchema, args);
-  ompExtension(host as unknown as OmpAPI);
-  const omp = tools.get("sessions_read")!;
-  const acceptsOmp = (args: unknown) => (omp.parameters as TypeBox.TSchema).safeParse(args).success;
-  for (const accepts of [acceptsPi, acceptsOmp]) {
-    expect(accepts(params)).toBe(true);
-    expect(accepts({ ...params, knownToolResults: [] })).toBe(true);
-    expect(accepts({ ...params, knownToolResults: ["bad"] })).toBe(false);
-    expect(
-      accepts({ ...params, knownToolResults: Array.from({ length: 101 }, () => "0".repeat(64)) }),
-    ).toBe(false);
+  const pi = await registered(piExtension as (api: never) => Promise<void>);
+  const omp = await registered(ompExtension as (api: never) => Promise<void>);
+  const accepts = (args: unknown) => validateInput(readTool, args).ok;
+  expect(accepts(params)).toBe(true);
+  expect(accepts({ ...params, knownToolResults: [] })).toBe(true);
+  expect(accepts({ ...params, knownToolResults: ["bad"] })).toBe(false);
+  expect(
+    accepts({ ...params, knownToolResults: Array.from({ length: 101 }, () => "0".repeat(64)) }),
+  ).toBe(false);
+  for (const tool of [pi, omp]) {
+    await expect(
+      tool.execute(
+        "references",
+        { ...params, knownToolResults: ["bad"] },
+        undefined,
+        undefined,
+        {},
+      ),
+    ).rejects.toThrow("Invalid arguments at /knownToolResults/0");
   }
   for (const tool of [pi, omp]) {
-    expect(await tool.execute("references", params)).toEqual(expected);
+    expect(await tool.execute("references", params, undefined, undefined, {})).toEqual(expected);
   }
 });
 

@@ -30,12 +30,11 @@ describe("packages the host supplies", () => {
     ).toEqual([]);
   });
 
-  it("leave typebox an optional peer with the range Pi asks for", () => {
-    expect(manifest.peerDependencies.typebox).toBe("*");
-    expect(manifest.peerDependenciesMeta.typebox).toEqual({ optional: true });
+  it("leave typebox to @agntn/tools, which carries its own copy", () => {
+    expect(Object.keys(manifest.peerDependencies)).not.toContain("typebox");
   });
 
-  it.skipIf(!existsSync(join(root, "dist")))("leave dist carrying its own typebox", () => {
+  it.skipIf(!existsSync(join(root, "dist")))("leave dist without a typebox import", () => {
     const files = readdirSync(join(root, "dist"), { recursive: true, encoding: "utf8" }).filter(
       (file) => file.endsWith(".mjs"),
     );

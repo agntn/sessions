@@ -1,39 +1,26 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { defineTool, sanitizeText } from "@agntn/tools";
+import { registerOmpTools, type OmpRenderers } from "@agntn/tools/omp";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type * as SessionsTools from "../../src/tool-operations.ts";
+import type * as SessionsTools from "../../src/tools.ts";
 
-const DEFAULT_SESSION_LIMIT = 20;
-const MAX_SESSION_LIMIT = 100;
-const DEFAULT_MESSAGE_LIMIT = 100;
-const MAX_MESSAGE_LIMIT = 500;
-const DEFAULT_OUTPUT_CHARS = 20_000;
-const MIN_OUTPUT_CHARS = 1_000;
-const MAX_OUTPUT_CHARS = 100_000;
+/** Lines of an answer a collapsed row shows before it counts the rest. */
+const COLLAPSED_LINES = 10;
 
-const sourceModulePath = fileURLToPath(new URL("../../src/tool-operations.ts", import.meta.url));
-let toolOperationsPromise: Promise<typeof SessionsTools> | undefined;
+const sourceModulePath = fileURLToPath(new URL("../../src/tools.ts", import.meta.url));
 
 /**
- * Loads the executors shared with MCP and Pi from source in a checkout or from
- * the built bundle in a published package. Both specifiers stay literal: OMP
- * rewrites bare imports such as `@libsql/client` only in modules it can see, so
- * a bundle loaded through a URL fails on them. The package subpath keeps
- * typecheck independent of `dist/`, since tsconfig maps it to source.
+ * Source in a checkout, the bundle in the package. Both specifiers stay literal, since OMP
+ * rewrites bare imports like `@libsql/client` only in modules it can see.
  *
- * @returns {Promise<typeof SessionsTools>} The shared session tool operations.
+ * @returns {Promise<typeof SessionsTools>} The tool definitions.
  */
-function loadToolOperations(): Promise<typeof SessionsTools> {
-  toolOperationsPromise ??= (
-    existsSync(sourceModulePath)
-      ? import("../../src/tool-operations.ts")
-      : import("@agntn/sessions/tool-operations")
-  ).catch((error: unknown) => {
-    toolOperationsPromise = undefined;
-    throw error;
-  }) as Promise<typeof SessionsTools>;
-  return toolOperationsPromise;
+function loadTools(): Promise<typeof SessionsTools> {
+  return (
+    existsSync(sourceModulePath) ? import("../../src/tools.ts") : import("@agntn/sessions/tools")
+  ) as Promise<typeof SessionsTools>;
 }
 
 interface PlaceholderSourceParams {
@@ -134,166 +121,81 @@ function readParams<T extends Readonly<PlaceholderReadParams>>(params: T): T {
   };
 }
 
-export default function sessionsExtension(pi: ExtensionAPI): void {
-  const { Type } = pi.typebox;
-  const sourceOptions = {
-    source: Type.String({ description: "Harness source name, for example codex or claude." }),
-    path: Type.Optional(
-      Type.String({
-        description:
-          "Native data path for the single source: the sessions directory for claude, codex, gemini, grok, omp, openclaw, pi and vibe, the database file for mastra, openbot and opencode.",
-      }),
-    ),
-    paths: Type.Optional(
-      Type.Array(Type.String(), {
-        description: "Override multiple native data paths for sources that support them.",
-      }),
-    ),
-  };
-  const sourcesParameters = Type.Object({});
-  const listParameters = Type.Object({
-    ...sourceOptions,
-    source: Type.Optional(
-      Type.String({
-        description: "One harness. Omit source and sources for all available harnesses.",
-        minLength: 1,
-      }),
-    ),
-    sources: Type.Optional(
-      Type.Array(Type.String({ minLength: 1 }), {
-        description: "Selected harness names. Cannot be combined with source or path overrides.",
-        minItems: 1,
-        maxItems: 11,
-      }),
-    ),
-    since: Type.Optional(
-      Type.String({
-        description: "Inclusive last activity lower bound, ISO timestamp with timezone.",
-        minLength: 1,
-      }),
-    ),
-    until: Type.Optional(
-      Type.String({
-        description: "Inclusive last activity upper bound, ISO timestamp with timezone.",
-        minLength: 1,
-      }),
-    ),
-    lastHours: Type.Optional(
-      Type.Number({
-        description:
-          "Last activity within this many hours before now, for example 24. Cannot be combined with since/until.",
-        exclusiveMinimum: 0,
-      }),
-    ),
-    offset: Type.Optional(
-      Type.Integer({ description: "Zero-based session offset. Defaults to 0.", minimum: 0 }),
-    ),
-    limit: Type.Optional(
-      Type.Integer({
-        description: `Maximum session summaries to return. Defaults to ${DEFAULT_SESSION_LIMIT}.`,
-        minimum: 1,
-        maximum: MAX_SESSION_LIMIT,
-      }),
-    ),
+type Args = Readonly<Record<string, unknown>>;
+
+/** The part of a result the row draws. */
+type Answer = Readonly<{ content: readonly unknown[] }>;
+
+/**
+ * The answer as the row shows it: the adapter's own result line is only a status and a badge.
+ * Transcripts carry terminal output, so escapes go before the text reaches the screen.
+ *
+ * @param result - What the tool returned.
+ * @param expanded - Whether the host shows the whole row.
+ * @returns {string} Every line, or the first few and how many wait behind them.
+ */
+function answerLines(result: Answer, expanded: boolean): string {
+  const lines = result.content.flatMap((part) => {
+    const { text } = part as { text?: unknown };
+    return typeof text === "string" ? sanitizeText(text).split("\n") : [];
   });
-  const readPosition = Type.Object(
-    {
-      message: Type.Integer({ description: "Zero-based message index.", minimum: 0 }),
-      block: Type.Integer({
-        description: "Zero-based block index within that message.",
-        minimum: 0,
-      }),
-      character: Type.Integer({
-        description: "Character offset within the rendered block.",
-        minimum: 0,
-      }),
-    },
-    {
-      additionalProperties: false,
-      description: "Exact continuation position returned by the previous call.",
-    },
+  if (expanded || lines.length <= COLLAPSED_LINES) return lines.join("\n");
+  const hidden = lines.length - COLLAPSED_LINES;
+  return [...lines.slice(0, COLLAPSED_LINES), `... ${hidden} more lines, expand to see them`].join(
+    "\n",
   );
-  const readParameters = Type.Object({
-    ...sourceOptions,
-    sessionId: Type.String({ description: "Exact native session identifier." }),
-    offset: Type.Optional(
-      Type.Integer({ description: "Zero-based message offset. Defaults to 0.", minimum: 0 }),
-    ),
-    position: Type.Optional(readPosition),
-    knownToolResults: Type.Optional(
-      Type.Array(Type.String({ pattern: "^[a-f0-9]{64}$" }), {
-        maxItems: 100,
-        description:
-          "Digests of fully read tool bodies to replace with references. Pass [] to label bodies without omissions; omit for the original transcript. Keep the same list for continuations.",
-      }),
-    ),
-    since: Type.Optional(
-      Type.String({
-        description:
-          "Inclusive message timestamp lower bound, ISO timestamp with timezone. Reuse when continuing.",
-        minLength: 1,
-      }),
-    ),
-    until: Type.Optional(
-      Type.String({
-        description:
-          "Inclusive message timestamp upper bound, ISO timestamp with timezone. Reuse when continuing.",
-        minLength: 1,
-      }),
-    ),
-    limit: Type.Optional(
-      Type.Integer({
-        description: `Maximum matching messages to retain. Defaults to ${DEFAULT_MESSAGE_LIMIT}.`,
-        minimum: 1,
-        maximum: MAX_MESSAGE_LIMIT,
-      }),
-    ),
-    maxChars: Type.Optional(
-      Type.Integer({
-        description: `Maximum response characters, including the continuation notice. Defaults to ${DEFAULT_OUTPUT_CHARS}.`,
-        minimum: MIN_OUTPUT_CHARS,
-        maximum: MAX_OUTPUT_CHARS,
-      }),
-    ),
-  });
+}
 
+/**
+ * The harnesses a listing asked for, as the call line names them.
+ *
+ * @param args - Raw arguments from the model.
+ * @returns {string} One source, the joined list or `all`.
+ */
+function harnessLabel(args: Args): string {
+  const { source, sources } = args;
+  if (typeof source === "string") return source;
+  return Array.isArray(sources) ? sources.map(String).join(", ") : "all";
+}
+
+const describeCall: Record<string, (args: Args) => string> = {
+  sessions_sources: () => "all",
+  sessions_list: harnessLabel,
+  sessions_read: (args) => `${harnessLabel(args)}:${String(args["sessionId"])}`,
+};
+
+/**
+ * Register the session tools with the OMP host; the executors load on the first call.
+ *
+ * @param pi - The OMP extension API.
+ */
+export default async function sessionsExtension(pi: ExtensionAPI): Promise<void> {
   pi.setLabel("Sessions");
-
-  pi.registerTool<typeof sourcesParameters, SessionsTools.SourcesDetails>({
-    name: "sessions_sources",
-    label: "Session Sources",
-    description: "List supported native AI coding harness session sources and local availability.",
-    parameters: sourcesParameters,
-    approval: "read",
-    async execute() {
-      const { listSessionSources } = await loadToolOperations();
-      return listSessionSources();
-    },
-  });
-
-  pi.registerTool<typeof listParameters, SessionsTools.ListDetails>({
-    name: "sessions_list",
-    label: "List Sessions",
-    description:
-      "Discover sessions across selected or all available harnesses. Filter last activity with lastHours or since/until. Each row carries bounded metadata and a snippet of the session's first text, preferring what the user typed. Newest first.",
-    parameters: listParameters,
-    approval: "read",
-    async execute(_toolCallId, params) {
-      const { listSessions } = await loadToolOperations();
-      return listSessions(listParams(params));
-    },
-  });
-
-  pi.registerTool<typeof readParameters, SessionsTools.ReadDetails>({
-    name: "sessions_read",
-    label: "Read Session",
-    description:
-      "Read a bounded message window from one normalized native AI coding harness session by exact id.",
-    parameters: readParameters,
-    approval: "read",
-    async execute(_toolCallId, params) {
-      const { readSession } = await loadToolOperations();
-      return readSession(readParams(params));
-    },
-  });
+  const { sessionsTools } = await loadTools();
+  const [sources, list, read] = sessionsTools;
+  const tools = [
+    sources,
+    defineTool({
+      ...list,
+      execute: (params, context) => list.execute(listParams(params), context),
+    }),
+    defineTool({
+      ...read,
+      execute: (params, context) => read.execute(readParams(params), context),
+    }),
+  ];
+  const { Text } = pi.pi;
+  const renderers = Object.fromEntries(
+    Object.entries(describeCall).map(([name, describe]): [string, OmpRenderers] => [
+      name,
+      {
+        describeCall: describe,
+        renderResult(result, { expanded, isPartial }, theme) {
+          if (isPartial) return new Text(theme.fg("muted", "Reading sessions…"), 0, 0);
+          return new Text(answerLines(result, expanded), 0, 0);
+        },
+      },
+    ]),
+  );
+  registerOmpTools(pi, tools, { Text, renderers });
 }
