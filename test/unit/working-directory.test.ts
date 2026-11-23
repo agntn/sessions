@@ -223,6 +223,8 @@ describe("session lists", () => {
     const second = await listSourceSessions(source, 1, 1, { cwd: CWD });
     expect(second.sessions.map(({ id }) => id)).toEqual(["root"]);
     expect((await listSourceSessions(source, 0, 10, { cwd: "/" })).total).toBe(3);
+    const dotted = await listSourceSessions(source, 0, 10, { cwd: "/work//project/./packages/.." });
+    expect(dotted.total).toBe(2);
   });
 
   it("refuses a blank or relative directory before opening the store", async () => {
@@ -259,8 +261,10 @@ describe("session lists", () => {
     ]);
     const page = await listSourceSessions(source, 1, 1, { cwd: CWD });
     expect(page).toMatchObject({ total: 2, sessions: [{ id: "root", cwd: CWD }] });
-    const windows = await listSourceSessions(source, 0, 10, { cwd: "C:\\work" });
-    expect(windows.sessions.map(({ id }) => id)).toEqual(["windows"]);
+    for (const cwd of ["C:\\work", "C:/work/", "C:/work/./project"]) {
+      const windows = await listSourceSessions(source, 0, 10, { cwd });
+      expect(windows.sessions.map(({ id }) => id)).toEqual(["windows"]);
+    }
   });
 
   it("print the directory in every row and say when a session has none", async () => {

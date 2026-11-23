@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Client } from "@libsql/client";
-import { directoryPrefix } from "../core/cwd.ts";
+import { directoryPrefix, inDirectory } from "../core/cwd.ts";
 import { openDatabase } from "../core/db.ts";
 import { home, osUser } from "../core/env.ts";
 import { INJECTED_PREFIXES } from "../tool-snippet.ts";
@@ -53,6 +53,11 @@ interface ParsedPart {
   readonly role?: Message["role"];
   readonly blocks: Block[];
   readonly botAuthor: boolean;
+}
+
+interface SessionRow {
+  readonly id: unknown;
+  readonly directory: unknown;
 }
 
 interface SummaryRow {
@@ -231,22 +236,26 @@ function reachedSessions(since: number | undefined): {
 }
 
 /**
- * Sessions whose row names the directory or one below it. No LIKE, so `_` and `%` stay literal.
+ * Sessions whose row names the directory or one below it, by the rule every source uses.
+ * @param db - Open OpenCode database.
  * @param cwd - Absolute directory filter.
- * @returns {{ sql: string, args: string[] }} Clause for the part scan and its arguments.
+ * @returns {Promise<{ sql: string, args: string[] }>} Clause for the part scan and its arguments.
  */
-function directorySessions(cwd: string | undefined): {
-  readonly sql: string;
-  readonly args: string[];
-} {
+async function directorySessions(
+  db: Readonly<Client>,
+  cwd: string | undefined,
+): Promise<{ readonly sql: string; readonly args: string[] }> {
   if (cwd === undefined) return { sql: "", args: [] };
   const prefix = directoryPrefix(cwd);
+  const result = await db.execute("SELECT id, directory FROM session");
+  const ids = (result.rows as unknown as readonly SessionRow[]).flatMap(({ id, directory }) =>
+    typeof id === "string" && typeof directory === "string" && inDirectory(directory, prefix)
+      ? [id]
+      : [],
+  );
   return {
-    sql: `AND p.session_id IN (
-      SELECT id FROM session
-      WHERE directory = ? OR substr(directory, 1, length(?) + 1) IN (? || '/', ? || char(92))
-    )`,
-    args: [prefix, prefix, prefix, prefix],
+    sql: "AND p.session_id IN (SELECT value FROM json_each(?))",
+    args: [JSON.stringify(ids)],
   };
 }
 
@@ -346,9 +355,9 @@ export class OpenCodeSource implements Source {
     range?: SessionListFilter,
   ): Promise<SourceSummaryWindow> {
     const reached = reachedSessions(range?.since);
-    const placed = directorySessions(range?.cwd);
     const db = await openDatabase(this.dbPath);
     try {
+      const placed = await directorySessions(db, range?.cwd);
       const result = await db.execute({
         sql: `
           WITH parsed AS (

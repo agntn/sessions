@@ -1,8 +1,11 @@
 /** Working directory filters shared by the summary scan and native projections. */
 
+import { posix, win32 } from "node:path";
+
 const TRAILING_SEPARATORS = /[\\/]+$/;
 /** POSIX, drive or UNC. A relative path would depend on where the reader runs. */
 const ABSOLUTE_PATH = /^(?:\/|\\|[A-Za-z]:[\\/])/;
+const WINDOWS_PATH = /^(?:\\|[A-Za-z]:)/;
 
 /**
  * Refuses a directory filter that isn't an absolute path.
@@ -15,13 +18,34 @@ export function assertDirectory(cwd: string): void {
 }
 
 /**
- * The filter without trailing separators, so `/work/` matches like `/work`.
+ * Whether a path is a drive or UNC path, which compares with backslashes.
+ *
+ * @param cwd - Absolute path.
+ * @returns {boolean} Whether it is Windows style.
+ */
+function isWindowsDirectory(cwd: string): boolean {
+  return WINDOWS_PATH.test(cwd);
+}
+
+/**
+ * One spelling per directory, Windows with `\\` and an upper drive.
+ *
+ * @param cwd - Absolute path.
+ * @returns {string} The normalized path.
+ */
+function normalized(cwd: string): string {
+  if (!isWindowsDirectory(cwd)) return posix.normalize(cwd);
+  return win32.normalize(cwd).replace(/^[a-z]:/, (drive) => drive.toUpperCase());
+}
+
+/**
+ * The filter as a prefix to match, empty for the POSIX root.
  *
  * @param cwd - Absolute directory filter.
- * @returns {string} The prefix to match, empty for the root.
+ * @returns {string} Normalized, without trailing separators.
  */
 export function directoryPrefix(cwd: string): string {
-  return cwd.replace(TRAILING_SEPARATORS, "");
+  return normalized(cwd).replace(TRAILING_SEPARATORS, "");
 }
 
 /**
@@ -32,5 +56,7 @@ export function directoryPrefix(cwd: string): string {
  * @returns {boolean} Whether the session belongs under the prefix.
  */
 export function inDirectory(cwd: string, prefix: string): boolean {
-  return cwd === prefix || cwd.startsWith(`${prefix}/`) || cwd.startsWith(`${prefix}\\`);
+  const path = normalized(cwd);
+  const separator = isWindowsDirectory(path) ? "\\" : "/";
+  return path === prefix || path.startsWith(`${prefix}${separator}`);
 }
