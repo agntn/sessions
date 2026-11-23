@@ -1,5 +1,7 @@
+import { assertDirectory, directoryPrefix, inDirectory } from "./core/cwd.ts";
 import type {
   Message,
+  SessionListFilter,
   Source,
   SourceReadOptions,
   SourceSessionSummary,
@@ -15,15 +17,17 @@ export interface ToolSessionSummary {
   readonly updatedAt: number;
   readonly messageCount: number;
   readonly snippet?: string;
+  /** The first working directory the session records. */
+  readonly cwd?: string;
 }
 
 /**
  * Rejects unbounded windows before opening a native store.
  * @param offset - Original zero-based position.
  * @param limit - Maximum retained records.
- * @param range - Inclusive epoch millisecond bounds.
+ * @param range - Inclusive epoch millisecond bounds, and a directory for listings.
  */
-function validateWindow(offset: number, limit: number, range?: SessionTimeRange): void {
+function validateWindow(offset: number, limit: number, range?: SessionListFilter): void {
   if (!Number.isSafeInteger(offset) || offset < 0) {
     throw new RangeError("offset must be a non-negative safe integer");
   }
@@ -31,6 +35,7 @@ function validateWindow(offset: number, limit: number, range?: SessionTimeRange)
     throw new RangeError("limit must be a positive safe integer");
   }
   validateRange(range ?? {});
+  if (range?.cwd !== undefined) assertDirectory(range.cwd);
 }
 
 /**
@@ -96,16 +101,6 @@ interface SnippetMessage {
   readonly blocks: readonly { readonly type: string; readonly text?: string }[];
 }
 
-interface MutableSummary {
-  readonly id: string;
-  readonly source: string;
-  createdAt: number;
-  updatedAt: number;
-  messageCount: number;
-  userSnippet?: string;
-  fallbackSnippet?: string;
-}
-
 function firstSnippet(message: Readonly<SnippetMessage>): string | undefined {
   for (const block of message.blocks) {
     if (block.type !== "text" || !block.text) continue;
@@ -121,6 +116,11 @@ interface SessionClockMessage {
   readonly sessionUpdatedAt?: number;
 }
 
+/** What a summary reads from each message of its session. */
+interface SummaryMessage extends SnippetMessage, SessionClockMessage {
+  readonly context?: Readonly<Record<string, string>>;
+}
+
 function openedAt(message: SessionClockMessage): number {
   return message.sessionCreatedAt ?? message.timestamp;
 }
@@ -129,15 +129,47 @@ function closedAt(message: SessionClockMessage): number {
   return message.sessionUpdatedAt ?? message.timestamp;
 }
 
-function finishSummary(summary: Readonly<MutableSummary>): ToolSessionSummary {
-  return {
-    id: summary.id,
-    source: summary.source,
-    createdAt: summary.createdAt,
-    updatedAt: summary.updatedAt,
-    messageCount: summary.messageCount,
-    snippet: summary.userSnippet ?? summary.fallbackSnippet,
-  };
+/** One session's summary while its messages stream past. The first recorded directory wins. */
+class SummaryDraft {
+  private readonly id: string;
+  private readonly source: string;
+  private createdAt: number;
+  private updatedAt: number;
+  private messageCount = 0;
+  private userSnippet?: string;
+  private fallbackSnippet?: string;
+  private cwd?: string;
+
+  constructor(first: Readonly<Pick<Message, "source" | "sessionId">> & SessionClockMessage) {
+    this.id = first.sessionId;
+    this.source = first.source;
+    this.createdAt = openedAt(first);
+    this.updatedAt = closedAt(first);
+  }
+
+  add(message: SummaryMessage): void {
+    this.createdAt = Math.min(this.createdAt, openedAt(message));
+    this.updatedAt = Math.max(this.updatedAt, closedAt(message));
+    this.messageCount += 1;
+    this.cwd ??= message.context?.cwd || undefined;
+    if (this.userSnippet) return;
+    const snippet = firstSnippet(message);
+    if (!snippet) return;
+    if (message.role === "user") this.userSnippet = snippet;
+    else this.fallbackSnippet ??= snippet;
+  }
+
+  finish(): ToolSessionSummary {
+    return {
+      id: this.id,
+      source: this.source,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+      messageCount: this.messageCount,
+      snippet: this.userSnippet ?? this.fallbackSnippet,
+      ...(this.cwd ? { cwd: this.cwd } : {}),
+    };
+  }
 }
 
 function projectedSummary(summary: Readonly<SourceSessionSummary>): ToolSessionSummary {
@@ -148,7 +180,21 @@ function projectedSummary(summary: Readonly<SourceSessionSummary>): ToolSessionS
     updatedAt: summary.updatedAt,
     messageCount: summary.messageCount,
     snippet: summary.snippetText ? snippetLine(summary.snippetText) : undefined,
+    ...(summary.cwd ? { cwd: summary.cwd } : {}),
   };
+}
+
+/**
+ * Keeps the sessions a listing asked for, before any window is cut.
+ *
+ * @param summary - One finished summary.
+ * @param filter - Last activity bounds and an optional directory.
+ * @returns {boolean} Whether the summary stays.
+ */
+function kept(summary: Readonly<ToolSessionSummary>, filter?: SessionListFilter): boolean {
+  if (!inTimeRange(summary.updatedAt, filter)) return false;
+  if (filter?.cwd === undefined) return true;
+  return summary.cwd !== undefined && inDirectory(summary.cwd, directoryPrefix(filter.cwd));
 }
 
 function activityOptions(range?: SessionTimeRange): SourceReadOptions | undefined {
@@ -161,14 +207,15 @@ function activityOptions(range?: SessionTimeRange): SourceReadOptions | undefine
  * @param source - Native harness source.
  * @param offset - Session offset, starting at zero.
  * @param limit - Maximum summaries to return.
- * @param range - Optional inclusive last activity bounds.
+ * @param range - Optional inclusive last activity bounds and absolute working directory.
  * @returns {Promise<ToolSummaryWindow>} Bounded summaries and the total session count.
+ * @throws {RangeError} When the window, the bounds or the directory can't select anything.
  */
 export async function listSourceSessions(
   source: Readonly<Source>,
   offset: number,
   limit: number,
-  range?: SessionTimeRange,
+  range?: SessionListFilter,
 ): Promise<ToolSummaryWindow> {
   validateWindow(offset, limit, range);
   if (source.summaryWindow) {
@@ -176,32 +223,19 @@ export async function listSourceSessions(
     return { total: projected.total, sessions: projected.sessions.map(projectedSummary) };
   }
 
-  const summaries = new Map<string, MutableSummary>();
+  const summaries = new Map<string, SummaryDraft>();
   for await (const message of source.read(activityOptions(range))) {
     let summary = summaries.get(message.sessionId);
     if (!summary) {
-      summary = {
-        id: message.sessionId,
-        source: source.name,
-        createdAt: openedAt(message),
-        updatedAt: closedAt(message),
-        messageCount: 0,
-      };
+      summary = new SummaryDraft({ ...message, source: source.name });
       summaries.set(message.sessionId, summary);
     }
-    summary.createdAt = Math.min(summary.createdAt, openedAt(message));
-    summary.updatedAt = Math.max(summary.updatedAt, closedAt(message));
-    summary.messageCount += 1;
-    if (summary.userSnippet) continue;
-    const snippet = firstSnippet(message);
-    if (!snippet) continue;
-    if (message.role === "user") summary.userSnippet = snippet;
-    else summary.fallbackSnippet ??= snippet;
+    summary.add(message);
   }
 
   const sessions = [...summaries.values()]
-    .map(finishSummary)
-    .filter((summary) => inTimeRange(summary.updatedAt, range))
+    .map((summary) => summary.finish())
+    .filter((summary) => kept(summary, range))
     .sort(
       (left, right) =>
         right.updatedAt - left.updatedAt || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),

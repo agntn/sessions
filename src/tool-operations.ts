@@ -10,7 +10,8 @@
  */
 
 import { createHash } from "node:crypto";
-import type { Message, SessionTimeRange } from "./core/types.ts";
+import { assertDirectory } from "./core/cwd.ts";
+import type { Message, SessionListFilter, SessionTimeRange } from "./core/types.ts";
 import { quoted } from "./core/text.ts";
 import {
   DEFAULT_MESSAGE_LIMIT,
@@ -48,6 +49,7 @@ export interface ListDetails {
   sources: string[];
   since?: string;
   until?: string;
+  cwd?: string;
   offset: number;
   total: number;
   sessions: SessionSummary[];
@@ -91,6 +93,7 @@ export interface ListParams {
   since?: string;
   until?: string;
   lastHours?: number;
+  cwd?: string;
   offset?: number;
   limit?: number;
 }
@@ -120,6 +123,7 @@ interface ListParamsInput {
   readonly since?: string;
   readonly until?: string;
   readonly lastHours?: number;
+  readonly cwd?: string;
   readonly offset?: number;
   readonly limit?: number;
 }
@@ -191,8 +195,19 @@ function isoStamp(value: number, fallback: string): string {
   return fallback.length <= MAX_DATE_STAMP_CHARS ? fallback : "unknown";
 }
 
+/**
+ * A directory as one row cell, quoted when a tab or newline would shift the columns.
+ *
+ * @param cwd - The session's working directory, if its source keeps one.
+ * @returns {string} The path, quoted when it hides characters, or `no cwd`.
+ */
+function directoryCell(cwd: string | undefined): string {
+  if (cwd === undefined) return "no cwd";
+  return /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(cwd) ? quoted(cwd) : cwd;
+}
+
 function formatSummary(session: Readonly<SessionSummary>): string {
-  const row = `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}`;
+  const row = `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}\t${directoryCell(session.cwd)}`;
   return session.snippet ? `${row}\t${session.snippet}` : row;
 }
 
@@ -683,6 +698,20 @@ function relativeTimeRange(hours: number): SessionTimeRange {
   return { since };
 }
 
+/**
+ * The time bounds plus the directory, which also keeps an empty match from reading as a bad path.
+ *
+ * @param params - Listing parameters.
+ * @returns {SessionListFilter | undefined} Every filter the listing applies, or none.
+ * @throws {RangeError} When the bounds conflict or `cwd` isn't an absolute path.
+ */
+function listFilter(params: ListParamsInput): SessionListFilter | undefined {
+  const range = sessionTimeRange(params);
+  if (params.cwd === undefined) return range;
+  assertDirectory(params.cwd);
+  return { ...range, cwd: params.cwd };
+}
+
 function sessionTimeRange(params: ListParamsInput): SessionTimeRange | undefined {
   const since = timeBound(params.since, "since");
   const until = timeBound(params.until, "until");
@@ -749,7 +778,7 @@ function listPaging(params: PagingInput): { offset: number; limit: number } {
 async function collectSessions(
   params: ListParamsInput,
   names: readonly string[],
-  range: SessionTimeRange | undefined,
+  range: SessionListFilter | undefined,
   offset: number,
   limit: number,
 ): Promise<{ sessions: SessionSummary[]; total: number }> {
@@ -791,6 +820,7 @@ function listHeader(
       .join(" ");
     header += ` Last activity: ${bounds} (inclusive). Reuse these bounds instead of lastHours when paging.`;
   }
+  if (details.cwd !== undefined) header += ` Working directory: ${quoted(details.cwd)} and below.`;
   return header;
 }
 
@@ -806,24 +836,26 @@ function listText(
     .map((session) => `${includeSource ? `${session.source}\t` : ""}${formatSummary(session)}`)
     .join("\n");
   const notice = sessions.length ? windowNotice("session", offset, sessions.length, total) : "";
-  const header = includeSource || details.since || details.until ? `${listHeader(details)}\n` : "";
+  const filtered = details.since || details.until || details.cwd !== undefined;
+  const header = includeSource || filtered ? `${listHeader(details)}\n` : "";
   return `${header}${sessionWindowText(listed, notice, sessions.length, offset, source, total)}`;
 }
 
-function listedTimeBounds(range?: SessionTimeRange): { since?: string; until?: string } {
+function listedFilter(range?: SessionListFilter): { since?: string; until?: string; cwd?: string } {
   return {
     since: range?.since === undefined ? undefined : new Date(range.since).toISOString(),
     until: range?.until === undefined ? undefined : new Date(range.until).toISOString(),
+    ...(range?.cwd === undefined ? {} : { cwd: range.cwd }),
   };
 }
 
 /**
- * Lists one globally ordered page, optionally limited by last activity.
- * @param params - Harness selection, time bounds, and paging options.
+ * Lists one globally ordered page, optionally limited by last activity and working directory.
+ * @param params - Harness selection, time bounds, directory, and paging options.
  * @returns {Promise<ToolResult<ListDetails>>} Session summaries with their source and time bounds.
  */
 export async function listSessions(params: ListParamsInput): Promise<ToolResult<ListDetails>> {
-  const range = sessionTimeRange(params);
+  const range = listFilter(params);
   const names = selectedSources(params);
   const { offset, limit } = listPaging(params);
   const { sessions, total } = await collectSessions(params, names, range, offset, limit);
@@ -837,7 +869,7 @@ export async function listSessions(params: ListParamsInput): Promise<ToolResult<
     offset,
     total,
     sessions,
-    ...listedTimeBounds(range),
+    ...listedFilter(range),
   };
   return {
     content: [{ type: "text", text: listText(details, params.source === undefined) }],
@@ -888,7 +920,7 @@ export async function readSession(params: ReadParamsInput): Promise<ToolResult<R
   const maxChars = readMaxChars(params.maxChars);
   const window = await readSourceSession(nativeSource, sessionId, position.message, limit, range);
   if (!window.total) throw new Error(`Session not found: ${source}:${quoted(sessionId)}`);
-  const bounds = listedTimeBounds(range);
+  const bounds = listedFilter(range);
   const timeHeader = range
     ? `[Message time: ${JSON.stringify(bounds)} (inclusive). Reuse these bounds when continuing. Positions use original message indices.]\n`
     : "";

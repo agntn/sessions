@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { createClient } from "@libsql/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Message, Source } from "../../src/core/types.ts";
+import { listSourceSessions } from "../../src/tool-reader.ts";
+import { listSessions } from "../../src/tool-operations.ts";
 import { ClaudeSource } from "../../src/sources/claude.ts";
 import { GeminiSource } from "../../src/sources/gemini.ts";
 import { GrokSource } from "../../src/sources/grok.ts";
@@ -182,5 +184,105 @@ describe("context.cwd", () => {
     ]);
 
     expect(await cwds(new OpenBotSource(path))).toEqual([CWD, undefined]);
+  });
+});
+
+/* A Pi transcript with one user line, started in `cwd` when it names one. */
+function piSession(id: string, minute: number, cwd?: string): void {
+  jsonl(join(directory, `${id}.jsonl`), [
+    { type: "session", id, ...(cwd ? { cwd } : {}) },
+    {
+      type: "message",
+      timestamp: `2026-11-01T10:${String(minute).padStart(2, "0")}:00.000Z`,
+      message: { role: "user", content: [{ type: "text", text: id }] },
+    },
+  ]);
+}
+
+describe("session lists", () => {
+  beforeEach(() => {
+    piSession("root", 1, CWD);
+    piSession("nested", 2, `${CWD}/packages/core`);
+    piSession("sibling", 3, `${CWD}-two`);
+    piSession("homeless", 4);
+  });
+
+  it("carry each session's working directory and keep the filter before the window", async () => {
+    const source = new PiSource(directory);
+    const all = await listSourceSessions(source, 0, 10);
+    expect(all.sessions.map(({ id, cwd }) => [id, cwd])).toEqual([
+      ["homeless", undefined],
+      ["sibling", `${CWD}-two`],
+      ["nested", `${CWD}/packages/core`],
+      ["root", CWD],
+    ]);
+
+    const first = await listSourceSessions(source, 0, 1, { cwd: `${CWD}/` });
+    expect(first.total).toBe(2);
+    expect(first.sessions.map(({ id }) => id)).toEqual(["nested"]);
+    const second = await listSourceSessions(source, 1, 1, { cwd: CWD });
+    expect(second.sessions.map(({ id }) => id)).toEqual(["root"]);
+    expect((await listSourceSessions(source, 0, 10, { cwd: "/" })).total).toBe(3);
+  });
+
+  it("refuses a blank or relative directory before opening the store", async () => {
+    const source = new PiSource(directory);
+    for (const cwd of ["", " ", "work/project"]) {
+      await expect(listSourceSessions(source, 0, 1, { cwd })).rejects.toThrow(RangeError);
+    }
+  });
+
+  it("filters OpenCode sessions by their row before LIMIT", async () => {
+    const path = join(directory, "opencode.db");
+    await sqlite(path, [
+      "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT)",
+      "CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT)",
+      "CREATE TABLE part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT)",
+      `INSERT INTO session VALUES ('root', '${CWD}'), ('nested', '${CWD}/src'),
+        ('sibling', '${CWD}-two'), ('windows', 'C:\\work\\project')`,
+      `INSERT INTO message VALUES ('m', '{"role":"user"}')`,
+      `INSERT INTO part VALUES ('root', 'm', 100, '{"type":"text","text":"a"}'),
+        ('nested', 'm', 200, '{"type":"text","text":"b"}'),
+        ('sibling', 'm', 300, '{"type":"text","text":"c"}'),
+        ('orphan', 'm', 400, '{"type":"text","text":"d"}'),
+        ('windows', 'm', 500, '{"type":"text","text":"e"}')`,
+    ]);
+    const source = new OpenCodeSource(path);
+
+    const all = await listSourceSessions(source, 0, 10);
+    expect(all.sessions.map(({ id, cwd }) => [id, cwd])).toEqual([
+      ["windows", "C:\\work\\project"],
+      ["orphan", undefined],
+      ["sibling", `${CWD}-two`],
+      ["nested", `${CWD}/src`],
+      ["root", CWD],
+    ]);
+    const page = await listSourceSessions(source, 1, 1, { cwd: CWD });
+    expect(page).toMatchObject({ total: 2, sessions: [{ id: "root", cwd: CWD }] });
+    const windows = await listSourceSessions(source, 0, 10, { cwd: "C:\\work" });
+    expect(windows.sessions.map(({ id }) => id)).toEqual(["windows"]);
+  });
+
+  it("print the directory in every row and say when a session has none", async () => {
+    const result = await listSessions({ source: "pi", path: directory });
+    expect(result.content[0]?.text.split("\n")).toEqual([
+      "homeless\t1 messages\t2026-11-01T10:04:00.000Z\tno cwd\thomeless",
+      `sibling\t1 messages\t2026-11-01T10:03:00.000Z\t${CWD}-two\tsibling`,
+      `nested\t1 messages\t2026-11-01T10:02:00.000Z\t${CWD}/packages/core\tnested`,
+      `root\t1 messages\t2026-11-01T10:01:00.000Z\t${CWD}\troot`,
+    ]);
+
+    piSession("tabbed", 5, "/work/a\tb");
+    const tabbed = await listSessions({ source: "pi", path: directory, limit: 1 });
+    expect(tabbed.content[0]?.text).toContain('\t"/work/a\\tb"\ttabbed');
+  });
+
+  it("names the filter instead of calling an empty match unreadable", async () => {
+    const result = await listSessions({ source: "pi", path: directory, cwd: "/elsewhere" });
+    expect(result.details).toMatchObject({ total: 0, cwd: "/elsewhere" });
+    expect(result.content[0]?.text).toContain("/elsewhere");
+    await expect(listSessions({ source: "pi", path: directory, cwd: " " })).rejects.toThrow(
+      "cwd must be an absolute path",
+    );
   });
 });

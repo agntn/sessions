@@ -34,6 +34,7 @@ interface PlaceholderSourceParams {
 interface PlaceholderListParams extends PlaceholderSourceParams {
   readonly sources?: readonly string[];
   readonly lastHours?: number;
+  readonly cwd?: string;
 }
 
 interface PlaceholderReadParams extends PlaceholderSourceParams {
@@ -93,6 +94,7 @@ function listParams<T extends Readonly<PlaceholderListParams>>(params: T): T {
     ...harnesses({ ...set, sources: params.sources }),
     since,
     until,
+    cwd: text(params.cwd),
     lastHours: since !== undefined || until !== undefined ? undefined : params.lastHours,
   };
 }
