@@ -214,6 +214,9 @@ describe("session lists", () => {
     expect(page.sessions.map(({ id }) => id)).toEqual(["nested", "root"]);
     const named = await listSourceSessions(source, 0, 10, { cwd: `${CWD}\\other` });
     expect(named.sessions.map(({ id }) => id)).toEqual(["backslash"]);
+    piSession("trailing", 6, `${CWD}\\`);
+    const trailing = await listSourceSessions(source, 0, 10, { cwd: `${CWD}\\` });
+    expect(trailing.sessions.map(({ id }) => id)).toEqual(["trailing"]);
   });
 
   it("carry each session's working directory and keep the filter before the window", async () => {

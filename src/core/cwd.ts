@@ -2,7 +2,6 @@
 
 import { posix, win32 } from "node:path";
 
-const TRAILING_SEPARATORS = /[\\/]+$/;
 /** POSIX, drive or UNC. A relative path would depend on where the reader runs. */
 const ABSOLUTE_PATH = /^(?:\/|\\|[A-Za-z]:[\\/])/;
 const WINDOWS_PATH = /^(?:\\|[A-Za-z]:)/;
@@ -45,7 +44,8 @@ function normalized(cwd: string): string {
  * @returns {string} Normalized, without trailing separators.
  */
 export function directoryPrefix(cwd: string): string {
-  return normalized(cwd).replace(TRAILING_SEPARATORS, "");
+  const path = normalized(cwd);
+  return path.replace(isWindowsDirectory(path) ? /[\\/]+$/ : /\/+$/, "");
 }
 
 /**
