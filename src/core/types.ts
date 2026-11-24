@@ -66,12 +66,20 @@ export interface SourceSessionSummary {
   readonly updatedAt: number;
   readonly messageCount: number;
   readonly snippetText?: string;
+  /** Where the session ran, when the source records it. */
+  readonly cwd?: string;
 }
 
 /** Inclusive epoch millisecond bounds for session activity or message timestamps. */
 export interface SessionTimeRange {
   readonly since?: number;
   readonly until?: number;
+}
+
+/** Which sessions a listing keeps: last activity bounds and, optionally, a working directory. */
+export interface SessionListFilter extends SessionTimeRange {
+  /** Absolute directory a session ran in or below. A session without one never matches. */
+  readonly cwd?: string;
 }
 
 /** A bounded native summary page plus the complete session count. */
@@ -85,9 +93,10 @@ export interface Source {
   readonly name: string;
   available(): boolean;
   read(options?: SourceReadOptions): AsyncGenerator<Message>;
+  /** A native projection that applies every field of `filter` before `offset` and `limit`. */
   summaryWindow?(
     offset: number,
     limit: number,
-    range?: SessionTimeRange,
+    filter?: SessionListFilter,
   ): Promise<SourceSummaryWindow>;
 }

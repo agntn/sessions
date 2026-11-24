@@ -152,7 +152,7 @@ describe("sessions MCP server", () => {
 
     expect(sessionsMock.create).toHaveBeenCalledWith("codex", { path: "/tmp/codex" });
     const listed = text(response.content);
-    expect(listed).toContain("session-1\t1 messages\t1970-01-01T00:00:01.000Z\tfirst");
+    expect(listed).toContain("session-1\t1 messages\t1970-01-01T00:00:01.000Z\tno cwd\tfirst");
     expect(listed).toContain("[Showing sessions 1-1 of 2. Use offset=1 to continue.]");
     // Details never reach an MCP client, so the structured window stays out of the result.
     expect(response.structuredContent).toBeUndefined();

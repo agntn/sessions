@@ -8,6 +8,7 @@ export type {
   Message,
   Source,
   SourceReadOptions,
+  SessionListFilter,
   SourceSessionSummary,
   SourceSummaryWindow,
   SessionTimeRange,

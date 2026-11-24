@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Client } from "@libsql/client";
+import { directoryPrefix, inDirectory } from "../core/cwd.ts";
 import { openDatabase } from "../core/db.ts";
 import { home, osUser } from "../core/env.ts";
 import { INJECTED_PREFIXES } from "../tool-snippet.ts";
@@ -10,9 +11,9 @@ import type {
   Message,
   Participant,
   Source,
+  SessionListFilter,
   SourceReadOptions,
   SourceSummaryWindow,
-  SessionTimeRange,
 } from "../core/types.ts";
 import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
 
@@ -54,12 +55,18 @@ interface ParsedPart {
   readonly botAuthor: boolean;
 }
 
+interface SessionRow {
+  readonly id: unknown;
+  readonly directory: unknown;
+}
+
 interface SummaryRow {
   readonly sid: unknown;
   readonly createdAt: unknown;
   readonly updatedAt: unknown;
   readonly messageCount: unknown;
   readonly snippetText: unknown;
+  readonly cwd: unknown;
   readonly total: unknown;
 }
 
@@ -229,6 +236,30 @@ function reachedSessions(since: number | undefined): {
 }
 
 /**
+ * Sessions whose row names the directory or one below it, by the rule every source uses.
+ * @param db - Open OpenCode database.
+ * @param cwd - Absolute directory filter.
+ * @returns {Promise<{ sql: string, args: string[] }>} Clause for the part scan and its arguments.
+ */
+async function directorySessions(
+  db: Readonly<Client>,
+  cwd: string | undefined,
+): Promise<{ readonly sql: string; readonly args: string[] }> {
+  if (cwd === undefined) return { sql: "", args: [] };
+  const prefix = directoryPrefix(cwd);
+  const result = await db.execute("SELECT id, directory FROM session");
+  const ids = (result.rows as unknown as readonly SessionRow[]).flatMap(({ id, directory }) =>
+    typeof id === "string" && typeof directory === "string" && inDirectory(directory, prefix)
+      ? [id]
+      : [],
+  );
+  return {
+    sql: "AND p.session_id IN (SELECT value FROM json_each(?))",
+    args: [JSON.stringify(ids)],
+  };
+}
+
+/**
  * Finds the kept sessions once. Past half the parts, a plain scan beats the session index.
  * @param db - Open OpenCode database.
  * @param since - Inclusive bound on a session's last part.
@@ -321,11 +352,12 @@ export class OpenCodeSource implements Source {
   async summaryWindow(
     offset: number,
     limit: number,
-    range?: SessionTimeRange,
+    range?: SessionListFilter,
   ): Promise<SourceSummaryWindow> {
     const reached = reachedSessions(range?.since);
     const db = await openDatabase(this.dbPath);
     try {
+      const placed = await directorySessions(db, range?.cwd);
       const result = await db.execute({
         sql: `
           WITH parsed AS (
@@ -345,6 +377,7 @@ export class OpenCodeSource implements Source {
             JOIN message m ON p.message_id = m.id
             WHERE p.time_created BETWEEN -8640000000000000 AND 8640000000000000
               ${reached.sql}
+              ${placed.sql}
           ),
           summaries AS (
             SELECT
@@ -403,6 +436,7 @@ export class OpenCodeSource implements Source {
                 candidate.rowId
               LIMIT 1
             ) AS snippetText,
+            (SELECT directory FROM session WHERE id = paged.sid) AS cwd,
             totals.total
           FROM totals
           LEFT JOIN paged ON TRUE
@@ -410,6 +444,7 @@ export class OpenCodeSource implements Source {
         `,
         args: [
           ...reached.args,
+          ...placed.args,
           range?.since ?? -8640000000000000,
           range?.until ?? 8640000000000000,
           limit,
@@ -429,6 +464,7 @@ export class OpenCodeSource implements Source {
             updatedAt: Number(row.updatedAt),
             messageCount: Number(row.messageCount),
             snippetText: typeof row.snippetText === "string" ? row.snippetText : undefined,
+            ...(typeof row.cwd === "string" && row.cwd ? { cwd: row.cwd } : {}),
           },
         ];
       });

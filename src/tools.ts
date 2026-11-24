@@ -82,14 +82,15 @@ export const listTool = defineTool({
   name: "sessions_list",
   title: "List Sessions",
   description:
-    "Discover sessions across selected or all available harnesses, newest first. Filter last activity with lastHours or since/until. Rows across harnesses include source names. Each row carries the session id, message count, last activity, and a snippet of the session's first text, preferring what the user typed. Triage on the snippet before paying for sessions_read. Page older sessions with offset.",
+    "Discover sessions across selected or all available harnesses, newest first. Filter last activity with lastHours or since/until, and the working directory with cwd. Rows across harnesses include source names. Each row carries the session id, message count, last activity, working directory (no cwd when the source keeps none), and a snippet of the session's first text, preferring what the user typed. Triage on the directory and snippet before paying for sessions_read. Page older sessions with offset.",
   snippet:
     "List recent coding sessions across harnesses in one call, optionally within a time window.",
   guidelines: [
     "Omit source and sources to discover all available harnesses, or choose sources explicitly.",
     "Use path or paths only with a single source. Use lastHours: 24 for the past day.",
     "Sessions come newest first; page with offset and reuse returned since/until instead of lastHours.",
-    "Triage on the snippet column before reading full message bodies.",
+    "Triage on the directory and snippet columns before reading full message bodies.",
+    "Pass cwd to keep sessions that ran in one directory or below it.",
     "Use sessions_read with an exact returned session id to inspect messages.",
   ],
   effect: "read",
@@ -117,6 +118,13 @@ export const listTool = defineTool({
           description:
             "Last activity within this many hours before now, for example 24. Cannot be combined with since/until.",
           exclusiveMinimum: 0,
+        }),
+      ),
+      cwd: Type.Optional(
+        Type.String({
+          description:
+            "Absolute working directory. Keeps sessions that ran in it or below it, applied before offset and limit. A session whose source records no directory never matches.",
+          minLength: 1,
         }),
       ),
       offset: Type.Optional(

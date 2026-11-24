@@ -192,6 +192,7 @@ describe("session listing across harnesses", () => {
     const db = createClient({ url: `file:${path}` });
     try {
       await db.executeMultiple(`
+        CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT);
         CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT);
         CREATE TABLE part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT);
         INSERT INTO message VALUES ('m', '{"role":"user"}');
@@ -378,6 +379,9 @@ describe("session listing across harnesses", () => {
         sessions: [{ id: "same" }, { id: "old" }],
       },
     });
+    await expect(
+      list("omp", { ...blank, source: "pi", sources: ["pi"], cwd: " ", lastHours: 24 }),
+    ).resolves.toMatchObject({ details: { total: 2 } });
     await expect(
       list("omp", { ...blank, source: "claude", sources: ["pi"], lastHours: 24 }),
     ).rejects.toThrow("Use source or sources, not both");

@@ -277,7 +277,7 @@ describe("Pi extension", () => {
     );
     const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
 
-    expect(text).toBe("session-1\t1 messages\t1970-01-01T00:00:01.000Z");
+    expect(text).toBe("session-1\t1 messages\t1970-01-01T00:00:01.000Z\tno cwd");
   });
 
   it("exposes message time bounds and returns filtered text and details", async () => {
@@ -376,7 +376,7 @@ describe("Pi extension", () => {
     );
     const text = result.content.map((item) => (item.type === "text" ? item.text : "")).join("");
 
-    expect(text).toBe("session-1\t2 messages\tunknown\tfirst");
+    expect(text).toBe("session-1\t2 messages\tunknown\tno cwd\tfirst");
   });
 
   it("tells the model where the message window sits and how to continue", async () => {

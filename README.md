@@ -103,11 +103,11 @@ OpenClaw also accepts `paths` for multiple native locations. See the [source reg
 
 Same three read-only tools in MCP, [Pi](https://pi.dev), and [OMP](https://omp.sh):
 
-| Tool               | What you get                                                                             |
-| ------------------ | ---------------------------------------------------------------------------------------- |
-| `sessions_sources` | Supported harnesses and local data availability                                          |
-| `sessions_list`    | A page of session IDs, message counts, last activity, and opening snippets, newest first |
-| `sessions_read`    | A bounded message window from one exact session ID                                       |
+| Tool               | What you get                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| `sessions_sources` | Supported harnesses and local data availability                                             |
+| `sessions_list`    | Session IDs, message counts, last activity, working directories, and snippets, newest first |
+| `sessions_read`    | A bounded message window from one exact session ID                                          |
 
 Want the past day across every available harness? Call `sessions_list` once:
 
@@ -116,6 +116,8 @@ Want the past day across every available harness? Call `sessions_list` once:
 ```
 
 Pick a few with `"sources": ["codex", "pi"]`, or keep using `"source": "claude"` for one. The time filter uses each session's last activity, not its creation date. Snippets prefer the user's first text. Read the interesting conversation, not the whole haystack.
+
+You ran the same prompt in four repos and got four identical snippets. A fine collection of mystery twins. Now each row shows its working directory. Filter by directory with `{ "cwd": "/work/project" }`. It includes subdirectories, but not `/work/project-two`. Sessions without a recorded directory show `no cwd` and never match. Offset and limit apply after filtering, counting only matches.
 
 ### MCP
 
