@@ -67,23 +67,23 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
-    "@agntn/tools": "0.3.2",
-    "@libsql/client": "0.15.15",
-    "@modelcontextprotocol/server": "2.4.0"
+    "@agntn/tools": "catalog:deps",
+    "@libsql/client": "catalog:deps",
+    "@modelcontextprotocol/server": "catalog:deps"
   },
   "devDependencies": {
-    "@agntn/ox": "0.1.0",
-    "@earendil-works/pi-coding-agent": "0.99.2",
-    "@earendil-works/pi-tui": "0.99.2",
-    "@modelcontextprotocol/client": "2.4.0",
-    "@oh-my-pi/pi-coding-agent": "18.20.2",
-    "@types/node": "25.3.5",
-    "obuild": "0.4.45",
-    "oxfmt": "0.79.0",
-    "oxlint": "1.94.0",
-    "oxlint-tsgolint": "7.0.2007",
-    "typescript": "5.9.3",
-    "vitest": "4.1.12"
+    "@agntn/ox": "catalog:dev",
+    "@earendil-works/pi-coding-agent": "catalog:dev",
+    "@earendil-works/pi-tui": "catalog:dev",
+    "@modelcontextprotocol/client": "catalog:dev",
+    "@oh-my-pi/pi-coding-agent": "catalog:dev",
+    "@types/node": "catalog:dev",
+    "obuild": "catalog:dev",
+    "oxfmt": "catalog:dev",
+    "oxlint": "catalog:dev",
+    "oxlint-tsgolint": "catalog:dev",
+    "typescript": "catalog:dev",
+    "vitest": "catalog:dev"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
@@ -104,12 +104,7 @@
   "engines": {
     "node": ">=26"
   },
-  "packageManager": "pnpm@10.30.3",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
+  "packageManager": "pnpm@12.23.0",
   "omp": {
     "extensions": [
       "./extensions/omp/sessions.ts"
