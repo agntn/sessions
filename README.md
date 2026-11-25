@@ -219,7 +219,7 @@ pnpm typecheck  # Check the library and extensions
 pnpm test:run   # Run the fixture and integration tests
 ```
 
-Adding a harness? Start with the [adapter contract](./src/sources/AGENTS.md) and [parser tests](./test/unit). Keep native format quirks in the adapter, not in your caller.
+Adding a harness? Start with the [adapter contract](./CONTRIBUTING.md#adapters) and [parser tests](./test/unit). Keep native format quirks in the adapter, not in your caller.
 
 ## 💛 Thanks
 

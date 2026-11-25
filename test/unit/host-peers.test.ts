@@ -34,6 +34,18 @@ describe("packages the host supplies", () => {
     expect(Object.keys(manifest.peerDependencies)).not.toContain("typebox");
   });
 
+  it("leave src and extensions on the Type from @agntn/tools", () => {
+    const files = ["src", "extensions"].flatMap((dir) =>
+      readdirSync(join(root, dir), { recursive: true, encoding: "utf8" })
+        .filter((file) => file.endsWith(".ts"))
+        .map((file) => join(dir, file)),
+    );
+    expect(files.length).toBeGreaterThan(0);
+    expect(
+      files.filter((file) => typeboxImport.test(readFileSync(join(root, file), "utf8"))),
+    ).toEqual([]);
+  });
+
   it.skipIf(!existsSync(join(root, "dist")))("leave dist without a typebox import", () => {
     const files = readdirSync(join(root, "dist"), { recursive: true, encoding: "utf8" }).filter(
       (file) => file.endsWith(".mjs"),

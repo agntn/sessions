@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -39,6 +39,13 @@ describe("public harness registry", () => {
     expect(has("claude-mem")).toBe(false);
     expect(has("toString")).toBe(false);
     expect(() => create("toString")).toThrow(UnknownSourceError);
+  });
+
+  it("gives every harness its own fixture tests", () => {
+    const missing = sources().filter(
+      (name) => !existsSync(new URL(`${name}-source.test.ts`, import.meta.url)),
+    );
+    expect(missing).toEqual([]);
   });
 
   it("reads sessions from a custom native data path", async () => {
