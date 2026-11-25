@@ -1,6 +1,6 @@
 {
   "name": "@agntn/sessions",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Read normalized AI coding sessions across harnesses.",
   "keywords": [
     "agents",
@@ -53,6 +53,9 @@
       "import": "./dist/tools.mjs"
     }
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "obuild",
     "dev:prepare": "obuild --stub",
@@ -61,8 +64,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.extensions.json",
     "test": "vitest",
     "test:run": "vitest run",
-    "prepack": "pnpm run build",
-    "release": "pnpm test:run && pnpm build && changelogen --release --push"
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@agntn/tools": "0.3.2",
@@ -76,7 +78,6 @@
     "@modelcontextprotocol/client": "2.4.0",
     "@oh-my-pi/pi-coding-agent": "18.20.2",
     "@types/node": "25.3.5",
-    "changelogen": "0.6.2",
     "obuild": "0.4.45",
     "oxfmt": "0.79.0",
     "oxlint": "1.94.0",
