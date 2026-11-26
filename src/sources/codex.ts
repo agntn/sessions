@@ -331,18 +331,29 @@ function jsonSessionInfo(
   return { id, timestamp, timestampSource: Number.isFinite(nativeTimestamp) ? "session" : "file" };
 }
 
+/**
+ * The dated tree plus the flat folder Codex hides archived threads in.
+ *
+ * @param sessionsDir - Directory override.
+ * @returns {readonly string[]} Directories to walk.
+ */
+function sessionDirs(sessionsDir?: string): readonly string[] {
+  if (sessionsDir !== undefined) return [sessionsDir];
+  return [join(home(), ".codex/sessions"), join(home(), ".codex/archived_sessions")];
+}
+
 export class CodexSource implements Source {
   name = "codex";
-  private sessionsDir: string;
+  private sessionsDirs: readonly string[];
   private userName: string;
 
   constructor(sessionsDir?: string) {
-    this.sessionsDir = sessionsDir ?? join(home(), ".codex/sessions");
+    this.sessionsDirs = sessionDirs(sessionsDir);
     this.userName = osUser();
   }
 
   available(): boolean {
-    return existsSync(this.sessionsDir);
+    return this.sessionsDirs.some((dir) => existsSync(dir));
   }
 
   private *readJsonSession(file: SessionFile, sessionId?: string): Generator<Message> {
@@ -392,8 +403,10 @@ export class CodexSource implements Source {
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const sessionId = options?.sessionId || undefined;
     const files: SessionFile[] = [];
-    for (const file of walkSessions(this.sessionsDir, sessionId)) {
-      files.push({ ...file, mtime: statSync(file.path).mtimeMs });
+    for (const dir of this.sessionsDirs) {
+      for (const file of walkSessions(dir, sessionId)) {
+        files.push({ ...file, mtime: statSync(file.path).mtimeMs });
+      }
     }
     files.sort((left, right) => left.mtime - right.mtime);
     const active = activeFiles(files, (file) => sessionIdFromPath(file.path), options?.activeSince);
