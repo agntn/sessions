@@ -1,6 +1,7 @@
 import { assertDirectory, directoryPrefix, inDirectory } from "./core/cwd.ts";
 import type {
   Message,
+  Participant,
   SessionListFilter,
   Source,
   SourceReadOptions,
@@ -19,13 +20,17 @@ export interface ToolSessionSummary {
   readonly snippet?: string;
   /** The first working directory the session records. */
   readonly cwd?: string;
+  /** The agent the session belongs to, when the source records one. */
+  readonly owner?: Readonly<Participant>;
+  /** The native session title, when the source keeps one. */
+  readonly title?: string;
 }
 
 /**
  * Rejects unbounded windows before opening a native store.
  * @param offset - Original zero-based position.
  * @param limit - Maximum retained records.
- * @param range - Inclusive epoch millisecond bounds, and a directory for listings.
+ * @param range - Inclusive epoch millisecond bounds, and a directory and owner for listings.
  */
 function validateWindow(offset: number, limit: number, range?: SessionListFilter): void {
   if (!Number.isSafeInteger(offset) || offset < 0) {
@@ -35,7 +40,16 @@ function validateWindow(offset: number, limit: number, range?: SessionListFilter
     throw new RangeError("limit must be a positive safe integer");
   }
   validateRange(range ?? {});
-  if (range?.cwd !== undefined) assertDirectory(range.cwd);
+  if (range) validateFilter(range);
+}
+
+/**
+ * Refuses a directory or owner that can't select anything.
+ * @param filter - Listing filter.
+ */
+function validateFilter(filter: Readonly<SessionListFilter>): void {
+  if (filter.cwd !== undefined) assertDirectory(filter.cwd);
+  if (filter.owner?.trim() === "") throw new RangeError("owner must not be blank");
 }
 
 /**
@@ -119,6 +133,7 @@ interface SessionClockMessage {
 /** What a summary reads from each message of its session. */
 interface SummaryMessage extends SnippetMessage, SessionClockMessage {
   readonly context?: Readonly<Record<string, string>>;
+  readonly owner?: Readonly<Participant>;
 }
 
 function openedAt(message: SessionClockMessage): number {
@@ -129,7 +144,7 @@ function closedAt(message: SessionClockMessage): number {
   return message.sessionUpdatedAt ?? message.timestamp;
 }
 
-/** One session's summary while its messages stream past. The first recorded directory wins. */
+/** One session's summary while its messages stream past. First directory, owner and title win. */
 class SummaryDraft {
   private readonly id: string;
   private readonly source: string;
@@ -139,6 +154,8 @@ class SummaryDraft {
   private userSnippet?: string;
   private fallbackSnippet?: string;
   private cwd?: string;
+  private owner?: Readonly<Participant>;
+  private title?: string;
 
   constructor(first: Readonly<Pick<Message, "source" | "sessionId">> & SessionClockMessage) {
     this.id = first.sessionId;
@@ -151,12 +168,18 @@ class SummaryDraft {
     this.createdAt = Math.min(this.createdAt, openedAt(message));
     this.updatedAt = Math.max(this.updatedAt, closedAt(message));
     this.messageCount += 1;
-    this.cwd ??= message.context?.cwd || undefined;
+    this.label(message);
     if (this.userSnippet) return;
     const snippet = firstSnippet(message);
     if (!snippet) return;
     if (message.role === "user") this.userSnippet = snippet;
     else this.fallbackSnippet ??= snippet;
+  }
+
+  private label(message: SummaryMessage): void {
+    this.cwd ??= message.context?.cwd || undefined;
+    this.title ??= message.context?.title || undefined;
+    this.owner ??= message.owner;
   }
 
   finish(): ToolSessionSummary {
@@ -168,6 +191,8 @@ class SummaryDraft {
       messageCount: this.messageCount,
       snippet: this.userSnippet ?? this.fallbackSnippet,
       ...(this.cwd ? { cwd: this.cwd } : {}),
+      ...(this.owner ? { owner: this.owner } : {}),
+      ...(this.title ? { title: this.title } : {}),
     };
   }
 }
@@ -188,11 +213,12 @@ function projectedSummary(summary: Readonly<SourceSessionSummary>): ToolSessionS
  * Keeps the sessions a listing asked for, before any window is cut.
  *
  * @param summary - One finished summary.
- * @param filter - Last activity bounds and an optional directory.
+ * @param filter - Last activity bounds, an optional directory and an optional owner id.
  * @returns {boolean} Whether the summary stays.
  */
 function kept(summary: Readonly<ToolSessionSummary>, filter?: SessionListFilter): boolean {
   if (!inTimeRange(summary.updatedAt, filter)) return false;
+  if (filter?.owner !== undefined && summary.owner?.platformId !== filter.owner) return false;
   if (filter?.cwd === undefined) return true;
   return summary.cwd !== undefined && inDirectory(summary.cwd, directoryPrefix(filter.cwd));
 }
@@ -207,7 +233,7 @@ function activityOptions(range?: SessionTimeRange): SourceReadOptions | undefine
  * @param source - Native harness source.
  * @param offset - Session offset, starting at zero.
  * @param limit - Maximum summaries to return.
- * @param range - Optional inclusive last activity bounds and absolute working directory.
+ * @param range - Optional inclusive last activity bounds, absolute working directory and owner id.
  * @returns {Promise<ToolSummaryWindow>} Bounded summaries and the total session count.
  * @throws {RangeError} When the window, the bounds or the directory can't select anything.
  */

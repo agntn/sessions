@@ -82,7 +82,7 @@ export const listTool = defineTool({
   name: "sessions_list",
   title: "List Sessions",
   description:
-    "Discover sessions across selected or all available harnesses, newest first. Filter last activity with lastHours or since/until, and the working directory with cwd. Rows across harnesses include source names. Each row carries the session id, message count, last activity, working directory (no cwd when the source keeps none), and a snippet of the session's first text, preferring what the user typed. Triage on the directory and snippet before paying for sessions_read. Page older sessions with offset.",
+    "Discover sessions across selected or all available harnesses, newest first. Filter last activity with lastHours or since/until, the working directory with cwd, and the owning agent with owner. Rows across harnesses include source names. Each row carries the session id, message count, last activity, working directory (no cwd when the source keeps none), an owner= cell with the owning agent's id and name where the source records one (OpenBot agent threads; no cell means none was recorded) plus any title that adds to it, and a snippet of the session's first text, preferring what the user typed. Triage on the directory, owner and snippet before paying for sessions_read. Page older sessions with offset.",
   snippet:
     "List recent coding sessions across harnesses in one call, optionally within a time window.",
   guidelines: [
@@ -91,6 +91,7 @@ export const listTool = defineTool({
     "Sessions come newest first; page with offset and reuse returned since/until instead of lastHours.",
     "Triage on the directory and snippet columns before reading full message bodies.",
     "Pass cwd to keep sessions that ran in one directory or below it.",
+    "Pass owner with an id from an owner= cell to keep that agent's sessions.",
     "Use sessions_read with an exact returned session id to inspect messages.",
   ],
   effect: "read",
@@ -124,6 +125,13 @@ export const listTool = defineTool({
         Type.String({
           description:
             "Absolute working directory. Keeps sessions that ran in it or below it, applied before offset and limit. A session whose source records no directory never matches.",
+          minLength: 1,
+        }),
+      ),
+      owner: Type.Optional(
+        Type.String({
+          description:
+            "Stable owner id, as an owner= cell prints it, such as an OpenBot agent id. Applied before offset and limit. A session whose source records no owner never matches.",
           minLength: 1,
         }),
       ),

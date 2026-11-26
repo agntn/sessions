@@ -352,7 +352,23 @@ export class OpenCodeSource implements Source {
     }
   }
 
-  async summaryWindow(
+  /**
+   * OpenCode records no session owner, so an owner filter matches nothing.
+   * @param offset - Session offset, starting at zero.
+   * @param limit - Maximum summaries to return.
+   * @param range - Every filter the listing applies.
+   * @returns {Promise<SourceSummaryWindow>} One page and the total.
+   */
+  summaryWindow(
+    offset: number,
+    limit: number,
+    range?: SessionListFilter,
+  ): Promise<SourceSummaryWindow> {
+    if (range?.owner !== undefined) return Promise.resolve({ total: 0, sessions: [] });
+    return this.projectedWindow(offset, limit, range);
+  }
+
+  private async projectedWindow(
     offset: number,
     limit: number,
     range?: SessionListFilter,
