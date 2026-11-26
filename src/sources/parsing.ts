@@ -2,6 +2,7 @@ import { createReadStream } from "node:fs";
 import { pipeline, type Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { createZstdDecompress } from "node:zlib";
+import type { Message } from "../core/types.ts";
 
 /**
  * Parses untrusted JSON without leaking `any` into adapter code.
@@ -35,6 +36,25 @@ export function scalarText(value: unknown): string | undefined {
     return String(value);
   }
   return undefined;
+}
+
+/**
+ * A reply's model as the harness wrote it. Other roles get none.
+ *
+ * @param role - Normalized role of the message.
+ * @param native - Native fields.
+ * @param native.id - Native model identifier.
+ * @param native.provider - Native provider name.
+ * @returns {Pick<Message, "model">} `model`, or nothing.
+ */
+export function modelOf(
+  role: Message["role"],
+  { id, provider }: { readonly id: unknown; readonly provider?: unknown },
+): Pick<Message, "model"> {
+  if (role !== "assistant" || typeof id !== "string" || !id.trim()) return {};
+  return {
+    model: typeof provider === "string" && provider.trim() ? { id, provider } : { id },
+  };
 }
 
 /**

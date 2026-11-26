@@ -29,6 +29,13 @@ export interface Participant {
   isBot?: boolean;
 }
 
+/** The model a harness recorded on one assistant message, kept exactly as written. */
+export interface Model {
+  id: string;
+  /** Present only when the harness stores it next to the model. */
+  provider?: string;
+}
+
 /** A normalized message read from a native harness session. */
 export interface Message {
   source: string;
@@ -46,6 +53,8 @@ export interface Message {
   context?: Record<string, string>;
   author?: Participant;
   channel?: Channel;
+  /** Absent when the harness recorded none. Never guessed. */
+  model?: Model;
 }
 
 /** Optional native filter for adapters that can avoid scanning unrelated sessions. */

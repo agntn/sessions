@@ -10,7 +10,7 @@ import type {
   SourceReadOptions,
 } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
-import { isRecord, jsonlLines, parseJson, scalarText } from "./parsing.ts";
+import { isRecord, jsonlLines, modelOf, parseJson, scalarText } from "./parsing.ts";
 
 interface SessionFile {
   readonly path: string;
@@ -104,6 +104,17 @@ function* walkJsonl(dir: string, sessionId?: string): Generator<string> {
   }
 }
 
+/**
+ * A reply's model, minus the `<synthetic>` Claude Code stamps on records no model wrote.
+ *
+ * @param role - Normalized role of the message.
+ * @param model - Native `message.model`.
+ * @returns {Pick<Message, "model">} `model`, or nothing.
+ */
+function replyModel(role: Message["role"], model: unknown): Pick<Message, "model"> {
+  return model === "<synthetic>" ? {} : modelOf(role, { id: model });
+}
+
 function nativeRole(type: unknown): Message["role"] | undefined {
   if (type === "assistant") return "assistant";
   if (type === "user" || type === "human") return "user";
@@ -147,6 +158,7 @@ export class ClaudeSource implements Source {
       blocks,
       channel: this.channel,
       author: role === "user" ? this.user : { platform: "cli", name: "claude-code", isBot: true },
+      ...replyModel(role, entry.message.model),
       ...(transcript.cwd ? { context: { cwd: transcript.cwd } } : {}),
     };
   }

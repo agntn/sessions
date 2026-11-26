@@ -4,7 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Participant, Source, SourceReadOptions } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
-import { isRecord, jsonlLines, parseJsonRecord, scalarText } from "./parsing.ts";
+import { isRecord, jsonlLines, modelOf, parseJsonRecord, scalarText } from "./parsing.ts";
 
 interface SessionFile {
   readonly path: string;
@@ -226,6 +226,7 @@ export class PiSource implements Source {
       blocks,
       channel: { platform: "cli", name: this.name },
       author: role === "user" ? this.user : { platform: "cli", name: this.name, isBot: true },
+      ...modelOf(role, { id: entry.message.model, provider: entry.message.provider }),
       ...(transcript.cwd ? { context: { cwd: transcript.cwd } } : {}),
     };
   }

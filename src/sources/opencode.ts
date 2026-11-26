@@ -15,7 +15,7 @@ import type {
   SourceReadOptions,
   SourceSummaryWindow,
 } from "../core/types.ts";
-import { isRecord, parseJsonRecord, scalarText } from "./parsing.ts";
+import { isRecord, modelOf, parseJsonRecord, scalarText } from "./parsing.ts";
 
 // Large window keeps keyset pagination bounded without truncating native payloads.
 const WINDOW = 5000;
@@ -36,6 +36,8 @@ interface PartRow {
   readonly sid: string;
   readonly rid: number;
   readonly cwd?: unknown;
+  readonly model?: unknown;
+  readonly provider?: unknown;
 }
 
 /** Which sessions an `activeSince` read keeps. */
@@ -331,6 +333,7 @@ export class OpenCodeSource implements Source {
       blocks: part.blocks,
       channel: this.channel,
       author,
+      ...modelOf(role, { id: row.model, provider: row.provider }),
       ...contextOf(row),
     };
   }
@@ -488,6 +491,8 @@ export class OpenCodeSource implements Source {
     SELECT
       p.data as pdata,
       json_extract(m.data, '$.role') as role,
+      json_extract(m.data, '$.modelID') as model,
+      json_extract(m.data, '$.providerID') as provider,
       p.time_created as tc,
       p.session_id as sid,
       p.rowid as rid,

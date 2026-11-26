@@ -6,6 +6,7 @@ export type {
   Block,
   BlockType,
   Message,
+  Model,
   Source,
   SourceReadOptions,
   SessionListFilter,

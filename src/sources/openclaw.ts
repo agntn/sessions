@@ -9,7 +9,7 @@ import type {
   Source,
   SourceReadOptions,
 } from "../core/types.ts";
-import { isRecord, jsonlLines, parseJsonRecord, scalarText } from "./parsing.ts";
+import { isRecord, jsonlLines, modelOf, parseJsonRecord, scalarText } from "./parsing.ts";
 
 const RE_DISCORD_DM = /^\[Discord (\S+) user id:(\d+)/;
 const RE_DISCORD_GUILD = /^\[Discord Guild #(\S+) channel id:(\d+)[^\]]*\] (.+?)(?:: | \()/;
@@ -263,6 +263,7 @@ export class OpenClawSource implements Source {
         context,
         author: role === "user" ? authorFromContext(context) : undefined,
         channel: channelFromContext(nextSessionContext),
+        ...modelOf(role, { id: entry.message.model, provider: entry.message.provider }),
       },
     };
   }
