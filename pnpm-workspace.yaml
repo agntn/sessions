@@ -9,7 +9,7 @@ minimumReleaseAgeExclude:
 
 catalogs:
   deps:
-    "@agntn/tools": 0.3.2
+    "@agntn/tools": 0.4.0
     "@libsql/client": 0.15.15
     "@modelcontextprotocol/server": 2.4.0
   dev:
