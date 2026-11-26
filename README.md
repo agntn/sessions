@@ -5,7 +5,7 @@
 [![license](https://npmx.dev/api/registry/badge/license/@agntn/sessions)](https://npmx.dev/package/@agntn/sessions)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/agntn/sessions)
 
-📚 Read conversations from eleven AI coding harnesses through one TypeScript API. Your agent can read them too.
+📚 Read conversations from twelve AI coding harnesses through one TypeScript API. Your agent can read them too.
 
 ## Why?
 
@@ -13,12 +13,12 @@ The conversation you need is in another harness. Of course it is. `@agntn/sessio
 
 ## ✨ Features
 
-- 🧩 **Eleven harnesses, one shape.** Stop juggling eleven session formats.
+- 🧩 **Twelve harnesses, one shape.** Stop juggling twelve session formats.
 - 🤖 **Agents included.** Three read-only tools, written once and wired into five hosts.
 - 📖 **Bounded reads.** Continue where you left off, even in the middle of a block.
 - 📁 **Directory filter.** Match a working directory and everything below it with `cwd`.
 - 🚦 **Honest errors.** Tool results keep the harness's own `isError`. No flag means unknown, not success.
-- 🛑 **Visible stops.** A Pi, OMP or Vibe turn that ended early says so: `[stop error] Connection error.`
+- 🛑 **Visible stops.** A Pi, OMP, Vibe or Hermes turn that ended early says so: `[stop error] Connection error.`
 - 🧾 **No paying twice.** `knownToolResults` swaps output you already read for digest references.
 
 ## 📦 Install
@@ -90,6 +90,7 @@ More in the [public exports](./src/index.ts), [window types](./src/tool-reader.t
 | Codex        | `codex`     |
 | Gemini CLI   | `gemini`    |
 | Grok         | `grok`      |
+| Hermes Agent | `hermes`    |
 | Mastra       | `mastra`    |
 | Mistral Vibe | `vibe`      |
 | OMP          | `omp`       |
