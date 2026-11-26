@@ -201,6 +201,45 @@ describe("PiSource", () => {
     expect((await texts()).sort()).toEqual(["nested run", "sibling secret", "wanted turn"]);
   });
 
+  it("skips sessions whose header names another directory", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
+    const transcript = (id: string, cwd: string | undefined, text: string): string =>
+      [
+        { type: "session", version: 3, id, timestamp: "2026-11-26T10:00:00.000Z", cwd },
+        {
+          type: "message",
+          id: "m1",
+          timestamp: "2026-11-26T10:00:01.000Z",
+          message: { role: "user", content: [{ type: "text", text }] },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n");
+    const write = (dir: string, name: string, content: string): void => {
+      mkdirSync(join(directory ?? "", dir), { recursive: true });
+      writeFileSync(join(directory ?? "", dir, name), content);
+    };
+    write("--work-app--", "a_here.jsonl", transcript("here", "/work/app", "here"));
+    write("--work-app--", "b_below.jsonl", transcript("below", "/work/app/web", "below"));
+    write("--work-app-two--", "c_sibling.jsonl", transcript("sibling", "/work/app-two", "sibling"));
+    write(
+      "--work-app--/d_parent/run-0",
+      "e_moved.jsonl",
+      transcript("moved", "/elsewhere", "moved"),
+    );
+    write("--other--", "f_bare.jsonl", transcript("bare", undefined, "no directory"));
+    const source = new PiSource(directory);
+    const texts = async (cwd?: string): Promise<string[]> => {
+      const found: string[] = [];
+      for await (const message of source.read({ cwd })) found.push(message.blocks[0]?.text ?? "");
+      return found.sort();
+    };
+
+    expect(await texts("/work/app")).toEqual(["below", "here", "no directory"]);
+    expect(await texts("/elsewhere/")).toEqual(["moved", "no directory"]);
+    expect(await texts()).toHaveLength(5);
+  });
+
   it("reads a project session by the header id when the file name carries another", async () => {
     directory = mkdtempSync(join(tmpdir(), "sessions-pi-"));
     const project = join(directory, "--work--");

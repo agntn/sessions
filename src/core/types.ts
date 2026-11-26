@@ -67,6 +67,8 @@ export interface SourceReadOptions {
    * session it can prove ended earlier, but never a single message of a session it reads.
    */
   readonly activeSince?: number;
+  /** Absolute directory a listing keeps. Same deal: only whole sessions proven elsewhere go. */
+  readonly cwd?: string;
 }
 
 /** One session summary projected without retaining its message payloads. */

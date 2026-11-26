@@ -94,6 +94,16 @@ describe("tool session reader", () => {
     expect(source.readOptions).toBeUndefined();
   });
 
+  it("hands the listing directory and activity bound to the source", async () => {
+    const source = new FixtureSource();
+    source.messages.push({ ...message("here", "user", 5, "hi"), context: { cwd: "/work/app" } });
+
+    const result = await listSourceSessions(source, 0, 10, { since: 1, cwd: "/work/app" });
+
+    expect(source.readOptions).toEqual({ activeSince: 1, cwd: "/work/app" });
+    expect(result.sessions.map((session) => session.id)).toEqual(["here"]);
+  });
+
   it("excludes invalid timestamps only for filtered reads", async () => {
     const source = new FixtureSource();
     source.messages.push(
