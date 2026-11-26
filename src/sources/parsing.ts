@@ -1,5 +1,7 @@
 import { createReadStream } from "node:fs";
+import { pipeline, type Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
+import { createZstdDecompress } from "node:zlib";
 
 /**
  * Parses untrusted JSON without leaking `any` into adapter code.
@@ -53,12 +55,15 @@ export function parseJsonRecord(text: string): Readonly<Record<string, unknown>>
 /**
  * Streams JSONL split on `\n` alone, since readline also cuts at the U+2028 JSON leaves raw.
  *
- * @param path - JSONL file to read.
+ * @param path - JSONL file to read, zstd compressed when it ends in `.zst`.
  * @param highWaterMark - Smaller reads for a caller that may stop after the header.
  * @yields {string} Each line without its `\n`; an empty last line is skipped.
  */
 export async function* jsonlLines(path: string, highWaterMark?: number): AsyncGenerator<string> {
-  const input = createReadStream(path, highWaterMark === undefined ? {} : { highWaterMark });
+  const file = createReadStream(path, highWaterMark === undefined ? {} : { highWaterMark });
+  const input: Readable = path.endsWith(".zst")
+    ? pipeline(file, createZstdDecompress(), () => {})
+    : file;
   const decoder = new StringDecoder("utf8");
   let pending = "";
   try {

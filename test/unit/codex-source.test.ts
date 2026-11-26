@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { zstdCompressSync } from "node:zlib";
 import { CodexSource } from "../../src/sources/codex.ts";
 import type { Message, SourceReadOptions } from "../../src/core/types.ts";
 
@@ -503,6 +504,45 @@ describe("CodexSource JSONL", () => {
     const msgs = await collect(source, { sessionId: "wanted" });
     expect(msgs).toHaveLength(1);
     expect(msgs[0].sessionId).toBe("wanted");
+  });
+
+  it("reads a rollout Codex compressed", async () => {
+    const lines = [
+      { type: "session_meta", payload: { cwd: "/home/user/project" } },
+      {
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "user_message", message: "still here" },
+      },
+    ];
+    const text = lines.map((l) => JSON.stringify(l)).join("\n");
+    writeFileSync(
+      join(tempDir, "rollout-2026-03-10T10-00-00-cold.jsonl.zst"),
+      zstdCompressSync(text),
+    );
+    const msgs = await collect(new CodexSource(tempDir), { sessionId: "cold" });
+
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].sessionId).toBe("cold");
+    expect(msgs[0].blocks).toEqual([{ type: "text", text: "still here" }]);
+    expect(msgs[0].context).toEqual({ cwd: "/home/user/project" });
+  });
+
+  it("prefers the plain rollout over its compressed copy", async () => {
+    const line = (message: string): string =>
+      JSON.stringify({
+        type: "event_msg",
+        timestamp: "2026-03-10T10:00:00Z",
+        payload: { type: "user_message", message },
+      });
+    writeFileSync(join(tempDir, "rollout-2026-03-10T10-00-00-warm.jsonl"), line("plain"));
+    writeFileSync(
+      join(tempDir, "rollout-2026-03-10T10-00-00-warm.jsonl.zst"),
+      zstdCompressSync(line("stale")),
+    );
+    const msgs = await collect(new CodexSource(tempDir));
+
+    expect(msgs.map((m) => m.blocks[0].text)).toEqual(["plain"]);
   });
 
   it("falls back to full filename for non-rollout files", async () => {
