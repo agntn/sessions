@@ -169,6 +169,12 @@ function messageContext(
   };
 }
 
+/**
+ * The Discord sender behind a user message. Replies inherit its context, not its name.
+ *
+ * @param context - Context of a user message.
+ * @returns {Participant | undefined} The sender, when the header named one.
+ */
 function authorFromContext(context: StringContext | undefined): Participant | undefined {
   const username = context?.username;
   if (!username) return undefined;
@@ -255,7 +261,7 @@ export class OpenClawSource implements Source {
         date: new Date(time.timestamp).toISOString().split("T")[0],
         blocks,
         context,
-        author: authorFromContext(context),
+        author: role === "user" ? authorFromContext(context) : undefined,
         channel: channelFromContext(nextSessionContext),
       },
     };
