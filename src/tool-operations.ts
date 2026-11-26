@@ -11,7 +11,7 @@
 
 import { createHash } from "node:crypto";
 import { assertDirectory } from "./core/cwd.ts";
-import type { Message, SessionListFilter, SessionTimeRange } from "./core/types.ts";
+import type { Message, Participant, SessionListFilter, SessionTimeRange } from "./core/types.ts";
 import { quoted } from "./core/text.ts";
 import {
   DEFAULT_MESSAGE_LIMIT,
@@ -156,6 +156,7 @@ interface RenderableMessage {
   readonly date: string;
   readonly role: "user" | "assistant" | "tool";
   readonly blocks: readonly RenderableBlock[];
+  readonly author?: Readonly<Pick<Participant, "platform" | "name">>;
 }
 
 interface PagingInput {
@@ -173,6 +174,7 @@ export {
   MIN_OUTPUT_CHARS,
 } from "./limits.ts";
 const MAX_DATE_STAMP_CHARS = 64;
+const MAX_AUTHOR_CHARS = 64;
 
 function optionsFrom(params: SourceParamsInput): SourceOptions | undefined {
   const path = params.path?.trim();
@@ -204,6 +206,21 @@ function isoStamp(value: number, fallback: string): string {
 function directoryCell(cwd: string | undefined): string {
   if (cwd === undefined) return "no cwd";
   return /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(cwd) ? quoted(cwd) : cwd;
+}
+
+/**
+ * Names the speaker a channel recorded, capped so the header always fits. CLI authors add nothing.
+ *
+ * @param message - Message whose header is being built.
+ * @returns {string} A leading space and the name, or nothing.
+ */
+function authorLabel(message: RenderableMessage): string {
+  const author = message.author;
+  if (!author?.name || author.platform === "cli") return "";
+  let end = Math.min(author.name.length, MAX_AUTHOR_CHARS);
+  if (splitsSurrogatePair(author.name, end)) end -= 1;
+  const name = end < author.name.length ? `${author.name.slice(0, end)}…` : author.name;
+  return ` ${/[\s"\p{Cc}\p{Cf}]/u.test(name) ? quoted(name) : name}`;
 }
 
 function formatSummary(session: Readonly<SessionSummary>): string {
@@ -359,7 +376,7 @@ class RenderBuffer {
       message.timestampSource === "file" || message.timestampSource === "session"
         ? `; inferred from ${message.timestampSource}`
         : "";
-    const header = `[${isoStamp(message.timestamp, message.date)}${inferred}] ${message.role}\n`;
+    const header = `[${isoStamp(message.timestamp, message.date)}${inferred}] ${message.role}${authorLabel(message)}\n`;
     if (!this.append(`${prefix}${header}`)) return { ...position };
     if (message.blocks.length === 0) return undefined;
     if (position.block >= message.blocks.length) {
