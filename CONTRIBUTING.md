@@ -28,7 +28,7 @@ Open libSQL databases through `openDatabase()` from `src/core/db.ts`. A static `
 
 ## Agent tools
 
-Declare each tool once in `src/tools.ts`, using `defineTool` from `@agntn/tools`. Put executors in `src/tool-operations.ts`. MCP, Pi, OMP and the CLI take that list through the adapters. No surface redeclares a schema or reimplements an operation.
+Declare each tool once in `src/tools.ts`, using `defineTool` from `@agntn/tools`. Put executors in `src/tool-operations.ts`. MCP, Pi, OMP, the AI SDK and the CLI take that list through the adapters. No surface redeclares a schema or reimplements an operation.
 
 Take `Type` from `@agntn/tools`, never a bare `typebox` import. OMP rewrites that specifier to its own facade. Keep `typebox` out of `package.json` too. Pi 0.99 warns on every load when a package lists it. `@agntn/tools` carries its own copy.
 

@@ -14,7 +14,7 @@ The conversation you need is in another harness. Of course it is. `@agntn/sessio
 ## ✨ Features
 
 - 🧩 **Eleven harnesses, one shape.** Stop juggling eleven session formats.
-- 🤖 **Agents included.** Three read-only tools, written once and wired into four hosts.
+- 🤖 **Agents included.** Three read-only tools, written once and wired into five hosts.
 - 📖 **Bounded reads.** Continue where you left off, even in the middle of a block.
 - 📁 **Directory filter.** Match a working directory and everything below it with `cwd`.
 - 🚦 **Honest errors.** Tool results keep the harness's own `isError`. No flag means unknown, not success.
@@ -102,7 +102,7 @@ OpenBot keeps no tool calls. Each message's `context` names the `providerSession
 
 ## 🤖 Agent tools
 
-Three read-only tools, the same in MCP, [Pi](https://pi.dev), [OMP](https://omp.sh) and the CLI:
+Three read-only tools, the same in MCP, [Pi](https://pi.dev), [OMP](https://omp.sh), the AI SDK and the CLI:
 
 | Tool               | What you get                                                                                |
 | ------------------ | ------------------------------------------------------------------------------------------- |
@@ -135,6 +135,29 @@ omp install @agntn/sessions
 ```
 
 Both load the [same tool definitions](./src/tools.ts) as MCP and the CLI.
+
+### AI SDK
+
+One import gives your `generateText` loop all three session tools. No wrappers.
+
+```bash
+pnpm add @agntn/sessions ai @ai-sdk/anthropic
+```
+
+```ts
+import { anthropic } from "@ai-sdk/anthropic";
+import { sessionsAiTools } from "@agntn/sessions/ai";
+import { generateText, isStepCount } from "ai";
+
+const { text } = await generateText({
+  model: anthropic("claude-sonnet-5-5"),
+  tools: sessionsAiTools,
+  stopWhen: isStepCount(5),
+  prompt: "What was I working on yesterday?",
+});
+```
+
+Your model can catch up on yesterday's conversations with other models. It gets the same text an MCP client reads. All three tools only read, so none waits for approval.
 
 ### CLI
 
