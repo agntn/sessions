@@ -40,6 +40,8 @@ interface Origin {
   readonly sessionId: string;
   readonly channel: Readonly<Channel>;
   readonly agent?: Readonly<Participant>;
+  /** The thread's agent under its own id, kept on every message of the thread. */
+  readonly owner?: Readonly<Participant>;
   readonly context: Readonly<Record<string, string>>;
 }
 
@@ -166,6 +168,7 @@ function message(
     context: contextOf(native, origin.context),
     channel: origin.channel,
     ...(author ? { author } : {}),
+    ...(origin.owner ? { owner: origin.owner } : {}),
   };
 }
 
@@ -178,6 +181,12 @@ function threadContext(row: Row): Record<string, string> {
   return context;
 }
 
+function ownerOf(agentId: string | undefined, name: string | undefined): Participant | undefined {
+  return agentId
+    ? { platform: "openbot", platformId: agentId, name: name ?? agentId, isBot: true }
+    : undefined;
+}
+
 function threadMessage(row: Row, agents: Agents): Message | undefined {
   const native = parseJsonRecord(scalarText(row.body) ?? "");
   const sessionId = text(row.sid);
@@ -188,6 +197,7 @@ function threadMessage(row: Row, agents: Agents): Message | undefined {
     sessionId,
     channel: { platform: "openbot", platformId: agentId, name: name ?? agentId, type: "thread" },
     agent: { platform: "openbot", platformId: agentId, name: name ?? "openbot", isBot: true },
+    owner: ownerOf(agentId, name),
     context: { ...threadContext(row), ...(cwd ? { cwd } : {}) },
   };
   return message(native, origin, threadAuthor(native, origin, agents));

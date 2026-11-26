@@ -56,6 +56,7 @@ export interface ListDetails {
   since?: string;
   until?: string;
   cwd?: string;
+  owner?: string;
   offset: number;
   total: number;
   sessions: SessionSummary[];
@@ -100,6 +101,7 @@ export interface ListParams {
   until?: string;
   lastHours?: number;
   cwd?: string;
+  owner?: string;
   offset?: number;
   limit?: number;
 }
@@ -130,6 +132,7 @@ interface ListParamsInput {
   readonly until?: string;
   readonly lastHours?: number;
   readonly cwd?: string;
+  readonly owner?: string;
   readonly offset?: number;
   readonly limit?: number;
 }
@@ -253,8 +256,27 @@ function headerValue(value: string): string {
   return /[\s"\p{Cc}\p{Cf}]/u.test(shown) ? quoted(shown) : shown;
 }
 
+/**
+ * Who owns the session and what it's called, for sources that record either. Others add nothing.
+ * The id is never cut, since it goes back as the `owner` filter.
+ *
+ * @param session - Listed session.
+ * @returns {string} A leading tab and the labels, or nothing.
+ */
+function ownerCell(session: Readonly<SessionSummary>): string {
+  const { owner, title } = session;
+  const id = owner?.platformId;
+  const labels = [
+    id === undefined || owner === undefined
+      ? undefined
+      : `owner=${/[\s"()\p{Cc}\p{Cf}]/u.test(id) ? quoted(id) : id} (${headerValue(owner.name)})`,
+    title === undefined || title === owner?.name ? undefined : `title=${headerValue(title)}`,
+  ].filter((label) => label !== undefined);
+  return labels.length ? `\t${labels.join(" ")}` : "";
+}
+
 function formatSummary(session: Readonly<SessionSummary>): string {
-  const row = `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}\t${directoryCell(session.cwd)}`;
+  const row = `${session.id}\t${session.messageCount} messages\t${isoStamp(session.updatedAt, "unknown")}\t${directoryCell(session.cwd)}${ownerCell(session)}`;
   return session.snippet ? `${row}\t${session.snippet}` : row;
 }
 
@@ -761,17 +783,22 @@ function relativeTimeRange(hours: number): SessionTimeRange {
 }
 
 /**
- * The time bounds plus the directory, which also keeps an empty match from reading as a bad path.
+ * Bounds, directory and owner, which also keep an empty match from reading as a bad path.
  *
  * @param params - Listing parameters.
  * @returns {SessionListFilter | undefined} Every filter the listing applies, or none.
- * @throws {RangeError} When the bounds conflict or `cwd` isn't an absolute path.
+ * @throws {RangeError} When the bounds conflict, `cwd` isn't absolute or `owner` is blank.
  */
 function listFilter(params: ListParamsInput): SessionListFilter | undefined {
   const range = sessionTimeRange(params);
-  if (params.cwd === undefined) return range;
-  assertDirectory(params.cwd);
-  return { ...range, cwd: params.cwd };
+  if (params.owner?.trim() === "") throw new RangeError("owner must not be blank");
+  if (params.cwd !== undefined) assertDirectory(params.cwd);
+  if (params.cwd === undefined && params.owner === undefined) return range;
+  return {
+    ...range,
+    ...(params.cwd === undefined ? {} : { cwd: params.cwd }),
+    ...(params.owner === undefined ? {} : { owner: params.owner }),
+  };
 }
 
 function sessionTimeRange(params: ListParamsInput): SessionTimeRange | undefined {
@@ -883,6 +910,9 @@ function listHeader(
     header += ` Last activity: ${bounds} (inclusive). Reuse these bounds instead of lastHours when paging.`;
   }
   if (details.cwd !== undefined) header += ` Working directory: ${quoted(details.cwd)} and below.`;
+  if (details.owner !== undefined) {
+    header += ` Owner: ${quoted(details.owner)}. Sources that record no owner never match.`;
+  }
   return header;
 }
 
@@ -898,22 +928,26 @@ function listText(
     .map((session) => `${includeSource ? `${session.source}\t` : ""}${formatSummary(session)}`)
     .join("\n");
   const notice = sessions.length ? windowNotice("session", offset, sessions.length, total) : "";
-  const filtered = details.since || details.until || details.cwd !== undefined;
+  const filtered =
+    details.since || details.until || details.cwd !== undefined || details.owner !== undefined;
   const header = includeSource || filtered ? `${listHeader(details)}\n` : "";
   return `${header}${sessionWindowText(listed, notice, sessions.length, offset, source, total)}`;
 }
 
-function listedFilter(range?: SessionListFilter): { since?: string; until?: string; cwd?: string } {
+function listedFilter(
+  range?: SessionListFilter,
+): Pick<ListDetails, "since" | "until" | "cwd" | "owner"> {
   return {
     since: range?.since === undefined ? undefined : new Date(range.since).toISOString(),
     until: range?.until === undefined ? undefined : new Date(range.until).toISOString(),
     ...(range?.cwd === undefined ? {} : { cwd: range.cwd }),
+    ...(range?.owner === undefined ? {} : { owner: range.owner }),
   };
 }
 
 /**
- * Lists one globally ordered page, optionally limited by last activity and working directory.
- * @param params - Harness selection, time bounds, directory, and paging options.
+ * Lists one globally ordered page, optionally limited by activity, directory and owner.
+ * @param params - Harness selection, time bounds, directory, owner, and paging options.
  * @returns {Promise<ToolResult<ListDetails>>} Session summaries with their source and time bounds.
  */
 export async function listSessions(params: ListParamsInput): Promise<ToolResult<ListDetails>> {

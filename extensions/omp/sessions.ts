@@ -35,6 +35,7 @@ interface PlaceholderListParams extends PlaceholderSourceParams {
   readonly sources?: readonly string[];
   readonly lastHours?: number;
   readonly cwd?: string;
+  readonly owner?: string;
 }
 
 interface PlaceholderReadParams extends PlaceholderSourceParams {
@@ -95,6 +96,7 @@ function listParams<T extends Readonly<PlaceholderListParams>>(params: T): T {
     since,
     until,
     cwd: text(params.cwd),
+    owner: text(params.owner),
     lastHours: since !== undefined || until !== undefined ? undefined : params.lastHours,
   };
 }

@@ -384,6 +384,9 @@ describe("session listing across harnesses", () => {
       list("omp", { ...blank, source: "pi", sources: ["pi"], cwd: " ", lastHours: 24 }),
     ).resolves.toMatchObject({ details: { total: 2 } });
     await expect(
+      list("omp", { ...blank, source: "pi", sources: ["pi"], owner: " ", lastHours: 24 }),
+    ).resolves.toMatchObject({ details: { total: 2 } });
+    await expect(
       list("omp", { ...blank, source: "claude", sources: ["pi"], lastHours: 24 }),
     ).rejects.toThrow("Use source or sources, not both");
 

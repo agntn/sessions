@@ -105,11 +105,11 @@ OpenBot keeps no tool calls. Each message's `context` names the `providerSession
 
 Three read-only tools, the same in MCP, [Pi](https://pi.dev), [OMP](https://omp.sh), the AI SDK and the CLI:
 
-| Tool               | What you get                                                                                |
-| ------------------ | ------------------------------------------------------------------------------------------- |
-| `sessions_sources` | Supported harnesses and local data availability                                             |
-| `sessions_list`    | Session IDs, message counts, last activity, working directories, and snippets, newest first |
-| `sessions_read`    | A bounded message window from one exact session ID                                          |
+| Tool               | What you get                                                                                        |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| `sessions_sources` | Supported harnesses and local data availability                                                     |
+| `sessions_list`    | Session IDs, message counts, last activity, working directories, owners, and snippets, newest first |
+| `sessions_read`    | A bounded message window from one exact session ID                                                  |
 
 One call with `{ "lastHours": 24 }` covers every available harness. Read the interesting conversation, not the whole haystack. Same prompt in four repos? Four identical snippets. A fine collection of mystery twins. Filter with `{ "cwd": "/work/project" }`. Sessions without a recorded directory never match.
 

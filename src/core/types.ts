@@ -53,6 +53,8 @@ export interface Message {
   context?: Record<string, string>;
   author?: Participant;
   channel?: Channel;
+  /** The agent the whole session belongs to, whoever wrote this message. */
+  owner?: Participant;
   /** Absent when the harness recorded none. Never guessed. */
   model?: Model;
 }
@@ -89,6 +91,8 @@ export interface SessionTimeRange {
 export interface SessionListFilter extends SessionTimeRange {
   /** Absolute directory a session ran in or below. A session without one never matches. */
   readonly cwd?: string;
+  /** Stable owner id, such as an OpenBot agent id. A session without an owner never matches. */
+  readonly owner?: string;
 }
 
 /** A bounded native summary page plus the complete session count. */
