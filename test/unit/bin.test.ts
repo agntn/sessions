@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -104,6 +105,46 @@ async function connect(
   return client;
 }
 
+/** Antigravity's opening: a 2026 discover, a bare notification, then a 2026 `tools/list`. */
+const antigravityOpening = (() => {
+  const meta = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": { name: "raw", version: "0" },
+    "io.modelcontextprotocol/clientCapabilities": { elicitation: { form: {} } },
+  };
+  return [
+    { jsonrpc: "2.0", id: 1, method: "server/discover", params: { _meta: meta } },
+    { jsonrpc: "2.0", method: "notifications/roots/list_changed", params: {} },
+    { jsonrpc: "2.0", id: 2, method: "tools/list", params: { _meta: meta } },
+  ];
+})();
+
+/**
+ * Writes raw JSON-RPC lines to `mcp` and waits for the answer to `id` 2.
+ * @param environment - Extra environment for the server.
+ * @returns {Promise<Record<string, unknown>>} The `result` of that answer.
+ */
+async function rawToolsList(
+  environment: Readonly<Record<string, string>>,
+): Promise<Record<string, unknown>> {
+  const { SESSIONS_DIST: _inherited, ...inherited } = process.env;
+  const child = spawn(process.execPath, [join(root, "dist/cli.mjs"), "mcp"], {
+    cwd: root,
+    env: { ...inherited, ...environment },
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  try {
+    for (const message of antigravityOpening) child.stdin.write(`${JSON.stringify(message)}\n`);
+    for await (const line of createInterface({ input: child.stdout })) {
+      const answer = JSON.parse(line) as { id?: unknown; result?: Record<string, unknown> };
+      if (answer.id === 2 && answer.result !== undefined) return answer.result;
+    }
+    throw new Error("mcp closed before answering tools/list");
+  } finally {
+    child.kill();
+  }
+}
+
 describe.skipIf(!existsSync(join(root, "dist/cli.mjs")))("built bin", () => {
   const source = pathToFileURL(join(root, "src/")).href;
   const bin = join(root, "dist/cli.mjs");
@@ -180,5 +221,16 @@ describe.skipIf(!existsSync(join(root, "dist/cli.mjs")))("built bin", () => {
     } finally {
       await client.close();
     }
+  });
+
+  it.each([
+    { from: "source", env: {} },
+    { from: "bundle", env: { SESSIONS_DIST: "1" } },
+  ])("keeps Antigravity on 2026 past a bare notification, from the $from", async ({ env }) => {
+    const result = await rawToolsList(env);
+    expect(result["resultType"]).toBe("complete");
+    expect((result["tools"] as readonly { name: string }[]).map((tool) => tool.name)).toEqual(
+      toolNames,
+    );
   });
 });

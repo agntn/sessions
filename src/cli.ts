@@ -43,7 +43,7 @@ function servesSource(argv: readonly string[]): boolean {
 async function serveSource(): Promise<void> {
   const module: unknown = await import(sourceMcp.href);
   if (!isMcpModule(module)) throw new TypeError(`${sourceMcpPath} has no createMcpServer`);
-  const { serveStdio } = await import("@modelcontextprotocol/server/stdio");
+  const { serveStdio } = await import("@agntn/tools/stdio");
   serveStdio(() => module.createMcpServer());
 }
 

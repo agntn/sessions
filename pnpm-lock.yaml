@@ -7,8 +7,8 @@ settings:
 catalogs:
   deps:
     '@agntn/tools':
-      specifier: 0.3.2
-      version: 0.3.2
+      specifier: 0.4.0
+      version: 0.4.0
     '@libsql/client':
       specifier: 0.15.15
       version: 0.15.15
@@ -59,7 +59,7 @@ importers:
     dependencies:
       '@agntn/tools':
         specifier: catalog:deps
-        version: 0.3.2(@earendil-works/pi-coding-agent@0.99.2(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.30.1(zod@4.4.3))(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.4.3))(@modelcontextprotocol/server@2.4.0)(@oh-my-pi/pi-coding-agent@18.20.2)(zod@4.4.3)
+        version: 0.4.0(@earendil-works/pi-coding-agent@0.99.2(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.30.1(zod@4.4.3))(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.4.3))(@modelcontextprotocol/server@2.4.0)(@oh-my-pi/pi-coding-agent@18.20.2)(zod@4.4.3)
       '@libsql/client':
         specifier: catalog:deps
         version: 0.15.15
@@ -114,13 +114,14 @@ packages:
       oxlint: '>=1.78.0'
       oxlint-tsgolint: '>=7.0.2001'
 
-  '@agntn/tools@0.3.2':
-    resolution: {integrity: sha512-I6Q6tS/k5AzrZauBfza2g9VeckYKyDgxZdNAr/TD/pnYl8R8Xxf1gK48mfF3EENKpH8iVyMqgF+y2i2oVzyc9g==}
+  '@agntn/tools@0.4.0':
+    resolution: {integrity: sha512-JfPGXIcgMvVSP9MhyOiNFepwmBy0GUH3ETd22SoDlXtTa9lIdAVLtUPuwHCahaOcYXTf00h4ASTJwFQqeiRXkQ==}
     engines: {node: '>=26'}
     peerDependencies:
       '@earendil-works/pi-coding-agent': '>=0.84.2 <2'
       '@modelcontextprotocol/server': '>=2.2.0 <3'
-      '@oh-my-pi/pi-coding-agent': '>=18.0.0 <19'
+      '@oh-my-pi/pi-coding-agent': '>=18.0.0 <20'
+      '@opencode/plugin': '>=2.3.0 <3'
       ai: '>=7.0.0 <8'
       h3-mcp: '>=0.2.0 <0.3'
       zod: '>=4.1.13 <5'
@@ -130,6 +131,8 @@ packages:
       '@modelcontextprotocol/server':
         optional: true
       '@oh-my-pi/pi-coding-agent':
+        optional: true
+      '@opencode/plugin':
         optional: true
       ai:
         optional: true
@@ -2762,7 +2765,7 @@ snapshots:
       oxlint: 1.94.0(oxlint-tsgolint@7.0.2007)
       oxlint-tsgolint: 7.0.2007
 
-  '@agntn/tools@0.3.2(@earendil-works/pi-coding-agent@0.99.2(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.30.1(zod@4.4.3))(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.4.3))(@modelcontextprotocol/server@2.4.0)(@oh-my-pi/pi-coding-agent@18.20.2)(zod@4.4.3)':
+  '@agntn/tools@0.4.0(@earendil-works/pi-coding-agent@0.99.2(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.30.1(zod@4.4.3))(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.4.3))(@modelcontextprotocol/server@2.4.0)(@oh-my-pi/pi-coding-agent@18.20.2)(zod@4.4.3)':
     optionalDependencies:
       '@earendil-works/pi-coding-agent': 0.99.2(@aws-sdk/credential-provider-node@3.972.84)(@modelcontextprotocol/sdk@1.30.1(zod@4.4.3))(@smithy/signature-v4@5.7.3)(ws@8.21.3)(zod@4.4.3)
       '@modelcontextprotocol/server': 2.4.0
