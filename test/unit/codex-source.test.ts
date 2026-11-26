@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, symlinkSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { zstdCompressSync } from "node:zlib";
@@ -589,6 +589,66 @@ describe("CodexSource JSONL", () => {
 
     expect(msgs).toHaveLength(1);
     expect(msgs[0].blocks[0].text).toBe("ok");
+  });
+});
+
+describe("CodexSource archived sessions", () => {
+  /* One user turn, zstd compressed for a `.zst` name like Codex archives. */
+  function rollout(path: string, message: string, written: string): void {
+    const file = join(tempDir, path);
+    const line = JSON.stringify({
+      type: "event_msg",
+      timestamp: written,
+      payload: { type: "user_message", message },
+    });
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, file.endsWith(".zst") ? zstdCompressSync(line) : line);
+    utimesSync(file, new Date(written), new Date(written));
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("HOME", tempDir);
+    rollout(
+      ".codex/sessions/2026/03/10/rollout-2026-03-10T10-00-00-live.jsonl",
+      "live",
+      "2026-03-10T10:00:00Z",
+    );
+    rollout(
+      ".codex/archived_sessions/rollout-2026-03-09T10-00-00-shelved.jsonl.zst",
+      "shelved",
+      "2026-03-09T10:00:00Z",
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("reads the archive beside the dated tree by default", async () => {
+    const msgs = await collect(new CodexSource());
+
+    expect(msgs.map((m) => [m.sessionId, m.blocks[0].text])).toEqual([
+      ["shelved", "shelved"],
+      ["live", "live"],
+    ]);
+  });
+
+  it("finds a session that lives only in the archive", async () => {
+    const msgs = await collect(new CodexSource(), { sessionId: "shelved" });
+
+    expect(msgs.map((m) => m.blocks[0].text)).toEqual(["shelved"]);
+  });
+
+  it("is available with only an archive on disk", () => {
+    rmSync(join(tempDir, ".codex/sessions"), { recursive: true });
+
+    expect(new CodexSource().available()).toBe(true);
+  });
+
+  it("reads only the directory an override names", async () => {
+    const msgs = await collect(new CodexSource(join(tempDir, ".codex/sessions")));
+
+    expect(msgs.map((m) => m.sessionId)).toEqual(["live"]);
   });
 });
 
