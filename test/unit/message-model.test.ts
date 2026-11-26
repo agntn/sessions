@@ -193,6 +193,35 @@ describe("message models", () => {
     ]);
   });
 
+  it("keeps each Grok reply's model_id, and nothing on its reasoning or tool calls", async () => {
+    transcript("project/fixture/chat_history.jsonl", [
+      { type: "user", content: [{ type: "text", text: "hi" }] },
+      { type: "reasoning", summary: [{ type: "summary_text", text: "thinking" }] },
+      {
+        type: "assistant",
+        content: "",
+        model_id: "fixture-model-a",
+        tool_calls: [{ id: "c1", name: "ls", arguments: "{}" }],
+      },
+      { type: "tool_result", tool_call_id: "c1", content: "ok" },
+      { type: "backend_tool_call", kind: { name: "web_search", id: "b1", input: "q" } },
+      { type: "assistant", content: "done", model_id: "fixture-model-b" },
+      { type: "assistant", content: "blank", model_id: " " },
+      { type: "assistant", content: "unknown" },
+    ]);
+
+    expect(await read("grok")).toEqual([
+      ["user", undefined],
+      ["assistant", undefined],
+      ["assistant", { id: "fixture-model-a" }],
+      ["tool", undefined],
+      ["assistant", undefined],
+      ["assistant", { id: "fixture-model-b" }],
+      ["assistant", undefined],
+      ["assistant", undefined],
+    ]);
+  });
+
   it("names the model in a read only where it changes", async () => {
     transcript("project/2026-03-10T10-00-00-000Z_fixture.jsonl", [
       ...piTranscript,

@@ -12,7 +12,7 @@ import type {
   Source,
   SourceReadOptions,
 } from "../core/types.ts";
-import { isRecord, parseJson, parseJsonRecord, scalarText } from "./parsing.ts";
+import { isRecord, modelOf, parseJson, parseJsonRecord, scalarText } from "./parsing.ts";
 
 interface Transcript {
   readonly directory: string;
@@ -887,6 +887,7 @@ export class GrokSource implements Source {
       blocks,
       channel: this.channel,
       author: role === "user" ? this.user : { platform: "cli", name: "grok", isBot: true },
+      ...modelOf(role, { id: entry.model_id }),
       ...(Object.keys(context).length > 0 ? { context } : {}),
     };
   }
