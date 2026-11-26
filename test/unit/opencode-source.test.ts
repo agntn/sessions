@@ -36,6 +36,7 @@ function database(
       CREATE TABLE IF NOT EXISTS message (id TEXT PRIMARY KEY, data TEXT);
       CREATE TABLE IF NOT EXISTS part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT);
     `);
+    db.exec("BEGIN");
     const message = db.prepare("INSERT INTO message VALUES (?, ?)");
     const part = db.prepare(
       "INSERT INTO part (rowid, session_id, message_id, time_created, data) VALUES (?, ?, ?, ?, ?)",
@@ -46,6 +47,7 @@ function database(
     }
     const session = db.prepare("INSERT INTO session VALUES (?, ?)");
     for (const [id, cwd] of sessions) session.run(id, cwd);
+    db.exec("COMMIT");
   } finally {
     db.close();
   }
