@@ -22,8 +22,19 @@ interface ParsedTimestamp {
 }
 
 function extractSessionId(filename: string): string {
-  const match = filename.match(/rollout-[\dT-]+-(.+)\.jsonl?$/);
-  return match?.[1] ?? filename.replace(/\.jsonl?$/, "");
+  const match = filename.match(/rollout-[\dT-]+-(.+)\.jsonl?(?:\.zst)?$/);
+  return match?.[1] ?? filename.replace(/\.jsonl?(?:\.zst)?$/, "");
+}
+
+/**
+ * Codex zstd compresses cold rollouts and keeps the plain file when it reopens one.
+ *
+ * @param path - Directory entry to check.
+ * @returns {boolean} Whether the entry is a rollout to read.
+ */
+function isRollout(path: string): boolean {
+  if (path.endsWith(".jsonl")) return true;
+  return path.endsWith(".jsonl.zst") && !existsSync(path.slice(0, -".zst".length));
 }
 
 /**
@@ -43,7 +54,7 @@ function* walkSessions(
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) yield* walkSessions(path, sessionId);
-    else if (entry.name.endsWith(".jsonl")) {
+    else if (isRollout(path)) {
       if (!sessionId || extractSessionId(entry.name) === sessionId) yield { path, format: "jsonl" };
     } else if (entry.name.endsWith(".json")) yield { path, format: "json" };
   }
