@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClient } from "@libsql/client";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Message, Source } from "../../src/core/types.ts";
 import { listSourceSessions } from "../../src/tool-reader.ts";
@@ -41,10 +41,10 @@ function jsonl(path: string, entries: readonly unknown[]): void {
   writeFileSync(path, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 }
 
-async function sqlite(path: string, statements: readonly string[]): Promise<void> {
-  const db = createClient({ url: `file:${path}` });
+function sqlite(path: string, statements: readonly string[]): void {
+  const db = new DatabaseSync(path);
   try {
-    for (const sql of statements) await db.execute(sql);
+    for (const sql of statements) db.exec(sql);
   } finally {
     db.close();
   }
@@ -131,7 +131,7 @@ describe("context.cwd", () => {
 
   it("comes from the OpenCode session row", async () => {
     const path = join(directory, "opencode.db");
-    await sqlite(path, [
+    sqlite(path, [
       "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT NOT NULL)",
       "CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT)",
       "CREATE TABLE part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT)",
@@ -146,7 +146,7 @@ describe("context.cwd", () => {
 
   it("comes from the projectPath in Mastra's JSONB thread metadata", async () => {
     const path = join(directory, "mastra.db");
-    await sqlite(path, [
+    sqlite(path, [
       `CREATE TABLE mastra_messages (id TEXT, thread_id TEXT, content TEXT, role TEXT,
         type TEXT, createdAt TEXT, resourceId TEXT)`,
       "CREATE TABLE mastra_threads (id TEXT PRIMARY KEY, resourceId TEXT, title TEXT, metadata TEXT)",
@@ -169,7 +169,7 @@ describe("context.cwd", () => {
     const row = (thread: string, id: string) => `INSERT INTO projection_thread_messages VALUES
       ('${thread}', '${id}', NULL, 0,
       '{"id":"${id}","author":"user","text":"hi","createdAt":"2026-11-01T10:00:00.000Z"}')`;
-    await sqlite(path, [
+    sqlite(path, [
       "CREATE TABLE projection_agents (agent_id TEXT PRIMARY KEY, agent_json TEXT NOT NULL)",
       "CREATE TABLE projection_threads (thread_id TEXT PRIMARY KEY, agent_id TEXT, title TEXT)",
       "CREATE TABLE projection_turns (turn_id TEXT PRIMARY KEY, provider_session_id TEXT)",
@@ -248,7 +248,7 @@ describe("session lists", () => {
 
   it("filters OpenCode sessions by their row before LIMIT", async () => {
     const path = join(directory, "opencode.db");
-    await sqlite(path, [
+    sqlite(path, [
       "CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT)",
       "CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT)",
       "CREATE TABLE part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT)",

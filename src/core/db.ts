@@ -1,13 +1,13 @@
 import { resolve } from "node:path";
-import type { Client } from "@libsql/client";
+import type { DatabaseSync } from "node:sqlite";
 
 /**
- * Opens a local libSQL database file and loads the client on first read.
+ * Opens a local SQLite database read-only and loads `node:sqlite` on first read.
  *
  * @param path - Local database path.
- * @returns {Promise<Client>} The connected libSQL client.
+ * @returns {Promise<DatabaseSync>} The open database. We only look.
  */
-export async function openDatabase(path: string): Promise<Client> {
-  const { createClient } = await import("@libsql/client");
-  return createClient({ url: `file:${resolve(path)}` });
+export async function openDatabase(path: string): Promise<DatabaseSync> {
+  const { DatabaseSync } = await import("node:sqlite");
+  return new DatabaseSync(resolve(path), { readOnly: true });
 }

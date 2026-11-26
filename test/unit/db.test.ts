@@ -1,28 +1,31 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { libsql } = vi.hoisted(() => ({ libsql: { loaded: false } }));
+const { sqlite } = vi.hoisted(() => ({ sqlite: { loaded: false } }));
 
-vi.mock("@libsql/client", () => {
-  libsql.loaded = true;
+vi.mock("node:sqlite", () => {
+  sqlite.loaded = true;
   return {
-    createClient: () => ({
-      execute: () => ({ rows: [] }),
-      close: () => {},
-    }),
+    DatabaseSync: class {
+      prepare() {
+        return { all: () => [] };
+      }
+
+      close() {}
+    },
   };
 });
 
 import { create } from "../../src/index.ts";
 
-describe("libSQL client loading", () => {
+describe("SQLite loading", () => {
   it("stays out of the module graph until a read opens a database", async () => {
-    expect(libsql.loaded).toBe(false);
+    expect(sqlite.loaded).toBe(false);
 
     const mastra = create("mastra");
     mastra.available();
-    expect(libsql.loaded).toBe(false);
+    expect(sqlite.loaded).toBe(false);
 
     await mastra.list();
-    expect(libsql.loaded).toBe(true);
+    expect(sqlite.loaded).toBe(true);
   });
 });

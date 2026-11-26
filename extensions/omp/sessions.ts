@@ -13,7 +13,7 @@ const sourceModulePath = fileURLToPath(new URL("../../src/tools.ts", import.meta
 
 /**
  * Source in a checkout, the bundle in the package. Both specifiers stay literal, since OMP
- * rewrites bare imports like `@libsql/client` only in modules it can see.
+ * rewrites bare imports only in modules it can see.
  *
  * @returns {Promise<typeof SessionsTools>} The tool definitions.
  */

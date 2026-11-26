@@ -1,4 +1,4 @@
-import { createClient } from "@libsql/client";
+import { DatabaseSync } from "node:sqlite";
 import type { ExtensionAPI as PiAPI } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI as OmpAPI } from "@oh-my-pi/pi-coding-agent";
 import piExtension from "../../extensions/pi/sessions.ts";
@@ -189,9 +189,9 @@ describe("session listing across harnesses", () => {
 
   it("filters SQLite summaries before LIMIT without losing earlier messages", async () => {
     const path = join(directory, "opencode.db");
-    const db = createClient({ url: `file:${path}` });
+    const db = new DatabaseSync(path);
     try {
-      await db.executeMultiple(`
+      db.exec(`
         CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT);
         CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT);
         CREATE TABLE part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT);
@@ -224,9 +224,9 @@ describe("session listing across harnesses", () => {
 
   it("reads whole OpenCode sessions that reach activeSince, never the ended ones", async () => {
     const path = join(directory, "opencode.db");
-    const db = createClient({ url: `file:${path}` });
+    const db = new DatabaseSync(path);
     try {
-      await db.executeMultiple(`
+      db.exec(`
         CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT);
         CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT);
         CREATE TABLE part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT);

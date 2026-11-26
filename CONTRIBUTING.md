@@ -24,7 +24,7 @@ Does a harness adopt another harness's native format? The original harness owns 
 
 A native summary projection may aggregate bounded metadata without building message payloads. Keep text, thinking, tool calls, tool results, roles, timestamps, session IDs and useful native metadata. Never truncate native data silently.
 
-Open libSQL databases through `openDatabase()` from `src/core/db.ts`. A static `@libsql/client` import drags the client into processes that only list sources. `test/unit/db.test.ts` goes red on one.
+Open SQLite databases through `openDatabase()` from `src/core/db.ts`. It opens them read-only, since the harness owns the file and we only look. It also loads `node:sqlite` lazily, so a process that only lists sources never touches it. `test/unit/db.test.ts` goes red on a static import.
 
 ## Agent tools
 

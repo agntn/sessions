@@ -1,17 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Message } from "../../src/core/types.ts";
-
-const { executeMock, closeMock } = vi.hoisted(() => ({
-  executeMock: vi.fn(),
-  closeMock: vi.fn(),
-}));
-
-vi.mock("@libsql/client", () => ({
-  createClient: () => ({
-    execute: executeMock,
-    close: closeMock,
-  }),
-}));
 
 vi.mock("../../src/core/env.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/core/env.ts")>();
@@ -19,7 +11,53 @@ vi.mock("../../src/core/env.ts", async (importOriginal) => {
 });
 
 import { OpenCodeSource } from "../../src/sources/opencode.ts";
-import { INJECTED_PREFIXES } from "../../src/tool-snippet.ts";
+
+/** One OpenCode part as the reader selects it, with `rid` as its rowid. */
+interface Part {
+  readonly pdata: string;
+  readonly role: string;
+  readonly tc: number | string;
+  readonly sid: string;
+  readonly rid: number;
+}
+
+let directory: string;
+let dbPath: string;
+
+/* Writes the parts into a real OpenCode database, one native message per part. */
+function database(
+  parts: readonly Part[],
+  sessions: readonly (readonly [string, string])[] = [],
+): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, directory TEXT);
+      CREATE TABLE IF NOT EXISTS message (id TEXT PRIMARY KEY, data TEXT);
+      CREATE TABLE IF NOT EXISTS part (session_id TEXT, message_id TEXT, time_created INTEGER, data TEXT);
+    `);
+    const message = db.prepare("INSERT INTO message VALUES (?, ?)");
+    const part = db.prepare(
+      "INSERT INTO part (rowid, session_id, message_id, time_created, data) VALUES (?, ?, ?, ?, ?)",
+    );
+    for (const { pdata, role, tc, sid, rid } of parts) {
+      message.run(`m${rid}`, JSON.stringify({ role }));
+      part.run(rid, sid, `m${rid}`, tc, pdata);
+    }
+    const session = db.prepare("INSERT INTO session VALUES (?, ?)");
+    for (const [id, cwd] of sessions) session.run(id, cwd);
+  } finally {
+    db.close();
+  }
+}
+
+const text = (sid: string, rid: number, tc: number, body: string): Part => ({
+  pdata: JSON.stringify({ type: "text", text: body }),
+  role: "user",
+  tc,
+  sid,
+  rid,
+});
 
 async function collect(source: Readonly<OpenCodeSource>): Promise<Message[]> {
   const messages: Message[] = [];
@@ -29,26 +67,27 @@ async function collect(source: Readonly<OpenCodeSource>): Promise<Message[]> {
 
 describe("OpenCodeSource", () => {
   beforeEach(() => {
-    executeMock.mockReset();
-    closeMock.mockReset();
+    directory = mkdtempSync(join(tmpdir(), "sessions-opencode-"));
+    dbPath = join(directory, "opencode.db");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it("parses user text message with correct author", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "hello from user" }),
-            role: "user",
-            tc: 1700000000000,
-            sid: "session-1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "text", text: "hello from user" }),
+        role: "user",
+        tc: 1700000000000,
+        sid: "session-1",
+        rid: 1,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -63,21 +102,17 @@ describe("OpenCodeSource", () => {
   });
 
   it("parses assistant text message with bot author", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "assistant reply" }),
-            role: "assistant",
-            tc: 1700000001000,
-            sid: "session-1",
-            rid: 2,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "text", text: "assistant reply" }),
+        role: "assistant",
+        tc: 1700000001000,
+        sid: "session-1",
+        rid: 2,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -86,26 +121,22 @@ describe("OpenCodeSource", () => {
   });
 
   it("parses tool-invocation blocks", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool-invocation",
-              toolName: "read_file",
-              toolCallId: "tc-1",
-              args: '{"path":"/foo"}',
-            }),
-            role: "assistant",
-            tc: 1700000002000,
-            sid: "s1",
-            rid: 3,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool-invocation",
+          toolName: "read_file",
+          toolCallId: "tc-1",
+          args: '{"path":"/foo"}',
+        }),
+        role: "assistant",
+        tc: 1700000002000,
+        sid: "s1",
+        rid: 3,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -118,26 +149,22 @@ describe("OpenCodeSource", () => {
   });
 
   it("parses tool-call blocks with name and input fields", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool-call",
-              name: "write_file",
-              id: "tc-2",
-              input: '{"content":"hi"}',
-            }),
-            role: "assistant",
-            tc: 1700000003000,
-            sid: "s1",
-            rid: 4,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool-call",
+          name: "write_file",
+          id: "tc-2",
+          input: '{"content":"hi"}',
+        }),
+        role: "assistant",
+        tc: 1700000003000,
+        sid: "s1",
+        rid: 4,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -150,30 +177,26 @@ describe("OpenCodeSource", () => {
   });
 
   it("parses current tool blocks with nested input and completed output", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool",
-              callID: "tc-current",
-              tool: "read",
-              state: {
-                status: "completed",
-                input: { path: "/foo" },
-                output: "file contents here",
-              },
-            }),
-            role: "assistant",
-            tc: 1700000003500,
-            sid: "s1",
-            rid: 5,
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool",
+          callID: "tc-current",
+          tool: "read",
+          state: {
+            status: "completed",
+            input: { path: "/foo" },
+            output: "file contents here",
           },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+        }),
+        role: "assistant",
+        tc: 1700000003500,
+        sid: "s1",
+        rid: 5,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -203,21 +226,17 @@ describe("OpenCodeSource", () => {
       expected: { text: "File not found: /foo", isError: true },
     },
   ])("preserves native tool status: $state.status", async ({ state, expected }) => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "tool", callID: "tc-status", tool: "read", state }),
-            role: "assistant",
-            tc: 1700000003500,
-            sid: "s1",
-            rid: 5,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "tool", callID: "tc-status", tool: "read", state }),
+        role: "assistant",
+        tc: 1700000003500,
+        sid: "s1",
+        rid: 5,
+      },
+    ]);
 
-    const msgs = await collect(new OpenCodeSource("/tmp/opencode.db"));
+    const msgs = await collect(new OpenCodeSource(dbPath));
 
     expect(msgs[0].blocks[1]).toEqual({
       type: "tool_result",
@@ -227,25 +246,21 @@ describe("OpenCodeSource", () => {
   });
 
   it("parses tool-result blocks", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool-result",
-              toolCallId: "tc-1",
-              result: "file contents here",
-            }),
-            role: "assistant",
-            tc: 1700000004000,
-            sid: "s1",
-            rid: 5,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool-result",
+          toolCallId: "tc-1",
+          result: "file contents here",
+        }),
+        role: "assistant",
+        tc: 1700000004000,
+        sid: "s1",
+        rid: 5,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -258,25 +273,21 @@ describe("OpenCodeSource", () => {
   });
 
   it("serializes non-string tool-result to JSON", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool-result",
-              toolCallId: "tc-3",
-              result: { ok: true, lines: 42 },
-            }),
-            role: "assistant",
-            tc: 1700000005000,
-            sid: "s1",
-            rid: 6,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool-result",
+          toolCallId: "tc-3",
+          result: { ok: true, lines: 42 },
+        }),
+        role: "assistant",
+        tc: 1700000005000,
+        sid: "s1",
+        rid: 6,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -284,83 +295,70 @@ describe("OpenCodeSource", () => {
   });
 
   it("skips rows with invalid timestamps instead of throwing", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "bad" }),
-            role: "user",
-            tc: "invalid",
-            sid: "s1",
-            rid: 1,
-          },
-          {
-            pdata: JSON.stringify({ type: "text", text: "good message" }),
-            role: "assistant",
-            tc: 1700000000000,
-            sid: "s1",
-            rid: 2,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "text", text: "bad" }),
+        role: "user",
+        tc: "invalid",
+        sid: "s1",
+        rid: 1,
+      },
+      {
+        pdata: JSON.stringify({ type: "text", text: "good message" }),
+        role: "assistant",
+        tc: 1700000000000,
+        sid: "s1",
+        rid: 2,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const messages = await collect(source);
 
     expect(messages).toHaveLength(1);
     expect(messages[0].timestamp).toBe(1700000000000);
-    expect(closeMock).toHaveBeenCalledTimes(1);
   });
 
   it("skips non-user/non-assistant roles", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "system message" }),
-            role: "system",
-            tc: 1700000000000,
-            sid: "s1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "text", text: "system message" }),
+        role: "system",
+        tc: 1700000000000,
+        sid: "s1",
+        rid: 1,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(0);
   });
 
   it("parses reasoning parts as thinking blocks", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "reasoning",
-              text: "The user wants the parser fixed.",
-              time: { start: 1700000001000, end: 1700000001500 },
-            }),
-            role: "assistant",
-            tc: 1700000001000,
-            sid: "session-1",
-            rid: 2,
-          },
-          {
-            pdata: JSON.stringify({ type: "text", text: "Fixing it now." }),
-            role: "assistant",
-            tc: 1700000002000,
-            sid: "session-1",
-            rid: 3,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "reasoning",
+          text: "The user wants the parser fixed.",
+          time: { start: 1700000001000, end: 1700000001500 },
+        }),
+        role: "assistant",
+        tc: 1700000001000,
+        sid: "session-1",
+        rid: 2,
+      },
+      {
+        pdata: JSON.stringify({ type: "text", text: "Fixing it now." }),
+        role: "assistant",
+        tc: 1700000002000,
+        sid: "session-1",
+        rid: 3,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(2);
@@ -373,70 +371,58 @@ describe("OpenCodeSource", () => {
   });
 
   it("skips reasoning parts with empty text", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "reasoning", text: "", time: { start: 1700000000000 } }),
-            role: "assistant",
-            tc: 1700000000000,
-            sid: "s1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "reasoning", text: "", time: { start: 1700000000000 } }),
+        role: "assistant",
+        tc: 1700000000000,
+        sid: "s1",
+        rid: 1,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(0);
   });
 
   it("skips text parts with empty text", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "" }),
-            role: "user",
-            tc: 1700000000000,
-            sid: "s1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "text", text: "" }),
+        role: "user",
+        tc: 1700000000000,
+        sid: "s1",
+        rid: 1,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(0);
   });
 
   it("skips rows with malformed JSON pdata", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: "not valid json {{{",
-            role: "user",
-            tc: 1700000000000,
-            sid: "s1",
-            rid: 1,
-          },
-          {
-            pdata: JSON.stringify({ type: "text", text: "valid" }),
-            role: "user",
-            tc: 1700000001000,
-            sid: "s1",
-            rid: 2,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: "not valid json {{{",
+        role: "user",
+        tc: 1700000000000,
+        sid: "s1",
+        rid: 1,
+      },
+      {
+        pdata: JSON.stringify({ type: "text", text: "valid" }),
+        role: "user",
+        tc: 1700000001000,
+        sid: "s1",
+        rid: 2,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -444,209 +430,142 @@ describe("OpenCodeSource", () => {
   });
 
   it("skips unknown part types", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "image", url: "https://example.com/img.png" }),
-            role: "assistant",
-            tc: 1700000000000,
-            sid: "s1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "image", url: "https://example.com/img.png" }),
+        role: "assistant",
+        tc: 1700000000000,
+        sid: "s1",
+        rid: 1,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(0);
   });
 
-  it("paginates through results using keyset cursor", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "first" }),
-            role: "user",
-            tc: 1000,
-            sid: "s1",
-            rid: 10,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "second" }),
-            role: "assistant",
-            tc: 2000,
-            sid: "s1",
-            rid: 20,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+  it("reads past one keyset window without repeating or dropping a part", async () => {
+    database(
+      Array.from({ length: 5002 }, (_, index) =>
+        text("s1", index + 1, 1000 + ((index + 1) >> 1), `part ${index}`),
+      ),
+    );
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
-    const messages = await collect(source);
+    const messages = await collect(new OpenCodeSource(dbPath));
 
-    expect(messages).toHaveLength(2);
-    expect(executeMock).toHaveBeenCalledTimes(3);
-    const calls: readonly (readonly unknown[])[] = executeMock.mock.calls;
-    expect(calls[1]?.[0]).toEqual(expect.objectContaining({ args: [1000, 1000, 10, 5000] }));
+    expect(messages).toHaveLength(5002);
+    expect(messages.map(({ blocks }) => blocks[0]?.text)).toEqual(
+      Array.from({ length: 5002 }, (_, index) => `part ${index}`),
+    );
   });
 
-  it("pushes an exact session filter into the database read", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "only this session" }),
-            role: "user",
-            tc: 1000,
-            sid: "wanted",
-            rid: 10,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+  it("reads only the requested session", async () => {
+    database([
+      text("other", 1, 1000, "not this one"),
+      text("wanted", 2, 1000, "only this session"),
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
     const messages: Message[] = [];
-    for await (const message of source.read({ sessionId: "wanted" })) messages.push(message);
+    for await (const message of new OpenCodeSource(dbPath).read({ sessionId: "wanted" })) {
+      messages.push(message);
+    }
 
-    expect(messages).toHaveLength(1);
-    const firstCall = executeMock.mock.calls[0]?.[0] as { sql: string; args: unknown[] };
-    expect(firstCall.sql).toContain("p.session_id = ?");
-    expect(firstCall.args).toEqual(["wanted", 5000]);
+    expect(messages.map(({ sessionId, blocks }) => [sessionId, blocks[0]?.text])).toEqual([
+      ["wanted", "only this session"],
+    ]);
   });
 
   it.each([
-    { reachedParts: 2, pageFilter: true },
-    { reachedParts: 7, pageFilter: false },
+    { live: 2, ended: 7 },
+    { live: 7, ended: 2 },
   ])(
-    "keeps activeSince sessions when $reachedParts of 9 parts reach the bound",
-    async ({ reachedParts, pageFilter }) => {
-      executeMock
-        .mockResolvedValueOnce({ rows: [{ ids: '["live"]', reachedParts, allParts: 9 }] })
-        .mockResolvedValueOnce({
-          rows: [
-            {
-              pdata: JSON.stringify({ type: "text", text: "old" }),
-              role: "user",
-              tc: 1,
-              sid: "ended",
-              rid: 1,
-            },
-            {
-              pdata: JSON.stringify({ type: "text", text: "new" }),
-              role: "user",
-              tc: 2,
-              sid: "live",
-              rid: 2,
-            },
-          ],
-        })
-        .mockResolvedValueOnce({ rows: [] });
+    "keeps the whole session that reaches activeSince with $live of 9 parts",
+    async ({ live, ended }) => {
+      database([
+        ...Array.from({ length: ended }, (_, index) => text("ended", index + 1, 1, "ended")),
+        ...Array.from({ length: live }, (_, index) =>
+          text("live", ended + index + 1, index === live - 1 ? 2 : 1, `live ${index}`),
+        ),
+      ]);
 
       const texts: string[] = [];
-      for await (const message of new OpenCodeSource("/tmp/opencode.db").read({ activeSince: 2 })) {
-        texts.push(message.blocks[0]?.text ?? "");
+      for await (const message of new OpenCodeSource(dbPath).read({ activeSince: 2 })) {
+        texts.push(`${message.sessionId}: ${message.blocks[0]?.text ?? ""}`);
       }
 
-      const reachCall = executeMock.mock.calls[0]?.[0] as { args: unknown[] };
-      const pageCall = executeMock.mock.calls[1]?.[0] as { sql: string; args: unknown[] };
-      expect(reachCall.args).toEqual([2]);
-      expect(pageCall.sql.includes("json_each(?)")).toBe(pageFilter);
-      expect(pageCall.args).toEqual(pageFilter ? ['["live"]', 5000] : [5000]);
-      expect(texts).toEqual(pageFilter ? ["old", "new"] : ["new"]);
+      expect(texts).toEqual(Array.from({ length: live }, (_, index) => `live: live ${index}`));
     },
   );
 
-  it("stops before the first page when no session reaches activeSince", async () => {
-    executeMock.mockResolvedValueOnce({ rows: [{ ids: "[]", reachedParts: 0, allParts: 9 }] });
+  it("reads nothing when no session reaches activeSince", async () => {
+    database([text("ended", 1, 1, "old")]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
     const messages: Message[] = [];
-    for await (const message of source.read({ activeSince: 2 })) messages.push(message);
+    for await (const message of new OpenCodeSource(dbPath).read({ activeSince: 2 })) {
+      messages.push(message);
+    }
 
     expect(messages).toEqual([]);
-    expect(executeMock).toHaveBeenCalledTimes(1);
-    expect(closeMock).toHaveBeenCalledTimes(1);
   });
 
   it("returns a bounded session summary page from SQL", async () => {
-    executeMock.mockResolvedValueOnce({
-      rows: [
+    const tool = JSON.stringify({ type: "tool", callID: "c", tool: "read", state: {} });
+    database(
+      [
+        text("old", 1, 1000, "old session"),
+        text("middle", 2, 1500, "<system-reminder> injected"),
+        text("middle", 3, 1600, "fix the tool read"),
+        { pdata: tool, role: "assistant", tc: 1700, sid: "middle", rid: 4 },
         {
-          sid: "session-2",
-          createdAt: 1000,
-          updatedAt: 2000,
-          messageCount: 3,
-          snippetText: "fix the tool read",
-          total: 12,
+          pdata: JSON.stringify({ type: "step-start" }),
+          role: "assistant",
+          tc: 2000,
+          sid: "middle",
+          rid: 5,
         },
+        text("middle", 6, 1800, ""),
+        text("new", 7, 3000, "newest session"),
       ],
-    });
+      [["middle", "/work/project"]],
+    );
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
-    const result = await source.summaryWindow(20, 10);
+    const result = await new OpenCodeSource(dbPath).summaryWindow(1, 1);
 
     expect(result).toEqual({
-      total: 12,
+      total: 3,
       sessions: [
         {
-          id: "session-2",
+          id: "middle",
           source: "opencode",
-          createdAt: 1000,
-          updatedAt: 2000,
+          createdAt: 1500,
+          updatedAt: 1700,
           messageCount: 3,
           snippetText: "fix the tool read",
+          cwd: "/work/project",
         },
       ],
     });
-    const firstCall = executeMock.mock.calls[0]?.[0] as { sql: string; args: unknown[] };
-    expect(firstCall.sql).not.toContain("p.data as pdata");
-    expect(firstCall.sql).toContain(
-      "partType IN ('tool-invocation', 'tool-call', 'tool-result', 'tool')",
-    );
-    expect(firstCall.sql).toContain(
-      "partType IN ('text', 'reasoning') AND COALESCE(textValue, '') <> ''",
-    );
-    expect(firstCall.args).toEqual([
-      -8640000000000000,
-      8640000000000000,
-      10,
-      20,
-      ...INJECTED_PREFIXES.map((prefix) => `${prefix}*`),
-    ]);
-    expect(closeMock).toHaveBeenCalledTimes(1);
   });
 
   it("preserves complete tool_call input", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool-invocation",
-              toolName: "read",
-              toolCallId: "tc1",
-              args: "x".repeat(10000),
-            }),
-            role: "assistant",
-            tc: 1000,
-            sid: "s1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool-invocation",
+          toolName: "read",
+          toolCallId: "tc1",
+          args: "x".repeat(10000),
+        }),
+        role: "assistant",
+        tc: 1000,
+        sid: "s1",
+        rid: 1,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const messages = await collect(source);
 
     expect(messages).toHaveLength(1);
@@ -656,21 +575,17 @@ describe("OpenCodeSource", () => {
   });
 
   it("preserves complete text blocks", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({ type: "text", text: "y".repeat(10000) }),
-            role: "user",
-            tc: 1000,
-            sid: "s1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({ type: "text", text: "y".repeat(10000) }),
+        role: "user",
+        tc: 1000,
+        sid: "s1",
+        rid: 1,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
@@ -678,97 +593,83 @@ describe("OpenCodeSource", () => {
   });
 
   it("prefers string input when args uses a non-string representation", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool-call",
-              name: "run",
-              id: "tc1",
-              args: { command: "stale" },
-              input: '{"command":"current"}',
-            }),
-            role: "assistant",
-            tc: 1000,
-            sid: "s1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool-call",
+          name: "run",
+          id: "tc1",
+          args: { command: "stale" },
+          input: '{"command":"current"}',
+        }),
+        role: "assistant",
+        tc: 1000,
+        sid: "s1",
+        rid: 1,
+      },
+    ]);
 
-    const messages = await collect(new OpenCodeSource("/tmp/opencode.db"));
+    const messages = await collect(new OpenCodeSource(dbPath));
 
     expect(messages[0].blocks[0].toolInput).toBe('{"command":"current"}');
   });
 
   it.each([0, false])("preserves falsy tool values: %j", async (value) => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool-invocation",
-              toolName: "run",
-              toolCallId: "tc1",
-              args: value,
-            }),
-            role: "assistant",
-            tc: 1000,
-            sid: "s1",
-            rid: 1,
-          },
-          {
-            pdata: JSON.stringify({ type: "tool-result", toolCallId: "tc1", result: value }),
-            role: "assistant",
-            tc: 1001,
-            sid: "s1",
-            rid: 2,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool-invocation",
+          toolName: "run",
+          toolCallId: "tc1",
+          args: value,
+        }),
+        role: "assistant",
+        tc: 1000,
+        sid: "s1",
+        rid: 1,
+      },
+      {
+        pdata: JSON.stringify({ type: "tool-result", toolCallId: "tc1", result: value }),
+        role: "assistant",
+        tc: 1001,
+        sid: "s1",
+        rid: 2,
+      },
+    ]);
 
-    const messages = await collect(new OpenCodeSource("/tmp/opencode.db"));
+    const messages = await collect(new OpenCodeSource(dbPath));
 
     expect(messages[0].blocks[0].toolInput).toBe(JSON.stringify(value));
     expect(messages[1].blocks[0].text).toBe(JSON.stringify(value));
   });
 
   it("always closes database connection", async () => {
-    executeMock.mockRejectedValueOnce(new Error("db error"));
+    const close = vi.spyOn(DatabaseSync.prototype, "close");
+    new DatabaseSync(dbPath).close();
+    close.mockClear();
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
-    await expect(async () => {
-      for await (const _ of source.read()) {
-      }
-    }).rejects.toThrow("db error");
+    await expect(collect(new OpenCodeSource(dbPath))).rejects.toThrow("no such table");
 
-    expect(closeMock).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it("serializes non-string args to JSON for tool_call", async () => {
-    executeMock
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            pdata: JSON.stringify({
-              type: "tool-invocation",
-              toolName: "search",
-              toolCallId: "tc-5",
-              args: { query: "test", limit: 10 },
-            }),
-            role: "assistant",
-            tc: 1700000000000,
-            sid: "s1",
-            rid: 1,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rows: [] });
+    database([
+      {
+        pdata: JSON.stringify({
+          type: "tool-invocation",
+          toolName: "search",
+          toolCallId: "tc-5",
+          args: { query: "test", limit: 10 },
+        }),
+        role: "assistant",
+        tc: 1700000000000,
+        sid: "s1",
+        rid: 1,
+      },
+    ]);
 
-    const source = new OpenCodeSource("/tmp/opencode.db");
+    const source = new OpenCodeSource(dbPath);
     const msgs = await collect(source);
 
     expect(msgs).toHaveLength(1);
