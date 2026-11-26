@@ -28,21 +28,25 @@ function headers(text: string): string[] {
 
 describe("sessions_read message authors", () => {
   it("names each speaker in a Discord channel", async () => {
-    const message = (time: string, text: string) => ({
+    const message = (time: string, role: string, text: string) => ({
       type: "message",
       timestamp: `2026-03-10T10:00:0${time}Z`,
-      message: { role: "user", content: [{ type: "text", text }] },
+      message: { role, content: [{ type: "text", text }] },
     });
     const path = transcript("channel.jsonl", [
-      message("1", "[Discord Guild #general channel id:67890 guild] alice: ship it?"),
-      message("2", "[Discord Guild #general channel id:67890 guild] bob: after CI"),
+      message("1", "user", "[Discord Guild #general channel id:67890 guild] alice: ship it?"),
+      message("2", "assistant", "Running CI."),
+      message("3", "user", "[Discord Guild #general channel id:67890 guild] bob: after CI"),
+      message("4", "assistant", "Green."),
     ]);
 
     const result = await readSession({ source: "openclaw", path, sessionId: "channel" });
 
     expect(headers(result.content[0].text)).toEqual([
       "[2026-03-10T10:00:01.000Z] user alice",
-      "[2026-03-10T10:00:02.000Z] user bob",
+      "[2026-03-10T10:00:02.000Z] assistant",
+      "[2026-03-10T10:00:03.000Z] user bob",
+      "[2026-03-10T10:00:04.000Z] assistant",
     ]);
   });
 
