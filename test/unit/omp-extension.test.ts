@@ -95,8 +95,8 @@ describe("OMP extension", () => {
       "Invalid arguments at /limit: must be <= 100",
     );
     await expect(
-      run("sessions_list", { sources: Array.from({ length: 12 }, (_, index) => `s${index}`) }),
-    ).rejects.toThrow("Invalid arguments at /sources: must not have more than 11 items");
+      run("sessions_list", { sources: Array.from({ length: 13 }, (_, index) => `s${index}`) }),
+    ).rejects.toThrow("Invalid arguments at /sources: must not have more than 12 items");
   });
 
   it("reads a time interval through the registered tool", async () => {

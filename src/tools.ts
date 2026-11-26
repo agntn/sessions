@@ -33,7 +33,7 @@ export function loadOperations(): Promise<ToolOperations> {
 const path = Type.Optional(
   Type.String({
     description:
-      "Native data path for the single source: the sessions directory for claude, codex, gemini, grok, omp, openclaw, pi and vibe, the database file for mastra, openbot and opencode",
+      "Native data path for the single source: the sessions directory for claude, codex, gemini, grok, omp, openclaw, pi and vibe, the database file for hermes, mastra, openbot and opencode",
     minLength: 1,
   }),
 );
