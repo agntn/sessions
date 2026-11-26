@@ -12,6 +12,8 @@ const WINDOW = 1000;
 /** Prefix Hermes puts on content it stored as JSON parts. */
 const JSON_CONTENT = "\u0000json:";
 
+const UTF8 = new TextDecoder();
+
 /** Turns that ended the way the model meant to, so they need no stop block. */
 const PLANNED_STOPS = new Set(["stop", "tool_calls"]);
 
@@ -31,11 +33,11 @@ function partText(part: unknown): string | undefined {
 
 /**
  * Reads stored content: plain text, or the JSON Hermes writes for structured parts.
- * @param value - Native `content` column.
+ * @param value - Native `content` column as bytes, since Node 26.0 cuts text at NUL.
  * @returns {string | undefined} Readable text, the raw value when its JSON is broken.
  */
 function contentText(value: unknown): string | undefined {
-  const raw = text(value);
+  const raw = value instanceof Uint8Array ? UTF8.decode(value) || undefined : text(value);
   if (!raw?.startsWith(JSON_CONTENT)) return raw;
   try {
     const parsed = parseJson(raw.slice(JSON_CONTENT.length));
@@ -141,11 +143,11 @@ function pageSql(sessionId: boolean, cursor: boolean, reached: boolean): string 
   if (sessionId) predicates.push("m.session_id = ?");
   if (reached) predicates.push("m.session_id IN (SELECT value FROM json_each(?))");
   if (cursor) predicates.push("m.id > ?");
-  return `SELECT m.id, m.session_id AS sid, m.role, m.content, m.tool_calls AS toolCalls,
-      m.tool_call_id AS toolCallId, m.tool_name AS toolName, m.timestamp, m.finish_reason AS finish,
-      m.reasoning, m.reasoning_content AS reasoningContent, m.display_kind AS kind,
-      m.display_metadata AS display, m.compacted, s.source AS platform, s.title, s.cwd,
-      s.parent_session_id AS parent
+  return `SELECT m.id, m.session_id AS sid, m.role, CAST(m.content AS BLOB) AS content,
+      m.tool_calls AS toolCalls, m.tool_call_id AS toolCallId, m.tool_name AS toolName,
+      m.timestamp, m.finish_reason AS finish, m.reasoning, m.reasoning_content AS reasoningContent,
+      m.display_kind AS kind, m.display_metadata AS display, m.compacted, s.source AS platform,
+      s.title, s.cwd, s.parent_session_id AS parent
     FROM messages m LEFT JOIN sessions s ON s.id = m.session_id
     WHERE ${predicates.join(" AND ")} ORDER BY m.id LIMIT ?`;
 }
