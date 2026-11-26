@@ -11,7 +11,13 @@
 
 import { createHash } from "node:crypto";
 import { assertDirectory } from "./core/cwd.ts";
-import type { Message, Participant, SessionListFilter, SessionTimeRange } from "./core/types.ts";
+import type {
+  Message,
+  Model,
+  Participant,
+  SessionListFilter,
+  SessionTimeRange,
+} from "./core/types.ts";
 import { quoted } from "./core/text.ts";
 import {
   DEFAULT_MESSAGE_LIMIT,
@@ -157,6 +163,7 @@ interface RenderableMessage {
   readonly role: "user" | "assistant" | "tool";
   readonly blocks: readonly RenderableBlock[];
   readonly author?: Readonly<Pick<Participant, "platform" | "name">>;
+  readonly model?: Readonly<Model>;
 }
 
 interface PagingInput {
@@ -217,10 +224,33 @@ function directoryCell(cwd: string | undefined): string {
 function authorLabel(message: RenderableMessage): string {
   const author = message.author;
   if (!author?.name || author.platform === "cli") return "";
-  let end = Math.min(author.name.length, MAX_AUTHOR_CHARS);
-  if (splitsSurrogatePair(author.name, end)) end -= 1;
-  const name = end < author.name.length ? `${author.name.slice(0, end)}…` : author.name;
-  return ` ${/[\s"\p{Cc}\p{Cf}]/u.test(name) ? quoted(name) : name}`;
+  return ` ${headerValue(author.name)}`;
+}
+
+/**
+ * Spells an assistant model for its header, capped like an author name.
+ *
+ * @param message - Message whose header is being built.
+ * @returns {string} `model=<id>`, a provider after it when recorded, or nothing.
+ */
+function modelLabel(message: RenderableMessage): string {
+  if (message.role !== "assistant" || !message.model) return "";
+  const { id, provider } = message.model;
+  const model = `model=${headerValue(id)}`;
+  return provider === undefined ? model : `${model} provider=${headerValue(provider)}`;
+}
+
+/**
+ * One header value, cut at 64 characters and quoted when it hides spaces or controls.
+ *
+ * @param value - Native text.
+ * @returns {string} The value as it goes in a header.
+ */
+function headerValue(value: string): string {
+  let end = Math.min(value.length, MAX_AUTHOR_CHARS);
+  if (splitsSurrogatePair(value, end)) end -= 1;
+  const shown = end < value.length ? `${value.slice(0, end)}…` : value;
+  return /[\s"\p{Cc}\p{Cf}]/u.test(shown) ? quoted(shown) : shown;
 }
 
 function formatSummary(session: Readonly<SessionSummary>): string {
@@ -294,6 +324,8 @@ function splitsSurrogatePair(text: string, offset: number): boolean {
 class RenderBuffer {
   readonly #parts: string[] = [];
   #remaining: number;
+  /** The last model a header named, so only a switch repeats it. */
+  #model = "";
 
   constructor(remaining: number) {
     this.#remaining = remaining;
@@ -376,13 +408,26 @@ class RenderBuffer {
       message.timestampSource === "file" || message.timestampSource === "session"
         ? `; inferred from ${message.timestampSource}`
         : "";
-    const header = `[${isoStamp(message.timestamp, message.date)}${inferred}] ${message.role}${authorLabel(message)}\n`;
+    const header = `[${isoStamp(message.timestamp, message.date)}${inferred}] ${message.role}${authorLabel(message)}${this.modelSwitch(message)}\n`;
     if (!this.append(`${prefix}${header}`)) return { ...position };
     if (message.blocks.length === 0) return undefined;
     if (position.block >= message.blocks.length) {
       throw new RangeError(`position.block must be below ${message.blocks.length}`);
     }
     return this.renderBlocks(message, position);
+  }
+
+  /**
+   * Names an assistant's model when it changes. An unknown one stays quiet.
+   *
+   * @param message - Message whose header is being built.
+   * @returns {string} A leading space and the label, or nothing.
+   */
+  private modelSwitch(message: RenderableMessage): string {
+    const label = modelLabel(message);
+    if (!label || label === this.#model) return "";
+    this.#model = label;
+    return ` ${label}`;
   }
 
   text(): string {

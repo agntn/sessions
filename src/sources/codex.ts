@@ -3,7 +3,14 @@ import { join } from "node:path";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Source, SourceReadOptions } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
-import { isRecord, jsonlLines, parseJson, parseJsonRecord, scalarText } from "./parsing.ts";
+import {
+  isRecord,
+  jsonlLines,
+  modelOf,
+  parseJson,
+  parseJsonRecord,
+  scalarText,
+} from "./parsing.ts";
 
 interface SessionFile {
   readonly path: string;
@@ -228,6 +235,8 @@ class MirrorTracker {
 
 class JsonlNormalizer {
   private cwd: string | undefined;
+  /** Whatever the latest `turn_context` said. */
+  private model: Pick<Message, "model"> = {};
   private mirrors = new MirrorTracker();
   private source: string;
   private sessionId: string;
@@ -289,12 +298,17 @@ class JsonlNormalizer {
         parsed.role === "user"
           ? { platform: "cli", name: this.userName }
           : { platform: "cli", name: "codex", isBot: true },
+      ...(parsed.role === "assistant" ? this.model : {}),
     };
   }
 
   normalize(entry: Readonly<Record<string, unknown>>): Message | undefined {
     if (entry.type === "session_meta") {
       if (isRecord(entry.payload)) this.cwd = scalarText(entry.payload.cwd) || this.cwd;
+      return undefined;
+    }
+    if (entry.type === "turn_context") {
+      if (isRecord(entry.payload)) this.model = modelOf("assistant", { id: entry.payload.model });
       return undefined;
     }
     if (!isRecord(entry.payload)) return undefined;
