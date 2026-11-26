@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Client } from "@libsql/client";
+import type { DatabaseSync } from "node:sqlite";
 import { openDatabase } from "../core/db.ts";
 import { home } from "../core/env.ts";
 import type {
@@ -261,18 +261,19 @@ function cursorOf(row: Row | undefined): Cursor | undefined {
   return sid && mid && Number.isFinite(position) ? { sid, position, mid } : undefined;
 }
 
-async function tables(db: Readonly<Client>): Promise<ReadonlySet<string>> {
-  const result = await db.execute("SELECT name FROM sqlite_master WHERE type = 'table'");
-  return new Set(result.rows.flatMap((row) => scalarText(row.name) ?? []));
+function tables(db: Readonly<DatabaseSync>): ReadonlySet<string> {
+  const rows = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+  return new Set(rows.flatMap((row) => scalarText(row.name) ?? []));
 }
 
-async function agentsOf(db: Readonly<Client>, present: boolean): Promise<Agents> {
+function agentsOf(db: Readonly<DatabaseSync>, present: boolean): Agents {
   const agents: Record<string, Agent> = {};
   if (!present) return agents;
-  const result =
-    await db.execute(`SELECT agent_id AS id, json_extract(agent_json, '$.name') AS name,
-    json_extract(agent_json, '$.workspacePath') AS cwd FROM projection_agents`);
-  for (const row of result.rows) {
+  const rows = db
+    .prepare(`SELECT agent_id AS id, json_extract(agent_json, '$.name') AS name,
+    json_extract(agent_json, '$.workspacePath') AS cwd FROM projection_agents`)
+    .all();
+  for (const row of rows) {
     const id = scalarText(row.id);
     const name = text(row.name);
     const cwd = text(row.cwd);
@@ -300,8 +301,8 @@ export class OpenBotSource implements Source {
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const db = await openDatabase(this.dbPath);
     try {
-      const known = await tables(db);
-      const agents = await agentsOf(db, known.has("projection_agents"));
+      const known = tables(db);
+      const agents = agentsOf(db, known.has("projection_agents"));
       for (const stream of STREAMS) {
         if (stream.tables.every((table) => known.has(table)))
           yield* this.stream(db, stream, agents, options?.sessionId);
@@ -312,7 +313,7 @@ export class OpenBotSource implements Source {
   }
 
   private async *stream(
-    db: Readonly<Client>,
+    db: Readonly<DatabaseSync>,
     stream: Readonly<Stream>,
     agents: Agents,
     sessionId: string | undefined,
@@ -325,7 +326,7 @@ export class OpenBotSource implements Source {
         WINDOW,
       ];
       const sql = pageSql(stream, sessionId !== undefined, cursor !== undefined);
-      const { rows } = await db.execute({ sql, args });
+      const rows = db.prepare(sql).all(...args);
       for (const row of rows) {
         const result = stream.toMessage(row, agents);
         if (result) yield result;

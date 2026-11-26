@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { Client } from "@libsql/client";
+import type { DatabaseSync } from "node:sqlite";
 import { directoryPrefix, inDirectory } from "../core/cwd.ts";
 import { openDatabase } from "../core/db.ts";
 import { home, osUser } from "../core/env.ts";
@@ -239,16 +239,16 @@ function reachedSessions(since: number | undefined): {
  * Sessions whose row names the directory or one below it, by the rule every source uses.
  * @param db - Open OpenCode database.
  * @param cwd - Absolute directory filter.
- * @returns {Promise<{ sql: string, args: string[] }>} Clause for the part scan and its arguments.
+ * @returns {{ sql: string, args: string[] }} Clause for the part scan and its arguments.
  */
-async function directorySessions(
-  db: Readonly<Client>,
+function directorySessions(
+  db: Readonly<DatabaseSync>,
   cwd: string | undefined,
-): Promise<{ readonly sql: string; readonly args: string[] }> {
+): { readonly sql: string; readonly args: string[] } {
   if (cwd === undefined) return { sql: "", args: [] };
   const prefix = directoryPrefix(cwd);
-  const result = await db.execute("SELECT id, directory FROM session");
-  const ids = (result.rows as unknown as readonly SessionRow[]).flatMap(({ id, directory }) =>
+  const rows = db.prepare("SELECT id, directory FROM session").all();
+  const ids = (rows as unknown as readonly SessionRow[]).flatMap(({ id, directory }) =>
     typeof id === "string" && typeof directory === "string" && inDirectory(directory, prefix)
       ? [id]
       : [],
@@ -263,12 +263,13 @@ async function directorySessions(
  * Finds the kept sessions once. Past half the parts, a plain scan beats the session index.
  * @param db - Open OpenCode database.
  * @param since - Inclusive bound on a session's last part.
- * @returns {Promise<Reach>} Kept sessions, all without a bound.
+ * @returns {Reach} Kept sessions, all without a bound.
  */
-async function reach(db: Readonly<Client>, since: number | undefined): Promise<Reach> {
+function reach(db: Readonly<DatabaseSync>, since: number | undefined): Reach {
   if (since === undefined) return EVERY_SESSION;
-  const result = await db.execute({
-    sql: `
+  const row = db
+    .prepare(
+      `
       WITH sessions AS (
         SELECT session_id, MAX(time_created) >= ? AS reached, COUNT(*) AS parts
         FROM part
@@ -280,9 +281,8 @@ async function reach(db: Readonly<Client>, since: number | undefined): Promise<R
         COALESCE(SUM(parts), 0) AS allParts
       FROM sessions
     `,
-    args: [since],
-  });
-  const row = result.rows[0];
+    )
+    .get(since);
   const json = typeof row?.ids === "string" ? row.ids : "[]";
   const empty = json === "[]";
   if (Number(row?.reachedParts) * 2 <= Number(row?.allParts)) {
@@ -357,9 +357,10 @@ export class OpenCodeSource implements Source {
     const reached = reachedSessions(range?.since);
     const db = await openDatabase(this.dbPath);
     try {
-      const placed = await directorySessions(db, range?.cwd);
-      const result = await db.execute({
-        sql: `
+      const placed = directorySessions(db, range?.cwd);
+      const rows = db
+        .prepare(
+          `
           WITH parsed AS (
             SELECT
               p.session_id AS sid,
@@ -442,7 +443,8 @@ export class OpenCodeSource implements Source {
           LEFT JOIN paged ON TRUE
           ORDER BY paged.updatedAt DESC, paged.sid ASC
         `,
-        args: [
+        )
+        .all(
           ...reached.args,
           ...placed.args,
           range?.since ?? -8640000000000000,
@@ -450,9 +452,7 @@ export class OpenCodeSource implements Source {
           limit,
           offset,
           ...SNIPPET_FILTER_ARGS,
-        ],
-      });
-      const rows = result.rows as unknown as SummaryRow[];
+        ) as unknown as SummaryRow[];
       const total = Number(rows[0]?.total ?? 0);
       const sessions = rows.flatMap((row) => {
         if (typeof row.sid !== "string") return [];
@@ -477,13 +477,14 @@ export class OpenCodeSource implements Source {
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const db = await openDatabase(this.dbPath);
     try {
-      const reached = await reach(db, options?.activeSince);
+      const reached = reach(db, options?.activeSince);
       if (reached.empty) return;
       let boundary: Boundary | undefined;
       while (true) {
         const { whereSql, args } = partPage(options?.sessionId, reached.json, boundary);
-        const rowsResult = await db.execute({
-          sql: `
+        const rows = db
+          .prepare(
+            `
     SELECT
       p.data as pdata,
       json_extract(m.data, '$.role') as role,
@@ -498,9 +499,8 @@ export class OpenCodeSource implements Source {
     ORDER BY p.time_created, p.rowid
     LIMIT ?
   `,
-          args,
-        });
-        const rows = rowsResult.rows as unknown as PartRow[];
+          )
+          .all(...args) as unknown as PartRow[];
         if (rows.length === 0) break;
 
         const last = rows.at(-1);

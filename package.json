@@ -72,7 +72,6 @@
   },
   "dependencies": {
     "@agntn/tools": "catalog:deps",
-    "@libsql/client": "catalog:deps",
     "@modelcontextprotocol/server": "catalog:deps"
   },
   "devDependencies": {

@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClient } from "@libsql/client";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Message } from "../../src/core/types.ts";
 import { OpenBotSource } from "../../src/sources/openbot.ts";
@@ -48,11 +48,11 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-async function database(schema: string, statements: readonly string[]): Promise<void> {
-  const db = createClient({ url: `file:${dbPath}` });
+function database(schema: string, statements: readonly string[]): void {
+  const db = new DatabaseSync(dbPath);
   try {
-    await db.executeMultiple(schema);
-    for (const sql of statements) await db.execute(sql);
+    db.exec(schema);
+    for (const sql of statements) db.exec(sql);
   } finally {
     db.close();
   }
@@ -94,7 +94,7 @@ async function collect(source: Readonly<OpenBotSource>, sessionId?: string): Pro
 
 describe("OpenBotSource agent threads", () => {
   it("reads what the thread shows and names the provider session behind each turn", async () => {
-    await database(THREADS, [
+    database(THREADS, [
       ...AGENTS,
       threadRow(0, {
         id: "u-1",
@@ -166,7 +166,7 @@ describe("OpenBotSource agent threads", () => {
   });
 
   it("keeps attachments, routine prompts, other agents and unfinished items", async () => {
-    await database(THREADS, [
+    database(THREADS, [
       ...AGENTS,
       threadRow(0, {
         id: "routine-1",
@@ -240,7 +240,7 @@ describe("OpenBotSource agent threads", () => {
         createdAt: "2026-11-01T12:00:00.000Z",
       }),
     );
-    await database(THREADS, [...AGENTS, ...rows]);
+    database(THREADS, [...AGENTS, ...rows]);
 
     const messages = await collect(new OpenBotSource(dbPath));
 
@@ -253,7 +253,7 @@ describe("OpenBotSource team channels", () => {
   const channel = `INSERT INTO projection_channels VALUES ('${CHANNEL}', ${json({ name: "Release" })})`;
 
   it("reads the live channel and leaves replaced revisions to the agent threads", async () => {
-    await database(`${THREADS}${CHANNELS}`, [
+    database(`${THREADS}${CHANNELS}`, [
       ...AGENTS,
       channel,
       channelRow(1, {
@@ -330,7 +330,7 @@ describe("OpenBotSource team channels", () => {
   });
 
   it("reads only the requested session", async () => {
-    await database(`${THREADS}${CHANNELS}`, [
+    database(`${THREADS}${CHANNELS}`, [
       ...AGENTS,
       channel,
       threadRow(0, {
@@ -357,7 +357,7 @@ describe("OpenBotSource team channels", () => {
   });
 
   it("still reads threads from a database without channels", async () => {
-    await database(THREADS, [
+    database(THREADS, [
       ...AGENTS,
       threadRow(0, {
         id: "u-1",

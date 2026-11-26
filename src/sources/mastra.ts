@@ -116,8 +116,9 @@ export class MastraSource implements Source {
   async *read(): AsyncGenerator<Message> {
     const db = await openDatabase(this.dbPath);
     try {
-      const rowsResult = await db.execute({
-        sql: `
+      const rows = db
+        .prepare(
+          `
   SELECT m.rowid as rowId, m.role, m.content, m.createdAt, m.thread_id,
     CASE WHEN json_valid(t.metadata, 10) THEN json_extract(t.metadata, '$.projectPath') END AS cwd
   FROM mastra_messages m
@@ -125,9 +126,8 @@ export class MastraSource implements Source {
   WHERE m.role IN ('user', 'assistant')
   ORDER BY m.createdAt, m.rowid
 `,
-        args: [],
-      });
-      const rows = rowsResult.rows as unknown as {
+        )
+        .all() as unknown as {
         rowId: number;
         role: string;
         content: string;
