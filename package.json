@@ -1,6 +1,6 @@
 {
   "name": "@agntn/sessions",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Read normalized AI coding sessions across harnesses.",
   "keywords": [
     "agents",
