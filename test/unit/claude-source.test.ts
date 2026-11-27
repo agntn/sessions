@@ -201,6 +201,8 @@ describe("ClaudeSource", () => {
     };
     straddling("key", 3);
     straddling("value", 10);
+    const spaced = entry("spaced").replace('"type":', '"cwd" : "/work/app", "type":');
+    write("spaced", spaced, entry("spaced later", "/elsewhere"));
     write("giant", entry("giant", `/elsewhere/${"y".repeat(1 << 21)}`));
     const source = new ClaudeSource(directory);
     const texts = async (cwd?: string): Promise<string[]> =>
@@ -217,6 +219,8 @@ describe("ClaudeSource", () => {
       "giant",
       "here",
       "key",
+      "spaced",
+      "spaced later",
       "value",
     ]);
     expect(await texts("/elsewhere/")).toEqual([
@@ -225,8 +229,10 @@ describe("ClaudeSource", () => {
       ...filler,
       "giant",
       "key",
+      "spaced",
+      "spaced later",
       "value",
     ]);
-    expect(await texts()).toHaveLength(10);
+    expect(await texts()).toHaveLength(12);
   });
 });

@@ -103,13 +103,27 @@ function sessionIdFromPath(path: string): string {
 
 /** Read size for the `cwd` scan. */
 const SCAN_BYTES = 1 << 20;
-const CWD_KEY = Buffer.from('"cwd":"');
+const CWD_KEY = Buffer.from('"cwd"');
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
+const COLON = 0x3a;
 /** No real path is this long. */
 const LITERAL_BYTES = 1 << 16;
+/** {@link DirectoryScan.valueStart} ran out of bytes. */
+const MORE = -1;
+/** {@link DirectoryScan.valueStart} found no string after the key. */
+const NO_STRING = -2;
 
-/** Every `"cwd":"…"` in a transcript. Message text escapes its quotes, so it can't match. */
+/**
+ * Whether a byte is JSON whitespace.
+ * @param byte - Byte to check.
+ * @returns {boolean} Space, tab, line feed or carriage return.
+ */
+function isBlank(byte: number | undefined): boolean {
+  return byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d;
+}
+
+/** Every `"cwd"` string in a transcript. Message text escapes its quotes, so it can't match. */
 class DirectoryScan {
   /** The read chunk `drain()` works through next. */
   chunk: Buffer = Buffer.alloc(0);
@@ -118,7 +132,7 @@ class DirectoryScan {
   lost = false;
   private bytes: Buffer = Buffer.alloc(0);
 
-  /** Scans `chunk`, carrying a cut literal into the next one. */
+  /** Scans `chunk`, carrying a cut field into the next one. */
   drain(): void {
     this.bytes = Buffer.concat([this.bytes, this.chunk]);
     let from = 0;
@@ -127,30 +141,54 @@ class DirectoryScan {
       key !== -1;
       key = this.bytes.indexOf(CWD_KEY, from)
     ) {
-      const open = key + CWD_KEY.length - 1;
-      const close = this.closingQuote(open);
-      if (close === -1) {
-        this.lost ||= this.bytes.length - key > LITERAL_BYTES;
-        this.bytes = this.lost ? Buffer.alloc(0) : this.bytes.subarray(key);
+      const open = this.valueStart(key + CWD_KEY.length);
+      const close = open < 0 ? open : this.closingQuote(open);
+      if (close === MORE) {
+        this.carry(key);
         return;
       }
-      this.add(this.bytes.toString("utf8", open, close + 1));
-      from = close + 1;
+      if (open >= 0) this.add(this.bytes.toString("utf8", open, close + 1));
+      from = Math.max(close, key) + 1;
     }
     this.bytes = this.bytes.subarray(Math.max(from, this.bytes.length - CWD_KEY.length + 1));
   }
 
   /**
+   * Keeps a field cut by the chunk end, unless it is too long to be a path.
+   * @param key - Offset of its key.
+   */
+  private carry(key: number): void {
+    this.lost ||= this.bytes.length - key > LITERAL_BYTES;
+    this.bytes = this.lost ? Buffer.alloc(0) : this.bytes.subarray(key);
+  }
+
+  /**
+   * The opening quote of the string after a key, past legal whitespace.
+   * @param after - Offset just past the key.
+   * @returns {number} The quote, {@link MORE} or {@link NO_STRING}.
+   */
+  private valueStart(after: number): number {
+    let index = after;
+    while (isBlank(this.bytes[index])) index += 1;
+    if (index >= this.bytes.length) return MORE;
+    if (this.bytes[index] !== COLON) return NO_STRING;
+    index += 1;
+    while (isBlank(this.bytes[index])) index += 1;
+    if (index >= this.bytes.length) return MORE;
+    return this.bytes[index] === QUOTE ? index : NO_STRING;
+  }
+
+  /**
    * Where the string literal opened at `open` closes.
    * @param open - Offset of its opening quote.
-   * @returns {number} Its closing quote, or -1 past the chunk.
+   * @returns {number} Its closing quote, or {@link MORE}.
    */
   private closingQuote(open: number): number {
     let index = open + 1;
     while (index < this.bytes.length && this.bytes[index] !== QUOTE) {
       index += this.bytes[index] === BACKSLASH ? 2 : 1;
     }
-    return index < this.bytes.length ? index : -1;
+    return index < this.bytes.length ? index : MORE;
   }
 
   private add(literal: string): void {
