@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { directoryPrefix, inDirectory } from "../core/cwd.ts";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Source, SourceReadOptions } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
@@ -176,6 +177,46 @@ function parsedTimestamp(
 
 function sessionIdFromPath(path: string): string {
   return extractSessionId(path.split("/").pop() || "");
+}
+
+/** Chunk size for a header peek, so a foreign rollout costs one small read. */
+const PEEK_BYTES = 4096;
+
+/**
+ * The directory a rollout's first record names, read without the rest of the file.
+ * @param path - JSONL rollout, plain or zstd.
+ * @returns {Promise<string | undefined>} `session_meta.cwd`, or nothing when it can't tell.
+ */
+async function headerDirectory(path: string): Promise<string | undefined> {
+  try {
+    for await (const line of jsonlLines(path, PEEK_BYTES)) {
+      const entry = parseJsonRecord(line);
+      if (entry?.type !== "session_meta" || !isRecord(entry.payload)) return undefined;
+      return scalarText(entry.payload.cwd) || undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Keeps whole sessions that may have run under `cwd`. No header directory rules nothing out.
+ * @param files - Rollouts in read order.
+ * @param cwd - Absolute directory filter.
+ * @returns {Promise<SessionFile[]>} The rollouts to read, in read order.
+ */
+async function filesInDirectory(
+  files: readonly SessionFile[],
+  cwd: string,
+): Promise<SessionFile[]> {
+  const prefix = directoryPrefix(cwd);
+  const kept = new Set<string>();
+  for (const file of files) {
+    const header = file.format === "jsonl" ? await headerDirectory(file.path) : undefined;
+    if (header === undefined || inDirectory(header, prefix)) kept.add(sessionIdFromPath(file.path));
+  }
+  return files.filter((file) => kept.has(sessionIdFromPath(file.path)));
 }
 
 class MirrorTracker {
@@ -414,17 +455,26 @@ export class CodexSource implements Source {
     }
   }
 
-  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
-    const sessionId = options?.sessionId || undefined;
+  /**
+   * Rollouts a read needs, oldest first.
+   * @param options - Session, activity and directory filters.
+   * @returns {Promise<SessionFile[]>} Files the filters can't rule out.
+   */
+  private async rollouts(options?: SourceReadOptions): Promise<SessionFile[]> {
     const files: SessionFile[] = [];
     for (const dir of this.sessionsDirs) {
-      for (const file of walkSessions(dir, sessionId)) {
+      for (const file of walkSessions(dir, options?.sessionId || undefined)) {
         files.push({ ...file, mtime: statSync(file.path).mtimeMs });
       }
     }
     files.sort((left, right) => left.mtime - right.mtime);
     const active = activeFiles(files, (file) => sessionIdFromPath(file.path), options?.activeSince);
-    for (const file of active) {
+    return options?.cwd ? filesInDirectory(active, options.cwd) : active;
+  }
+
+  async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
+    const sessionId = options?.sessionId || undefined;
+    for (const file of await this.rollouts(options)) {
       if (file.format === "json") yield* this.readJsonSession(file, sessionId);
       else yield* this.readJsonlSession(file);
     }

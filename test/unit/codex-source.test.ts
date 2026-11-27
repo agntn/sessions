@@ -545,6 +545,42 @@ describe("CodexSource JSONL", () => {
     expect(msgs.map((m) => m.blocks[0].text)).toEqual(["plain"]);
   });
 
+  it("skips rollouts whose header names another directory", async () => {
+    const turn = (text: string) => ({
+      type: "event_msg",
+      timestamp: "2026-03-10T10:00:00Z",
+      payload: { type: "user_message", message: text },
+    });
+    const meta = (cwd: string) => ({ type: "session_meta", payload: { id: "x", cwd } });
+    writeJsonl("rollout-2026-03-10T10-00-00-here.jsonl", [meta("/work/app"), turn("here")]);
+    writeJsonl("rollout-2026-03-10T10-00-01-below.jsonl", [meta("/work/app/web"), turn("below")]);
+    writeJsonl("rollout-2026-03-10T10-00-02-sibling.jsonl", [
+      meta("/work/app-two"),
+      turn("sibling"),
+    ]);
+    writeFileSync(
+      join(tempDir, "rollout-2026-03-10T10-00-03-packed.jsonl.zst"),
+      zstdCompressSync(
+        [meta("/elsewhere"), turn("packed")].map((l) => JSON.stringify(l)).join("\n"),
+      ),
+    );
+    writeJsonl("rollout-2026-03-10T10-00-04-legacy.jsonl", [
+      { id: "legacy", timestamp: "2026-03-10T10:00:00Z", instructions: "" },
+      turn("legacy"),
+    ]);
+    writeJson("rollout-2026-03-10T10-00-05-old.json", {
+      session: { id: "old", timestamp: "2026-03-10T10:00:00Z" },
+      items: [{ type: "message", role: "user", content: [{ type: "input_text", text: "old" }] }],
+    });
+    const source = new CodexSource(tempDir);
+    const texts = async (cwd?: string): Promise<string[]> =>
+      (await collect(source, { cwd })).map((m) => m.blocks[0].text ?? "").sort();
+
+    expect(await texts("/work/app")).toEqual(["below", "here", "legacy", "old"]);
+    expect(await texts("/elsewhere/")).toEqual(["legacy", "old", "packed"]);
+    expect(await texts()).toHaveLength(6);
+  });
+
   it("falls back to full filename for non-rollout files", async () => {
     writeJsonl("custom-session.jsonl", [
       {
