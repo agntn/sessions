@@ -223,8 +223,16 @@ function kept(summary: Readonly<ToolSessionSummary>, filter?: SessionListFilter)
   return summary.cwd !== undefined && inDirectory(summary.cwd, directoryPrefix(filter.cwd));
 }
 
-function activityOptions(range?: SessionTimeRange): SourceReadOptions | undefined {
-  return range?.since === undefined ? undefined : { activeSince: range.since };
+/**
+ * The parts of a listing filter a source may answer before parsing.
+ * @param filter - Listing filter.
+ * @returns {SourceReadOptions} Activity bound and directory, each only when set.
+ */
+function listingOptions(filter?: SessionListFilter): SourceReadOptions {
+  return {
+    ...(filter?.since === undefined ? {} : { activeSince: filter.since }),
+    ...(filter?.cwd === undefined ? {} : { cwd: filter.cwd }),
+  };
 }
 
 /**
@@ -250,7 +258,7 @@ export async function listSourceSessions(
   }
 
   const summaries = new Map<string, SummaryDraft>();
-  for await (const message of source.read(activityOptions(range))) {
+  for await (const message of source.read(listingOptions(range))) {
     let summary = summaries.get(message.sessionId);
     if (!summary) {
       summary = new SummaryDraft({ ...message, source: source.name });

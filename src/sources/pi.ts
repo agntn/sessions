@@ -1,6 +1,7 @@
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { directoryPrefix, inDirectory } from "../core/cwd.ts";
 import { home, osUser } from "../core/env.ts";
 import type { Block, Message, Participant, Source, SourceReadOptions } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
@@ -9,6 +10,12 @@ import { isRecord, jsonlLines, modelOf, parseJsonRecord, scalarText } from "./pa
 interface SessionFile {
   readonly path: string;
   readonly mtime: number;
+}
+
+/** The session and directory a transcript's first entry settles. */
+interface TranscriptHeader {
+  readonly sessionId: string;
+  readonly cwd?: string;
 }
 
 /** What every message of one transcript shares. */
@@ -135,12 +142,22 @@ function settledSessionId(
   return entry.type === "message" ? current : undefined;
 }
 
+function settledHeader(
+  entry: Readonly<Record<string, unknown>>,
+  stem: string,
+): TranscriptHeader | undefined {
+  const sessionId = settledSessionId(entry, stem);
+  if (sessionId === undefined) return undefined;
+  const cwd = entry.type === "session" ? scalarText(entry.cwd) : undefined;
+  return cwd ? { sessionId, cwd } : { sessionId };
+}
+
 /**
- * Settles a transcript's session the way `readFile` does, reading only up to its first entry.
+ * Settles a transcript the way `readFile` does, reading only up to its first entry.
  * @param path - Transcript path.
- * @returns {string} The id its messages carry.
+ * @returns {TranscriptHeader} Its session id and header directory.
  */
-function transcriptSession(path: string): string {
+function transcriptHeader(path: string): TranscriptHeader {
   const stem = sessionIdFromPath(path);
   const fd = openSync(path, "r");
   try {
@@ -152,12 +169,12 @@ function transcriptSession(path: string): string {
       pending = lines.pop() ?? "";
       for (const line of lines) {
         const entry = parseJsonRecord(line);
-        const settled = entry && settledSessionId(entry, stem);
-        if (settled !== undefined) return settled;
+        const settled = entry && settledHeader(entry, stem);
+        if (settled) return settled;
       }
     }
     const entry = parseJsonRecord(pending + decoder.end());
-    return (entry && settledSessionId(entry, stem)) ?? stem;
+    return (entry && settledHeader(entry, stem)) ?? { sessionId: stem };
   } finally {
     closeSync(fd);
   }
@@ -171,10 +188,33 @@ function transcriptSession(path: string): string {
  */
 function headerHolds(path: string, wanted: string): boolean {
   try {
-    return transcriptSession(path) === wanted;
+    return transcriptHeader(path).sessionId === wanted;
   } catch {
     return false;
   }
+}
+
+/**
+ * Keeps whole sessions that may have run under `cwd`. A header without one rules nothing out.
+ * @param files - Transcripts in read order.
+ * @param headerOf - The settled header of a transcript.
+ * @param cwd - Absolute directory filter.
+ * @returns {SessionFile[]} The transcripts to read, in read order.
+ */
+function filesInDirectory(
+  files: readonly SessionFile[],
+  headerOf: (file: Readonly<SessionFile>) => TranscriptHeader,
+  cwd: string,
+): SessionFile[] {
+  const prefix = directoryPrefix(cwd);
+  const kept = new Set(
+    files.flatMap((file) => {
+      const header = headerOf(file);
+      const near = header.cwd === undefined || inDirectory(header.cwd, prefix);
+      return near ? [header.sessionId] : [];
+    }),
+  );
+  return files.filter((file) => kept.has(headerOf(file).sessionId));
 }
 
 function* walkJsonl(dir: string): Generator<string> {
@@ -280,11 +320,18 @@ export class PiSource implements Source {
 
   async *read(options?: SourceReadOptions): AsyncGenerator<Message> {
     const wanted = options?.sessionId || undefined;
-    const files = activeFiles(
+    const headers = new Map<string, TranscriptHeader>();
+    const headerOf = (file: Readonly<SessionFile>): TranscriptHeader => {
+      const known = headers.get(file.path) ?? transcriptHeader(file.path);
+      headers.set(file.path, known);
+      return known;
+    };
+    const active = activeFiles(
       this.sessionFiles(wanted),
-      (file) => transcriptSession(file.path),
+      (file) => headerOf(file).sessionId,
       options?.activeSince,
     );
+    const files = options?.cwd ? filesInDirectory(active, headerOf, options.cwd) : active;
     for (const file of files) yield* this.readFile(file, wanted);
   }
 }

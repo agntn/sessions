@@ -20,7 +20,7 @@ Keep one adapter per harness in `src/sources/`. Parsing belongs inside that adap
 
 Does a harness adopt another harness's native format? The original harness owns the parser. The derivative adapter depends on it. The `omp` adapter, for example, builds on the `pi` parser.
 
-`available()` checks whether the native source exists. `read()` reads the complete native archive, with no synchronization cursor. The one exception is an exact session filter the native store can answer itself.
+`available()` checks whether the native source exists. `read()` reads the complete native archive, with no synchronization cursor. The exceptions are filters the native store can answer itself: an exact session, a last activity bound and a working directory. Anything it can't rule out still gets read.
 
 A native summary projection may aggregate bounded metadata without building message payloads. Keep text, thinking, tool calls, tool results, roles, timestamps, session IDs and useful native metadata. Never truncate native data silently.
 
