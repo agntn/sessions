@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { listSessions } from "../../src/tool-operations.ts";
 import { listSourceSessions } from "../../src/tool-reader.ts";
 import { OpenBotSource } from "../../src/sources/openbot.ts";
