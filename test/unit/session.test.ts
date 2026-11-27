@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { createSessionReader } from "../../src/core/session.ts";
 import type { Message, Source } from "../../src/core/types.ts";
 

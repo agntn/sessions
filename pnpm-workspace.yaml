@@ -20,13 +20,15 @@ catalogs:
     "@types/node": 25.3.5
     ai: 7.0.181
     obuild: 0.4.45
-    oxfmt: 0.79.0
-    oxlint: 1.94.0
     oxlint-tsgolint: 7.0.2007
     typescript: 5.9.3
-    vitest: 4.1.12
+    vite: npm:@voidzero-dev/vite-plus-core@8.3.8001
+    vite-plus: 1.8.0
 
 cleanupUnusedCatalogs: true
+
+overrides:
+  vite@*: catalog:dev
 
 # Keeps pnpm 12's env document out of the lockfile. GitHub reads that one as zero dependencies.
 pmOnFail: ignore

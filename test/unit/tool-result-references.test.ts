@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it } from "vite-plus/test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { validateInput } from "@agntn/tools";
 import piExtension from "../../extensions/pi/sessions.ts";

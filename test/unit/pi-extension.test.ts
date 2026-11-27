@@ -3,7 +3,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import sessionsExtension from "../../extensions/pi/sessions";
 import type * as SessionsTools from "../../src/tool-operations.ts";
 import { readTool } from "../../src/tools.ts";

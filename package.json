@@ -64,11 +64,12 @@
   "scripts": {
     "build": "obuild",
     "dev:prepare": "obuild --stub",
-    "fmt": "oxlint . --fix && oxfmt .",
-    "lint": "oxlint . && oxfmt --check .",
+    "fmt": "vp lint --fix && vp fmt",
+    "lint": "vp lint && vp fmt --check",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.extensions.json",
-    "test": "vitest",
-    "test:run": "vitest run",
+    "test": "vp test",
+    "test:run": "vp test run",
+    "test:watch": "vp test watch",
     "prepack": "pnpm run build"
   },
   "dependencies": {
@@ -84,11 +85,9 @@
     "@types/node": "catalog:dev",
     "ai": "catalog:dev",
     "obuild": "catalog:dev",
-    "oxfmt": "catalog:dev",
-    "oxlint": "catalog:dev",
     "oxlint-tsgolint": "catalog:dev",
     "typescript": "catalog:dev",
-    "vitest": "catalog:dev"
+    "vite-plus": "catalog:dev"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

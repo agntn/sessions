@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 import type { Message } from "../../src/core/types.ts";
 import { OmpSource } from "../../src/sources/omp.ts";
 import { PiSource } from "../../src/sources/pi.ts";

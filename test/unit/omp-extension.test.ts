@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { wireSchema } from "@agntn/tools";
 import type { ExtensionAPI, Theme, ToolDefinition } from "@oh-my-pi/pi-coding-agent";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import sessionsExtension from "../../extensions/omp/sessions";
 import { sessionsTools } from "../../src/tools.ts";
 

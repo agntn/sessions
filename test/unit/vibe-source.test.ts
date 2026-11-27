@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { Message, SourceReadOptions } from "../../src/core/types.ts";
 import { create } from "../../src/index.ts";
 import { VibeSource } from "../../src/sources/vibe.ts";

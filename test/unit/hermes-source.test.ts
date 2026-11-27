@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { Message } from "../../src/core/types.ts";
 import { HermesSource } from "../../src/sources/hermes.ts";
 import { listSourceSessions, readSourceSession } from "../../src/tool-reader.ts";

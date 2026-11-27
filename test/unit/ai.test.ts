@@ -1,6 +1,6 @@
 import { generateText, isStepCount } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { sessionsAiTools } from "../../src/ai.ts";
 import { sessionsTools } from "../../src/tools.ts";
 

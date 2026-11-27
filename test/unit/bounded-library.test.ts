@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vite-plus/test";
 import { create, createSource, listSourceSessions, readSourceSession } from "../../src/index.ts";
 import { listSessions, readSession } from "../../src/tool-operations.ts";
 
