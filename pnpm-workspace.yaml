@@ -20,6 +20,7 @@ catalogs:
     "@types/node": 25.3.5
     ai: 7.0.181
     obuild: 0.4.45
+    oxlint-tsgolint: 7.0.2007
     typescript: 5.9.3
     vite: npm:@voidzero-dev/vite-plus-core@8.3.8001
     vite-plus: 1.8.0

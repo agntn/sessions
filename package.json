@@ -67,8 +67,9 @@
     "fmt": "vp lint --fix && vp fmt",
     "lint": "vp lint && vp fmt --check",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.extensions.json",
-    "test": "vp test watch",
+    "test": "vp test",
     "test:run": "vp test run",
+    "test:watch": "vp test watch",
     "prepack": "pnpm run build"
   },
   "dependencies": {
@@ -84,6 +85,7 @@
     "@types/node": "catalog:dev",
     "ai": "catalog:dev",
     "obuild": "catalog:dev",
+    "oxlint-tsgolint": "catalog:dev",
     "typescript": "catalog:dev",
     "vite-plus": "catalog:dev"
   },
