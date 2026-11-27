@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
+import { directoryPrefix, inDirectory } from "../core/cwd.ts";
 import { home, osUser } from "../core/env.ts";
 import type {
   Block,
@@ -10,7 +12,14 @@ import type {
   SourceReadOptions,
 } from "../core/types.ts";
 import { activeFiles } from "./activity.ts";
-import { isRecord, jsonlLines, modelOf, parseJson, scalarText } from "./parsing.ts";
+import {
+  isRecord,
+  jsonlLines,
+  modelOf,
+  parseJson,
+  parseJsonRecord,
+  scalarText,
+} from "./parsing.ts";
 
 interface SessionFile {
   readonly path: string;
@@ -90,6 +99,117 @@ function parseBlocks(content: unknown): Block[] {
 
 function sessionIdFromPath(path: string): string {
   return path.split("/").pop()?.replace(".jsonl", "") || "";
+}
+
+/** Read size for the `cwd` scan. */
+const SCAN_BYTES = 1 << 20;
+const CWD_KEY = Buffer.from('"cwd":"');
+const QUOTE = 0x22;
+const BACKSLASH = 0x5c;
+/** No real path is this long. */
+const LITERAL_BYTES = 1 << 16;
+
+/** Every `"cwd":"…"` in a transcript. Message text escapes its quotes, so it can't match. */
+class DirectoryScan {
+  /** The read chunk `drain()` works through next. */
+  chunk: Buffer = Buffer.alloc(0);
+  readonly found = new Set<string>();
+  /** A literal outgrew {@link LITERAL_BYTES}, so nothing is ruled out. */
+  lost = false;
+  private bytes: Buffer = Buffer.alloc(0);
+
+  /** Scans `chunk`, carrying a cut literal into the next one. */
+  drain(): void {
+    this.bytes = Buffer.concat([this.bytes, this.chunk]);
+    let from = 0;
+    for (
+      let key = this.bytes.indexOf(CWD_KEY);
+      key !== -1;
+      key = this.bytes.indexOf(CWD_KEY, from)
+    ) {
+      const open = key + CWD_KEY.length - 1;
+      const close = this.closingQuote(open);
+      if (close === -1) {
+        this.lost ||= this.bytes.length - key > LITERAL_BYTES;
+        this.bytes = this.lost ? Buffer.alloc(0) : this.bytes.subarray(key);
+        return;
+      }
+      this.add(this.bytes.toString("utf8", open, close + 1));
+      from = close + 1;
+    }
+    this.bytes = this.bytes.subarray(Math.max(from, this.bytes.length - CWD_KEY.length + 1));
+  }
+
+  /**
+   * Where the string literal opened at `open` closes.
+   * @param open - Offset of its opening quote.
+   * @returns {number} Its closing quote, or -1 past the chunk.
+   */
+  private closingQuote(open: number): number {
+    let index = open + 1;
+    while (index < this.bytes.length && this.bytes[index] !== QUOTE) {
+      index += this.bytes[index] === BACKSLASH ? 2 : 1;
+    }
+    return index < this.bytes.length ? index : -1;
+  }
+
+  private add(literal: string): void {
+    const cwd = parseJsonRecord(`{"cwd":${literal}}`)?.cwd;
+    if (typeof cwd === "string" && cwd) this.found.add(cwd);
+  }
+}
+
+/**
+ * Every directory a transcript names, without parsing it.
+ * @param path - Transcript path.
+ * @param prefix - Result of {@link directoryPrefix}; a match stops early.
+ * @returns {Promise<Set<string> | undefined>} The directories, or nothing when it can't tell.
+ */
+async function transcriptDirectories(
+  path: string,
+  prefix: string,
+): Promise<Set<string> | undefined> {
+  const scan = new DirectoryScan();
+  try {
+    const handle = await open(path);
+    try {
+      const chunk = Buffer.alloc(SCAN_BYTES);
+      for (
+        let read = await handle.read(chunk);
+        read.bytesRead > 0;
+        read = await handle.read(chunk)
+      ) {
+        scan.chunk = chunk.subarray(0, read.bytesRead);
+        scan.drain();
+        if (scan.lost || [...scan.found].some((cwd) => inDirectory(cwd, prefix))) break;
+      }
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return undefined;
+  }
+  return scan.lost ? undefined : scan.found;
+}
+
+/**
+ * Keeps whole sessions that may have run under `cwd`. No directory rules nothing out.
+ * @param files - Transcripts in read order.
+ * @param cwd - Absolute directory filter.
+ * @returns {Promise<SessionFile[]>} The transcripts to read, in read order.
+ */
+async function filesInDirectory(
+  files: readonly SessionFile[],
+  cwd: string,
+): Promise<SessionFile[]> {
+  const prefix = directoryPrefix(cwd);
+  const kept = new Set<string>();
+  for (const file of files) {
+    const found = await transcriptDirectories(file.path, prefix);
+    const near = !found?.size || [...found].some((directory) => inDirectory(directory, prefix));
+    if (near) kept.add(sessionIdFromPath(file.path));
+  }
+  return files.filter((file) => kept.has(sessionIdFromPath(file.path)));
 }
 
 function* walkJsonl(dir: string, sessionId?: string): Generator<string> {
@@ -187,6 +307,7 @@ export class ClaudeSource implements Source {
     }
     files.sort((left, right) => left.mtime - right.mtime);
     const active = activeFiles(files, (file) => sessionIdFromPath(file.path), options?.activeSince);
-    for (const file of active) yield* this.readFile(file);
+    const chosen = options?.cwd ? await filesInDirectory(active, options.cwd) : active;
+    for (const file of chosen) yield* this.readFile(file);
   }
 }
