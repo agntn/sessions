@@ -173,4 +173,66 @@ describe("ClaudeSource", () => {
       "wanted: project-b wanted",
     ]);
   });
+  it("skips transcripts that never name a directory under the filter", async () => {
+    directory = mkdtempSync(join(tmpdir(), "sessions-claude-"));
+    const project = join(directory, "project");
+    mkdirSync(project);
+    const entry = (text: string, cwd?: string) =>
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        ...(cwd ? { cwd } : {}),
+        message: { content: text },
+      });
+    const write = (name: string, ...lines: readonly string[]): void => {
+      writeFileSync(join(project, `${name}.jsonl`), `${lines.join("\n")}\n`);
+    };
+    write("here", entry("here", "/work/app"));
+    write("sibling", entry("sibling", "/work/app-two"));
+    write("quoted", entry('"cwd":"/work/app"', "/elsewhere"));
+    write("bare", entry("bare"));
+    write("escaped", entry("escaped", "/elsewhere").replace("/elsewhere", "/work/\\u0061pp"));
+    /* The second entry's `"cwd":"` starts `before` bytes ahead of the 1 MiB read boundary. */
+    const straddling = (name: string, before: number) => {
+      const later = entry(name, "/work/app/web");
+      const head = entry("", "/elsewhere");
+      const fill = (1 << 20) - before - head.length - 1 - later.indexOf('"cwd":"');
+      write(name, entry("x".repeat(fill), "/elsewhere"), later);
+    };
+    straddling("key", 3);
+    straddling("value", 10);
+    const spaced = entry("spaced").replace('"type":', '"cwd" : "/work/app", "type":');
+    write("spaced", spaced, entry("spaced later", "/elsewhere"));
+    write("giant", entry("giant", `/elsewhere/${"y".repeat(1 << 21)}`));
+    const source = new ClaudeSource(directory);
+    const texts = async (cwd?: string): Promise<string[]> =>
+      (await collect(source, cwd ? { cwd } : {}))
+        .map((message) => message.blocks[0]?.text ?? "")
+        .map((text) => (text.startsWith("xxx") ? "filler" : text))
+        .sort((left, right) => left.localeCompare(right));
+
+    const filler = ["filler", "filler"];
+    expect(await texts("/work/app")).toEqual([
+      "bare",
+      "escaped",
+      ...filler,
+      "giant",
+      "here",
+      "key",
+      "spaced",
+      "spaced later",
+      "value",
+    ]);
+    expect(await texts("/elsewhere/")).toEqual([
+      '"cwd":"/work/app"',
+      "bare",
+      ...filler,
+      "giant",
+      "key",
+      "spaced",
+      "spaced later",
+      "value",
+    ]);
+    expect(await texts()).toHaveLength(12);
+  });
 });
